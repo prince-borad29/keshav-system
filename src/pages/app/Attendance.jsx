@@ -248,7 +248,7 @@ export default function Attendance() {
       )}
 
       {canMark && (
-        <QRScanner isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} event={event} onScanSuccess={handleScanSuccess} />
+        <QRScanner isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} event={event} onScanSuccess={handleScanSuccess} members={members}/>
       )}
 
       <RightDrawer isOpen={isDrawerOpen} mode={drawerMode} onClose={() => setIsDrawerOpen(false)} initialFilters={activeFilters} initialSorts={activeSorts} onApply={(newFilters, newSorts) => { setActiveFilters(newFilters); setActiveSorts(newSorts); setIsDrawerOpen(false); }} data={members} />

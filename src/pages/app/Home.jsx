@@ -1,40 +1,29 @@
-import React, { useEffect, useState, useRef, useCallback } from "react";
-import {
-  Search,
-  Phone,
-  FileText,
-  Zap,
-  X,
-  QrCode,
-  Filter,
-  SortAsc,
-  Check,
-  Trash2,
-  CheckCircle2,
-  AlertCircle,
-  RefreshCcw,
-  Calendar,
-} from "lucide-react";
-import { Scanner } from "@yudiel/react-qr-scanner";
-import { supabase } from "../../lib/supabase";
-import EventReports from "../../components/EventReports";
-import { useAuth } from "../../contexts/AuthContext";
-import { decryptMemberData } from "../../lib/qrUtils";
+import React, { useEffect, useState, useCallback } from 'react';
+import { 
+  Search, Phone, FileText, Zap, QrCode, Filter, SortAsc, 
+  Check, X, Trash2, ArrowUp, ArrowDown
+} from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import EventReports from '../../components/EventReports'; 
+import { useAuth } from '../../contexts/AuthContext'; 
+// ✅ Import the reusable component
+import QRScanner from '../../components/QRScanner'; 
 
+// --- CONSTANTS ---
 const ALL_COLUMNS = [
-  { key: "name", label: "Name" },
-  { key: "surname", label: "Surname" },
-  { key: "mobile_number", label: "Mobile" },
-  { key: "mandal", label: "Mandal" },
-  { key: "designation", label: "Designation" },
+  { key: 'name', label: 'Name' },
+  { key: 'surname', label: 'Surname' },
+  { key: 'mobile_number', label: 'Mobile' },
+  { key: 'mandal', label: 'Mandal' },
+  { key: 'designation', label: 'Designation' }
 ];
 
 export default function Home() {
   const { profile, loading: authLoading } = useAuth();
-
-  const userRole = (profile?.role || "").toLowerCase();
-  const isAdmin = userRole === "admin";
-  const isTaker = userRole === "taker";
+  
+  const userRole = (profile?.role || '').toLowerCase();
+  const isAdmin = userRole === 'admin';
+  const isTaker = userRole === 'taker';
   const canMark = isAdmin || isTaker;
   const showStats = !isTaker;
 
@@ -43,128 +32,80 @@ export default function Home() {
   const [members, setMembers] = useState([]);
   const [filteredMembers, setFilteredMembers] = useState([]);
   const [presentIds, setPresentIds] = useState(new Set());
-
-  const [search, setSearch] = useState("");
+  
+  const [search, setSearch] = useState('');
   const [isReportsOpen, setIsReportsOpen] = useState(false);
-  const [viewMode, setViewMode] = useState("dashboard"); // 'dashboard' | 'scanner'
-
-  const [scanMessage, setScanMessage] = useState(null);
-  const [isScanPaused, setIsScanPaused] = useState(false);
-  const [cameraError, setCameraError] = useState(null);
-  const lastScannedRef = useRef(null);
+  
+  // ✅ REPLACED: Simple boolean instead of complex viewMode
+  const [isScannerOpen, setIsScannerOpen] = useState(false); 
 
   const [activeFilters, setActiveFilters] = useState([]);
-  const [activeSorts, setActiveSorts] = useState([
-    { id: 1, column: "name", asc: true },
-  ]);
+  const [activeSorts, setActiveSorts] = useState([{ id: 1, column: 'name', asc: true }]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [drawerMode, setDrawerMode] = useState("filter");
+  const [drawerMode, setDrawerMode] = useState('filter');
 
-  const fetchAttendanceData = useCallback(
-    async (event) => {
-      const { data: regData } = await supabase
-        .from("project_registrations")
-        .select("member_id")
-        .eq("project_id", event.project_id);
-      const ids = regData?.map((r) => r.member_id) || [];
+  // --- 1. DATA FETCHING ---
+  const fetchAttendanceData = useCallback(async (event) => {
+    const { data: regData } = await supabase.from('project_registrations').select('member_id').eq('project_id', event.project_id);
+    const ids = regData?.map(r => r.member_id) || [];
+    
+    if (ids.length === 0) { setMembers([]); return; }
 
-      if (ids.length === 0) {
-        setMembers([]);
-        return;
-      }
+    const { data: memData } = await supabase
+      .from('members')
+      .select('id, name, surname, mandal, mandal_id, kshetra_id, gender, mobile_number, designation')
+      .in('id', ids)
+      .order('name');
+    
+    const { data: attData } = await supabase.from('attendance').select('member_id').eq('event_id', event.id);
+    setPresentIds(new Set(attData?.map(a => a.member_id) || []));
 
-      const { data: memData } = await supabase
-        .from("members")
-        .select(
-          "id, name, surname, mandal, mandal_id, kshetra_id, gender, mobile_number, designation",
-        )
-        .in("id", ids)
-        .order("name");
+    let scopedMembers = memData || [];
+    if (!isAdmin && profile) {
+       if (['sanchalak', 'nirikshak'].includes(userRole) && profile.mandal_id) {
+          scopedMembers = scopedMembers.filter(m => m.mandal_id === profile.mandal_id);
+       }
+       else if (userRole === 'nirdeshak' && profile.kshetra_id) {
+          scopedMembers = scopedMembers.filter(m => m.kshetra_id === profile.kshetra_id);
+       }
+       else if (isTaker && profile.gender) {
+          scopedMembers = scopedMembers.filter(m => m.gender === profile.gender);
+       }
+    }
+    setMembers(scopedMembers);
+  }, [profile, isAdmin, isTaker, userRole]);
 
-      const { data: attData } = await supabase
-        .from("attendance")
-        .select("member_id")
-        .eq("event_id", event.id);
-      setPresentIds(new Set(attData?.map((a) => a.member_id) || []));
-
-      let scopedMembers = memData || [];
-      if (!isAdmin && profile) {
-        if (
-          ["sanchalak", "nirikshak"].includes(userRole) &&
-          profile.mandal_id
-        ) {
-          scopedMembers = scopedMembers.filter(
-            (m) => m.mandal_id === profile.mandal_id,
-          );
-        } else if (userRole === "nirdeshak" && profile.kshetra_id) {
-          scopedMembers = scopedMembers.filter(
-            (m) => m.kshetra_id === profile.kshetra_id,
-          );
-        } else if (isTaker && profile.gender) {
-          scopedMembers = scopedMembers.filter(
-            (m) => m.gender === profile.gender,
-          );
-        }
-      }
-      setMembers(scopedMembers);
-    },
-    [profile, isAdmin, isTaker, userRole],
-  );
-
-  const fetchPrimaryEvent = useCallback(
-    async (silent = false) => {
-      if (authLoading || !profile?.id) return;
-      if (!silent) setLoading(true);
-      const { data: events } = await supabase
-        .from("events")
-        .select("*, projects(id, name)")
-        .eq("is_active", true)
-        .limit(1);
-      if (events && events.length > 0) {
-        setActiveEvent(events[0]);
-        await fetchAttendanceData(events[0]);
-      }
-      setLoading(false);
-    },
-    [profile?.id, authLoading, fetchAttendanceData],
-  );
+  const fetchPrimaryEvent = useCallback(async (silent = false) => {
+    if (authLoading || !profile?.id) return;
+    if (!silent) setLoading(true);
+    const { data: events } = await supabase.from('events').select('*, projects(id, name)').eq('is_active', true).limit(1);
+    if (events && events.length > 0) {
+      setActiveEvent(events[0]);
+      await fetchAttendanceData(events[0]);
+    }
+    setLoading(false);
+  }, [profile?.id, authLoading, fetchAttendanceData]);
 
   useEffect(() => {
     fetchPrimaryEvent();
-    const channel = supabase
-      .channel("home-realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "attendance" },
-        () => fetchPrimaryEvent(true),
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const channel = supabase.channel('home-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, () => fetchPrimaryEvent(true)).subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [fetchPrimaryEvent]);
-
-  const myPresentCount = members.filter((m) => presentIds.has(m.id)).length;
-  const myTotalCount = members.length;
 
   useEffect(() => {
     let result = [...members];
     if (search) {
       const lower = search.toLowerCase();
-      result = result.filter((m) =>
-        (m.name + m.surname + m.id).toLowerCase().includes(lower),
-      );
+      result = result.filter(m => (m.name + m.surname + m.id).toLowerCase().includes(lower));
     }
-    activeFilters.forEach((filter) => {
-      if (filter.column && filter.values.length > 0) {
-        result = result.filter((m) => filter.values.includes(m[filter.column]));
-      }
+    activeFilters.forEach(filter => {
+      if (filter.column && filter.values.length > 0) { result = result.filter(m => filter.values.includes(m[filter.column])); }
     });
     result.sort((a, b) => {
       for (const sort of activeSorts) {
         if (!sort.column) continue;
-        let valA = (a[sort.column] || "").toString().toLowerCase();
-        let valB = (b[sort.column] || "").toString().toLowerCase();
+        let valA = (a[sort.column] || '').toString().toLowerCase();
+        let valB = (b[sort.column] || '').toString().toLowerCase();
         if (valA < valB) return sort.asc ? -1 : 1;
         if (valA > valB) return sort.asc ? 1 : -1;
       }
@@ -173,241 +114,98 @@ export default function Home() {
     setFilteredMembers(result);
   }, [members, search, activeFilters, activeSorts]);
 
+  // --- ACTIONS ---
   const toggleAttendance = async (memberId) => {
-    if (!activeEvent || !canMark) return;
+    if (!activeEvent || !canMark) return; 
     const isPresent = presentIds.has(memberId);
     const newSet = new Set(presentIds);
-    if (isPresent) newSet.delete(memberId);
-    else newSet.add(memberId);
+    if (isPresent) newSet.delete(memberId); else newSet.add(memberId);
     setPresentIds(newSet);
-    if (isPresent) {
-      await supabase
-        .from("attendance")
-        .delete()
-        .eq("event_id", activeEvent.id)
-        .eq("member_id", memberId);
-    } else {
-      await supabase
-        .from("attendance")
-        .insert([{ event_id: activeEvent.id, member_id: memberId }]);
+    if (isPresent) { await supabase.from('attendance').delete().eq('event_id', activeEvent.id).eq('member_id', memberId); }
+    else { await supabase.from('attendance').insert([{ event_id: activeEvent.id, member_id: memberId }]); }
+  };
+
+  // ✅ NEW: Simplified Scan Handler (DB Logic only)
+  const handleScanSuccess = async (memberId) => {
+    // 1. Update UI immediately
+    setPresentIds(prev => new Set(prev).add(memberId));
+    
+    // 2. Persist to DB
+    try {
+      await supabase.from('attendance').upsert([{ 
+        event_id: activeEvent.id, 
+        member_id: memberId 
+      }], { onConflict: 'event_id, member_id' });
+    } catch (error) {
+      console.error("Failed to save scan:", error);
+      // Optional: Revert UI if needed, but usually strictly keeping the scan is better
     }
   };
 
-  const handleScan = async (detectedCodes) => {
-  if (isScanPaused || !detectedCodes?.length || !activeEvent || !canMark) return;
-  
-  const rawValue = detectedCodes[0].rawValue;
-  if (lastScannedRef.current === rawValue) return;
-  lastScannedRef.current = rawValue;
-  setIsScanPaused(true);
-
-  // 1. DECRYPT
-  const decryptedMember = decryptMemberData(rawValue);
-
-  if (!decryptedMember || !decryptedMember.id) {
-    setScanMessage({ type: 'error', text: 'Invalid QR Code' });
-  } else {
-    try {
-      // 2. ROBUST SEARCH (Trim whitespace and ignore case)
-      const scannedId = String(decryptedMember.id).trim().toUpperCase();
-      
-      const member = members.find(m => 
-        String(m.id).trim().toUpperCase() === scannedId
-      );
-      
-      if (!member) {
-        // Log to console so you can see what ID the app is looking for vs what it has
-        console.log("Searching for ID:", scannedId);
-        console.log("Current Scoped Members:", members);
-        setScanMessage({ type: 'error', text: `ID ${scannedId} Not in Scope` });
-      } else {
-        // 3. MARK ATTENDANCE
-        const { error } = await supabase.from('attendance').upsert([{ 
-          event_id: activeEvent.id, 
-          member_id: member.id // Use the ID from the state object for consistency
-        }], { onConflict: 'event_id, member_id' });
-
-        if (error) throw error;
-
-        setPresentIds(prev => new Set(prev).add(member.id));
-        setScanMessage({ type: 'success', text: `Marked: ${member.name}` });
-      }
-    } catch (e) {
-      console.error("Scan Error:", e);
-      setScanMessage({ type: 'error', text: 'Database Error' });
-    }
-  }
-
-  setTimeout(() => {
-    setScanMessage(null);
-    setIsScanPaused(false);
-    lastScannedRef.current = null;
-  }, 2000); 
-};
-
   if (authLoading || !profile) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-slate-50">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[#002B3D]"></div>
-      </div>
-    );
+    return <div className="flex h-screen items-center justify-center bg-slate-50"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[#002B3D]"></div></div>;
   }
 
-  // ==========================================
-  // ✅ VIEW 1: FULL SCREEN SCANNER (Restored)
-  // ==========================================
-  if (viewMode === "scanner" && canMark) {
-    return (
-      <div className="flex flex-col h-[100dvh] bg-black fixed inset-0 z-[100]">
-        <div className="bg-[#002B3D] text-white px-4 py-3 flex justify-between items-center shrink-0 pt-safe-top">
-          <h1 className="text-lg font-medium">QR Scanner</h1>
-          <button
-            onClick={() => setViewMode("dashboard")}
-            className="p-2 bg-white/10 rounded-full"
-          >
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="flex-1 flex flex-col items-center justify-center relative">
-          {scanMessage && (
-            <div
-              className={`absolute top-10 flex items-center gap-2 px-6 py-3 rounded-full shadow-2xl z-50 animate-bounce ${scanMessage.type === "success" ? "bg-green-600" : "bg-red-600"} text-white font-bold`}
-            >
-              {scanMessage.text}
-            </div>
-          )}
-          <div className="w-72 h-72 border-4 border-white/20 rounded-3xl overflow-hidden relative shadow-[0_0_50px_rgba(0,0,0,0.5)]">
-            <Scanner
-              onScan={handleScan}
-              formats={["qr_code"]}
-              constraints={{ facingMode: "environment" }}
-              styles={{ container: { width: "100%", height: "100%" } }}
-              components={{ audio: false, finder: false }}
-            />
-            {/* Visual Scan Frame */}
-            <div className="absolute inset-0 border-[40px] border-black/40 pointer-events-none"></div>
-            <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-sky-400"></div>
-            <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-sky-400"></div>
-            <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-sky-400"></div>
-            <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-sky-400"></div>
-          </div>
-          <p className="text-white/60 mt-10 text-sm font-medium">
-            Place QR code inside the frame
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // ==========================================
-  // VIEW 2: DASHBOARD
-  // ==========================================
   return (
     <div className="flex flex-col h-[100dvh] bg-slate-50 relative">
+      
+      {/* ✅ RENDER SCANNER COMPONENT */}
+      <QRScanner 
+        isOpen={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        event={activeEvent}
+        members={members}
+        onScanSuccess={handleScanSuccess}
+      />
+
+      {/* DASHBOARD HEADER */}
       <div className="bg-white p-4 shadow-sm z-10 sticky top-0 pt-safe-top">
         <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 bg-yellow-100 rounded-full text-yellow-600">
-            <Zap size={20} className="fill-yellow-600" />
-          </div>
+          <div className="p-2 bg-yellow-100 rounded-full text-yellow-600"><Zap size={20} className="fill-yellow-600" /></div>
           <div>
-            <h1 className="text-lg font-bold text-[#002B3D] leading-none">
-              {activeEvent?.name}
-            </h1>
-            {showStats && (
-              <span className="text-xs text-slate-400 font-bold">
-                {myPresentCount} / {myTotalCount} Present
-              </span>
-            )}
+            <h1 className="text-lg font-bold text-[#002B3D] leading-none">{activeEvent?.name}</h1>
+            {showStats && <span className="text-xs text-slate-400 font-bold">{members.filter(m => presentIds.has(m.id)).length} / {members.length} Present</span>}
           </div>
           <div className="ml-auto flex gap-2">
             {canMark && (
-              <button
-                onClick={() => setViewMode("scanner")}
-                className="flex items-center gap-2 px-3 py-2 bg-[#002B3D] text-white rounded-xl font-bold text-xs shadow-lg"
-              >
+              <button onClick={() => setIsScannerOpen(true)} className="flex items-center gap-2 px-3 py-2 bg-[#002B3D] text-white rounded-xl font-bold text-xs shadow-lg">
                 <QrCode size={18} /> <span>Scan</span>
               </button>
             )}
-            <button
-              onClick={() => openDrawer("sort")}
-              className="p-2.5 bg-slate-100 rounded-xl text-slate-600"
-            >
-              <SortAsc size={20} />
-            </button>
-            <button
-              onClick={() => openDrawer("filter")}
-              className="p-2.5 bg-slate-100 rounded-xl text-slate-600"
-            >
-              <Filter size={20} />
-            </button>
-            {showStats && (
-              <button
-                onClick={() => setIsReportsOpen(true)}
-                className="p-2.5 bg-slate-100 rounded-xl text-[#002B3D]"
-              >
-                <FileText size={20} />
-              </button>
-            )}
+            <button onClick={() => openDrawer('sort')} className="p-2.5 bg-slate-100 rounded-xl text-slate-600"><SortAsc size={20} /></button>
+            <button onClick={() => openDrawer('filter')} className="p-2.5 bg-slate-100 rounded-xl text-slate-600"><Filter size={20} /></button>
+            {showStats && <button onClick={() => setIsReportsOpen(true)} className="p-2.5 bg-slate-100 rounded-xl text-[#002B3D]"><FileText size={20} /></button>}
           </div>
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-3 text-slate-400" size={20} />
-          <input
-            type="text"
-            placeholder="Search..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-[#002B3D]"
-          />
+          <input type="text" placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-[#002B3D]" />
         </div>
       </div>
 
+      {/* MEMBER LIST */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24">
-        {loading ? (
-          <div className="text-center text-slate-400 mt-10">
-            Loading Attendance...
-          </div>
-        ) : (
-          filteredMembers.map((m) => {
+        {loading ? <div className="text-center text-slate-400 mt-10">Loading Attendance...</div> : (
+          filteredMembers.map(m => {
             const isPresent = presentIds.has(m.id);
             return (
-              <div
-                key={m.id}
-                className="p-4 rounded-xl shadow-sm border flex justify-between items-center bg-white border-slate-100"
-              >
-                <div>
-                  <h3 className="text-lg font-bold text-slate-800">
-                    {m.name} {m.surname}
-                  </h3>
-                  <p className="text-xs font-medium text-slate-500">
-                    {m.mandal} • {m.designation}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {m.mobile_number && (
-                    <a
-                      href={`tel:${m.mobile_number}`}
-                      className="p-2.5 text-[#0EA5E9] bg-sky-50 rounded-full"
-                    >
-                      <Phone size={18} />
-                    </a>
-                  )}
-                  {canMark ? (
-                    <button
-                      onClick={() => toggleAttendance(m.id)}
-                      className={`px-4 py-2 rounded-lg text-sm font-bold min-w-[90px] ${isPresent ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"}`}
-                    >
-                      {isPresent ? "Present" : "Absent"}
-                    </button>
-                  ) : (
-                    <span
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold ${isPresent ? "bg-green-50 text-green-700" : "bg-slate-50 text-slate-400"}`}
-                    >
-                      {isPresent ? "Present" : "Absent"}
-                    </span>
-                  )}
-                </div>
+              <div key={m.id} className="p-4 rounded-xl shadow-sm border flex justify-between items-center bg-white border-slate-100">
+                 <div>
+                    <h3 className="text-lg font-bold text-slate-800">{m.name} {m.surname}</h3>
+                    <p className="text-xs font-medium text-slate-500">{m.mandal} • {m.designation}</p>
+                 </div>
+                 <div className="flex items-center gap-2">
+                    {m.mobile_number && <a href={`tel:${m.mobile_number}`} className="p-2.5 text-[#0EA5E9] bg-sky-50 rounded-full"><Phone size={18} /></a>}
+                    {canMark ? (
+                      <button onClick={() => toggleAttendance(m.id)} className={`px-4 py-2 rounded-lg text-sm font-bold min-w-[90px] ${isPresent ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                        {isPresent ? 'Present' : 'Absent'}
+                      </button>
+                    ) : (
+                      <span className={`px-3 py-1.5 rounded-lg text-xs font-bold ${isPresent ? 'bg-green-50 text-green-700' : 'bg-slate-50 text-slate-400'}`}>
+                        {isPresent ? 'Present' : 'Absent'}
+                      </span>
+                    )}
+                 </div>
               </div>
             );
           })
@@ -416,36 +214,19 @@ export default function Home() {
 
       {activeEvent && (
         <>
-          <EventReports
-            isOpen={isReportsOpen}
-            onClose={() => setIsReportsOpen(false)}
-            event={activeEvent}
-            members={members}
-            presentIds={presentIds}
-          />
-          <RightDrawer
-            isOpen={isDrawerOpen}
-            mode={drawerMode}
-            onClose={() => setIsDrawerOpen(false)}
-            initialFilters={activeFilters}
-            initialSorts={activeSorts}
-            onApply={(f, s) => {
-              setActiveFilters(f);
-              setActiveSorts(s);
-              setIsDrawerOpen(false);
-            }}
-            data={members}
-          />
+          <EventReports isOpen={isReportsOpen} onClose={() => setIsReportsOpen(false)} event={activeEvent} members={members} presentIds={presentIds} />
+          <RightDrawer isOpen={isDrawerOpen} mode={drawerMode} onClose={() => setIsDrawerOpen(false)} initialFilters={activeFilters} initialSorts={activeSorts} onApply={(f, s) => { setActiveFilters(f); setActiveSorts(s); setIsDrawerOpen(false); }} data={members} />
         </>
       )}
     </div>
   );
 
-  function openDrawer(mode) {
-    setDrawerMode(mode);
-    setIsDrawerOpen(true);
-  }
+  function openDrawer(mode) { setDrawerMode(mode); setIsDrawerOpen(true); }
 }
+
+// ... (Keep your RightDrawer and MultiSelectDropdown code here as is)
+// ...
+// ...
 
 // ... (RightDrawer and MultiSelectDropdown code remains the same below)
 // ... (RightDrawer & MultiSelectDropdown) ...

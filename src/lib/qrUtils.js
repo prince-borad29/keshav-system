@@ -22,14 +22,16 @@ export const encryptMemberData = (member) => {
  */
 export const decryptMemberData = (encryptedString) => {
   try {
+    // Ensure we are working with a string
+    if (typeof encryptedString !== 'string') return null;
+    
     const bytes = CryptoJS.AES.decrypt(encryptedString, SECRET_KEY);
     const decryptedText = bytes.toString(CryptoJS.enc.Utf8);
     
-    // If decryption fails, the string will be empty or invalid JSON
     if (!decryptedText) return null;
     
     return JSON.parse(decryptedText);
   } catch (error) {
-    return null; // Return null if it's a standard QR or wrong key
+    return null;
   }
 };

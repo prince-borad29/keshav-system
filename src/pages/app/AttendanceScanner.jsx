@@ -67,44 +67,40 @@ export default function AttendanceScanner() {
   };
 
   // --- 3. PROCESS THE CODE (Decryption & DB) ---
-  const handleScannedCode = async (rawValue) => {
-    isProcessingRef.current = true;
-    setIsProcessing(true);
+ const handleScannedCode = async (detectedCodes) => {
+  if (!detectedCodes?.length || isProcessingRef.current) return;
+  
+  const rawValue = detectedCodes[0].rawValue;
+  
+  // ✅ STEP 1: Decrypt the raw value locally
+  const decrypted = decryptMemberData(rawValue);
+
+  // ✅ STEP 2: Validate decryption
+  if (!decrypted || !decrypted.id) {
+    console.error("Decryption failed or invalid QR format");
+    setStatusMessage({ type: 'error', text: 'Invalid/Unauthorized QR Code' });
+    return;
+  }
+
+  // ✅ STEP 3: Use the REAL ID (e.g., BP12490) to find the member
+  const memberId = decrypted.id.trim();
+
+  try {
+    // If you are searching in the local 'members' list:
+    const member = members.find(m => m.id === memberId);
     
-    // Stop native scanner to show result UI
-    await BarcodeScanner.stopScan(); 
-    setIsScanning(false);
-    document.body.style.backgroundColor = '';
-
-    // A. Decrypt the code
-    const decrypted = decryptMemberData(rawValue);
-
-    if (!decrypted || !decrypted.id) {
-      showStatus('error', 'Invalid or Unauthorized QR Code');
-    } else {
-      // B. Check if member is in user's current scope
-      const member = members?.find(m => m.id === decrypted.id);
-
-      if (!member) {
-        showStatus('error', `${decrypted.n} is Not in your Mandal/List`);
-      } else {
-        try {
-          // C. Database Update
-          const { error } = await supabase
-            .from('attendance')
-            .upsert([
-              { event_id: event.id, member_id: decrypted.id }
-            ], { onConflict: 'event_id, member_id' });
-
-          if (error) throw error;
-          
-          showStatus('success', `Marked: ${decrypted.n} ${decrypted.s}`);
-        } catch (e) {
-          showStatus('error', 'Database connection error');
-        }
-      }
+    if (!member) {
+       throw new Error("Member not found in your scope");
     }
-  };
+
+    // Now proceed to mark attendance with the verified memberId
+    onScanSuccess(memberId); 
+    
+  } catch (err) {
+    console.error("Scanner Error:", err.message);
+    // This will now show the correct error instead of a 406
+  }
+};
 
   const showStatus = (type, text) => {
     setStatusMessage({ type, text });

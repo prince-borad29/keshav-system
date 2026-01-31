@@ -194,45 +194,56 @@ export default function Home() {
   };
 
   const handleScan = async (detectedCodes) => {
-    if (isScanPaused || !detectedCodes?.length || !activeEvent || !canMark)
-      return;
-    const rawValue = detectedCodes[0].rawValue;
-    if (lastScannedRef.current === rawValue) return;
-    lastScannedRef.current = rawValue;
-    setIsScanPaused(true);
+  if (isScanPaused || !detectedCodes?.length || !activeEvent || !canMark) return;
+  
+  const rawValue = detectedCodes[0].rawValue;
+  if (lastScannedRef.current === rawValue) return;
+  lastScannedRef.current = rawValue;
+  setIsScanPaused(true);
 
-    const decryptedMember = decryptMemberData(rawValue);
+  // 1. DECRYPT
+  const decryptedMember = decryptMemberData(rawValue);
 
-    if (!decryptedMember || !decryptedMember.id) {
-      setScanMessage({ type: "error", text: "Invalid QR Code" });
-    } else {
-      try {
-        const member = members.find((m) => m.id === decryptedMember.id);
-        if (!member) {
-          setScanMessage({ type: "error", text: "Out of Scope" });
-        } else {
-          await supabase
-            .from("attendance")
-            .upsert(
-              [{ event_id: activeEvent.id, member_id: decryptedMember.id }],
-              { onConflict: "event_id, member_id" },
-            );
-          setPresentIds((prev) => new Set(prev).add(decryptedMember.id));
-          setScanMessage({
-            type: "success",
-            text: `Marked: ${decryptedMember.n}`,
-          });
-        }
-      } catch (e) {
-        setScanMessage({ type: "error", text: "Scan Error" });
+  if (!decryptedMember || !decryptedMember.id) {
+    setScanMessage({ type: 'error', text: 'Invalid QR Code' });
+  } else {
+    try {
+      // 2. ROBUST SEARCH (Trim whitespace and ignore case)
+      const scannedId = String(decryptedMember.id).trim().toUpperCase();
+      
+      const member = members.find(m => 
+        String(m.id).trim().toUpperCase() === scannedId
+      );
+      
+      if (!member) {
+        // Log to console so you can see what ID the app is looking for vs what it has
+        console.log("Searching for ID:", scannedId);
+        console.log("Current Scoped Members:", members);
+        setScanMessage({ type: 'error', text: `ID ${scannedId} Not in Scope` });
+      } else {
+        // 3. MARK ATTENDANCE
+        const { error } = await supabase.from('attendance').upsert([{ 
+          event_id: activeEvent.id, 
+          member_id: member.id // Use the ID from the state object for consistency
+        }], { onConflict: 'event_id, member_id' });
+
+        if (error) throw error;
+
+        setPresentIds(prev => new Set(prev).add(member.id));
+        setScanMessage({ type: 'success', text: `Marked: ${member.name}` });
       }
+    } catch (e) {
+      console.error("Scan Error:", e);
+      setScanMessage({ type: 'error', text: 'Database Error' });
     }
-    setTimeout(() => {
-      setScanMessage(null);
-      setIsScanPaused(false);
-      lastScannedRef.current = null;
-    }, 2000);
-  };
+  }
+
+  setTimeout(() => {
+    setScanMessage(null);
+    setIsScanPaused(false);
+    lastScannedRef.current = null;
+  }, 2000); 
+};
 
   if (authLoading || !profile) {
     return (

@@ -7,12 +7,10 @@ export default function MemberModal({ isOpen, onClose, memberToEdit, onSave }) {
   const { profile } = useAuth();
   const [loading, setLoading] = useState(false);
 
-  // Dropdown Data
   const [mandals, setMandals] = useState([]);
   const [kshetras, setKshetras] = useState([]);
   const [availableTags, setAvailableTags] = useState([]);
 
-  // Form State
   const [formData, setFormData] = useState({
     id: "",
     name: "",
@@ -25,12 +23,15 @@ export default function MemberModal({ isOpen, onClose, memberToEdit, onSave }) {
     kshetra_id: "",
   });
 
-  // Selected Tag IDs
   const [selectedTags, setSelectedTags] = useState(new Set());
 
   const userRole = (profile?.role || "").toLowerCase();
+  
+  // Logic to determine what to show/hide
+  const isSanchalakOrNirikshak = ["sanchalak", "nirikshak"].includes(userRole);
+  const isNirdeshak = userRole === "nirdeshak";
+  const isAdmin = userRole === "admin";
 
-  // 1. Fetch Options (Mandals, Kshetras, Tags)
   useEffect(() => {
     const fetchData = async () => {
       const { data: mData } = await supabase.from("mandals").select("id, name");
@@ -44,7 +45,6 @@ export default function MemberModal({ isOpen, onClose, memberToEdit, onSave }) {
     if (isOpen) fetchData();
   }, [isOpen]);
 
-  // 2. Sync Form & Autofill Logic
   useEffect(() => {
     if (memberToEdit) {
       setFormData({
@@ -69,7 +69,7 @@ export default function MemberModal({ isOpen, onClose, memberToEdit, onSave }) {
       };
       fetchMemberTags();
     } else {
-      // ✅ AUTOFILL LOGIC FOR NEW ENTRIES
+      // ✅ AUTOFILL LOGIC & GENDER LOCK
       setFormData({
         id: "",
         name: "",
@@ -77,21 +77,17 @@ export default function MemberModal({ isOpen, onClose, memberToEdit, onSave }) {
         father_name: "",
         mobile_number: "",
         designation: "Yuvak",
-        gender: profile?.gender || "Yuvak",
-        // Sanchalak / Nirikshak: Autofill BOTH
-        mandal_id: ["sanchalak", "nirikshak"].includes(userRole) ? profile?.mandal_id : "",
-        // Nirdeshak / Sanchalak / Nirikshak: Autofill Kshetra
-        kshetra_id: ["nirdeshak", "sanchalak", "nirikshak"].includes(userRole) ? profile?.kshetra_id : "",
+        gender: profile?.gender || "Yuvak", // Auto-filled from leader's gender
+        mandal_id: isSanchalakOrNirikshak ? profile?.mandal_id : "",
+        kshetra_id: (isNirdeshak || isSanchalakOrNirikshak) ? profile?.kshetra_id : "",
       });
       setSelectedTags(new Set());
     }
-  }, [memberToEdit, isOpen, profile, userRole]);
-
-  // --- ACTIONS ---
+  }, [memberToEdit, isOpen, profile, userRole, isSanchalakOrNirikshak, isNirdeshak]);
 
   const generateId = (name, surname) => {
     const prefix = (name.charAt(0) + surname.charAt(0)).toUpperCase();
-    const randomNum = Math.floor(10000 + Math.random() * 90000); // 5 digit random
+    const randomNum = Math.floor(10000 + Math.random() * 90000);
     return `${prefix}${randomNum}`;
   };
 
@@ -104,13 +100,10 @@ export default function MemberModal({ isOpen, onClose, memberToEdit, onSave }) {
 
   const handleSubmit = async () => {
     if (!formData.name || !formData.surname) return alert("Name and Surname required");
-
     setLoading(true);
 
     const selectedMandal = mandals.find((m) => m.id === formData.mandal_id)?.name || null;
     const selectedKshetra = kshetras.find((k) => k.id === formData.kshetra_id)?.name || null;
-
-    // Generate ID only if it's a new member
     const finalId = memberToEdit ? formData.id : generateId(formData.name, formData.surname);
 
     const payload = {
@@ -142,7 +135,6 @@ export default function MemberModal({ isOpen, onClose, memberToEdit, onSave }) {
       return;
     }
 
-    // Save Tags
     await supabase.from("entity_tags").delete().eq("entity_id", finalId).eq("entity_type", "Member");
     if (selectedTags.size > 0) {
       const tagInserts = Array.from(selectedTags).map((tagId) => ({
@@ -187,47 +179,56 @@ export default function MemberModal({ isOpen, onClose, memberToEdit, onSave }) {
 
           <div className="space-y-4">
             <h4 className="text-xs font-bold text-slate-400 uppercase border-b pb-1">Organization</h4>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-bold text-slate-500 mb-1 block">Designation</label>
                 <select className="w-full p-3 border border-slate-200 rounded-xl bg-white" value={formData.designation} onChange={(e) => setFormData({ ...formData, designation: e.target.value })}>
                   {["Nirdeshak", "Nirikshak", "Sanchalak", "Sah Sanchalak", "Sampark Karyakar", "Yuvak"].map((d) => (<option key={d} value={d}>{d}</option>))}
                 </select>
               </div>
-              <div>
-                <label className="text-xs font-bold text-slate-500 mb-1 block">Gender</label>
-                <select className="w-full p-3 border border-slate-200 rounded-xl bg-white" value={formData.gender} onChange={(e) => setFormData({ ...formData, gender: e.target.value })}>
-                  <option value="Yuvak">Yuvak</option>
-                  <option value="Yuvati">Yuvati</option>
-                </select>
-              </div>
+              
+              {/* ✅ GENDER DROPDOWN: Hidden for leaders, shown only for Admin */}
+              {isAdmin && (
+                <div>
+                  <label className="text-xs font-bold text-slate-500 mb-1 block">Gender</label>
+                  <select className="w-full p-3 border border-slate-200 rounded-xl bg-white" value={formData.gender} onChange={(e) => setFormData({ ...formData, gender: e.target.value })}>
+                    <option value="Yuvak">Yuvak</option>
+                    <option value="Yuvati">Yuvati</option>
+                  </select>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs font-bold text-slate-500 mb-1 block">Kshetra</label>
-                <select 
-                  className={`w-full p-3 border rounded-xl bg-white ${formData.kshetra_id && userRole !== 'admin' ? "bg-slate-50 text-slate-500 cursor-not-allowed" : ""}`}
-                  disabled={formData.kshetra_id && userRole !== 'admin'}
-                  value={formData.kshetra_id} 
-                  onChange={(e) => setFormData({ ...formData, kshetra_id: e.target.value })}
-                >
-                  <option value="">Select Kshetra...</option>
-                  {kshetras.map((k) => (<option key={k.id} value={k.id}>{k.name}</option>))}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-bold text-slate-500 mb-1 block">Mandal</label>
-                <select 
-                  className={`w-full p-3 border rounded-xl bg-white ${formData.mandal_id && userRole !== 'admin' ? "bg-slate-50 text-slate-500 cursor-not-allowed" : ""}`}
-                  disabled={formData.mandal_id && userRole !== 'admin'}
-                  value={formData.mandal_id} 
-                  onChange={(e) => setFormData({ ...formData, mandal_id: e.target.value })}
-                >
-                  <option value="">Select Mandal...</option>
-                  {mandals.map((m) => (<option key={m.id} value={m.id}>{m.name}</option>))}
-                </select>
-              </div>
+              {/* ✅ KSHETRA DROPDOWN: Hidden for Nirdeshak/Sanchalak/Nirikshak */}
+              {isAdmin && (
+                <div>
+                  <label className="text-xs font-bold text-slate-500 mb-1 block">Kshetra</label>
+                  <select 
+                    className="w-full p-3 border rounded-xl bg-white"
+                    value={formData.kshetra_id} 
+                    onChange={(e) => setFormData({ ...formData, kshetra_id: e.target.value })}
+                  >
+                    <option value="">Select Kshetra...</option>
+                    {kshetras.map((k) => (<option key={k.id} value={k.id}>{k.name}</option>))}
+                  </select>
+                </div>
+              )}
+
+              {/* ✅ MANDAL DROPDOWN: Hidden for Sanchalak/Nirikshak */}
+              {(isAdmin || isNirdeshak) && (
+                <div>
+                  <label className="text-xs font-bold text-slate-500 mb-1 block">Mandal</label>
+                  <select 
+                    className="w-full p-3 border rounded-xl bg-white"
+                    value={formData.mandal_id} 
+                    onChange={(e) => setFormData({ ...formData, mandal_id: e.target.value })}
+                  >
+                    <option value="">Select Mandal...</option>
+                    {mandals.map((m) => (<option key={m.id} value={m.id}>{m.name}</option>))}
+                  </select>
+                </div>
+              )}
             </div>
           </div>
 

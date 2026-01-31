@@ -1,340 +1,179 @@
-  import React, { useEffect, useState, useRef, useCallback } from 'react';
-  import { 
-    Search, Phone, FileText, Calendar, Zap, X, QrCode, 
-    Filter, SortAsc, Plus, ChevronDown, GripVertical, ArrowUp, ArrowDown, 
-    Check, Trash2, Menu, CheckCircle2, ArrowLeft, AlertCircle, RefreshCcw 
-  } from 'lucide-react';
-  import { Scanner } from '@yudiel/react-qr-scanner'; 
-  import { supabase } from '../../lib/supabase';
-  import EventReports from '../../components/EventReports'; 
-  import { useAuth } from '../../contexts/AuthContext'; 
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { 
+  Search, Phone, FileText, Zap, X, QrCode, Filter, SortAsc, 
+  Check, Trash2, CheckCircle2, AlertCircle, RefreshCcw, Calendar 
+} from 'lucide-react';
+import { Scanner } from '@yudiel/react-qr-scanner'; 
+import { supabase } from '../../lib/supabase';
+import EventReports from '../../components/EventReports'; 
+import { useAuth } from '../../contexts/AuthContext'; 
 
-  // --- CONSTANTS ---
-  const ALL_COLUMNS = [
-    { key: 'name', label: 'Name' },
-    { key: 'surname', label: 'Surname' },
-    { key: 'mobile_number', label: 'Mobile' },
-    { key: 'mandal', label: 'Mandal' },
-    { key: 'designation', label: 'Designation' }
-  ];
+// --- CONSTANTS ---
+const ALL_COLUMNS = [
+  { key: 'name', label: 'Name' },
+  { key: 'surname', label: 'Surname' },
+  { key: 'mobile_number', label: 'Mobile' },
+  { key: 'mandal', label: 'Mandal' },
+  { key: 'designation', label: 'Designation' }
+];
 
-  export default function Home() {
-    // ✅ 1. GET LOADING STATE (Assuming your AuthContext provides 'loading')
-    // If your AuthContext doesn't return 'loading', checking !profile is usually enough, 
-    // but adding a loading check is safer.
-    const { profile, loading: authLoading } = useAuth();
-    
-    // --- PERMISSIONS ---
-    const userRole = (profile?.role || '').toLowerCase();
-    const isAdmin = userRole === 'admin';
-    const isTaker = userRole === 'taker';
-    
-    const canMark = isAdmin || isTaker;
-    const showStats = !isTaker;
+export default function Home() {
+  const { profile, loading: authLoading } = useAuth();
+  
+  const userRole = (profile?.role || '').toLowerCase();
+  const isAdmin = userRole === 'admin';
+  const isTaker = userRole === 'taker';
+  const canMark = isAdmin || isTaker;
+  const showStats = !isTaker;
 
-    // State
-    const [activeEvent, setActiveEvent] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [members, setMembers] = useState([]);
-    const [filteredMembers, setFilteredMembers] = useState([]);
-    const [presentIds, setPresentIds] = useState(new Set());
-    
-    // UI State
-    const [search, setSearch] = useState('');
-    const [isReportsOpen, setIsReportsOpen] = useState(false);
-    const [viewMode, setViewMode] = useState('dashboard'); 
+  const [activeEvent, setActiveEvent] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [members, setMembers] = useState([]);
+  const [filteredMembers, setFilteredMembers] = useState([]);
+  const [presentIds, setPresentIds] = useState(new Set());
+  
+  const [search, setSearch] = useState('');
+  const [isReportsOpen, setIsReportsOpen] = useState(false);
+  const [viewMode, setViewMode] = useState('dashboard'); 
 
-    // Scanner State
-    const [scanMessage, setScanMessage] = useState(null);
-    const [isScanPaused, setIsScanPaused] = useState(false);
-    const [cameraError, setCameraError] = useState(null); 
-    const lastScannedRef = useRef(null);
+  const [scanMessage, setScanMessage] = useState(null);
+  const [isScanPaused, setIsScanPaused] = useState(false);
+  const [cameraError, setCameraError] = useState(null); 
+  const lastScannedRef = useRef(null);
 
-    // Filter & Sort State
-    const [activeFilters, setActiveFilters] = useState([]);
-    const [activeSorts, setActiveSorts] = useState([{ id: 1, column: 'name', asc: true }]);
-    const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-    const [drawerMode, setDrawerMode] = useState('filter');
+  const [activeFilters, setActiveFilters] = useState([]);
+  const [activeSorts, setActiveSorts] = useState([{ id: 1, column: 'name', asc: true }]);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [drawerMode, setDrawerMode] = useState('filter');
 
-    // --- 2. DATA FETCHING (Now dependent on Profile) ---
-    const fetchPrimaryEvent = useCallback(async () => {
-      // 🛑 STOP IF PROFILE IS NOT READY
-      if (authLoading || !profile) return;
-
-      setLoading(true);
-      const { data: events } = await supabase.from('events').select('*, projects(id, name)').eq('is_active', true).limit(1);
-
-      if (events && events.length > 0) {
-        const targetEvent = events[0];
-        setActiveEvent(targetEvent);
-        await fetchAttendanceData(targetEvent);
-      } else {
-        setLoading(false);
-      }
-    }, [profile, authLoading]); // ✅ Re-run when profile loads
-
-   const fetchAttendanceData = async (event) => {
-    // 1. Get IDs of members registered for this project
-    const { data: regData } = await supabase
-      .from('project_registrations')
-      .select('member_id')
-      .eq('project_id', event.project_id);
-    
+  // --- 1. OPTIMIZED DATA FETCHING ---
+  const fetchAttendanceData = useCallback(async (event) => {
+    const { data: regData } = await supabase.from('project_registrations').select('member_id').eq('project_id', event.project_id);
     const ids = regData?.map(r => r.member_id) || [];
     
     if (ids.length === 0) {
       setMembers([]);
-      setLoading(false);
       return;
     }
 
-    // 2. Fetch Members (Include ALL necessary fields for scoping)
-    const { data: memData, error: memError } = await supabase
+    const { data: memData } = await supabase
       .from('members')
       .select('id, name, surname, mandal, mandal_id, kshetra_id, gender, mobile_number, designation')
       .in('id', ids)
       .order('name');
     
-    if (memError) {
-      console.error("Error fetching members:", memError);
-      setLoading(false);
-      return;
-    }
-    
-    // 3. Get Attendance status for the specific event
-    const { data: attData } = await supabase
-      .from('attendance')
-      .select('member_id')
-      .eq('event_id', event.id);
-    
+    const { data: attData } = await supabase.from('attendance').select('member_id').eq('event_id', event.id);
     setPresentIds(new Set(attData?.map(a => a.member_id) || []));
 
-    // 4. ✅ SECURE FILTERING LOGIC
     let scopedMembers = memData || [];
-
     if (!isAdmin && profile) {
-      // 🟢 Sanchalak/Nirikshak: Mandal Scope
-      if (['sanchalak', 'nirikshak'].includes(userRole)) {
-        if (profile.mandal_id) {
+       if (['sanchalak', 'nirikshak'].includes(userRole) && profile.mandal_id) {
           scopedMembers = scopedMembers.filter(m => m.mandal_id === profile.mandal_id);
-        } else {
-          scopedMembers = []; // Safety: No Mandal assigned to leader
-        }
-      }
-      // 🔵 Nirdeshak: Kshetra Scope
-      else if (userRole === 'nirdeshak') {
-        if (profile.kshetra_id) {
+       }
+       else if (userRole === 'nirdeshak' && profile.kshetra_id) {
           scopedMembers = scopedMembers.filter(m => m.kshetra_id === profile.kshetra_id);
-        } else {
-          scopedMembers = []; // Safety: No Kshetra assigned
-        }
-      }
-      // 🟠 Taker: Gender Scope (Crucial Fix)
-      else if (isTaker) {
-        if (profile.gender) {
-          // Make sure this matches your DB values ('Yuvak' or 'Yuvati')
+       }
+       else if (isTaker && profile.gender) {
           scopedMembers = scopedMembers.filter(m => m.gender === profile.gender);
-        } else {
-          // If Taker has no gender assigned in their profile, 
-          // we can't scope them, so we show nothing for safety.
-          console.warn("Taker has no gender assigned in profile context.");
-          scopedMembers = []; 
-        }
-      } 
-      else {
-        scopedMembers = [];
-      }
+       } else if (isTaker && !profile.gender) {
+          scopedMembers = []; // Safety lock if taker has no gender assigned
+       }
     }
-
     setMembers(scopedMembers);
+  }, [profile, isAdmin, isTaker, userRole]);
+
+  const fetchPrimaryEvent = useCallback(async (silent = false) => {
+    if (authLoading || !profile?.id) return; // ✅ Key Fix: Only run if ID exists
+
+    if (!silent) setLoading(true);
+    const { data: events } = await supabase.from('events').select('*, projects(id, name)').eq('is_active', true).limit(1);
+
+    if (events && events.length > 0) {
+      setActiveEvent(events[0]);
+      await fetchAttendanceData(events[0]);
+    }
     setLoading(false);
+  }, [profile?.id, authLoading, fetchAttendanceData]); // ✅ Depends on ID, not whole object
+
+  useEffect(() => {
+    fetchPrimaryEvent();
+    const channel = supabase.channel('home-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, () => {
+        fetchPrimaryEvent(true); // ✅ Silent refresh for realtime updates
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [fetchPrimaryEvent]);
+
+  // --- UI LOGIC ---
+  const myPresentCount = members.filter(m => presentIds.has(m.id)).length;
+  const myTotalCount = members.length;
+
+  useEffect(() => {
+    let result = [...members];
+    if (search) {
+      const lower = search.toLowerCase();
+      result = result.filter(m => (m.name + m.surname + m.id).toLowerCase().includes(lower));
+    }
+    activeFilters.forEach(filter => {
+      if (filter.column && filter.values.length > 0) {
+        result = result.filter(m => filter.values.includes(m[filter.column]));
+      }
+    });
+    result.sort((a, b) => {
+      for (const sort of activeSorts) {
+        if (!sort.column) continue;
+        let valA = (a[sort.column] || '').toString().toLowerCase();
+        let valB = (b[sort.column] || '').toString().toLowerCase();
+        if (valA < valB) return sort.asc ? -1 : 1;
+        if (valA > valB) return sort.asc ? 1 : -1;
+      }
+      return 0;
+    });
+    setFilteredMembers(result);
+  }, [members, search, activeFilters, activeSorts]);
+
+  const toggleAttendance = async (memberId) => {
+    if (!activeEvent || !canMark) return; 
+    const isPresent = presentIds.has(memberId);
+    const newSet = new Set(presentIds);
+    if (isPresent) newSet.delete(memberId); else newSet.add(memberId);
+    setPresentIds(newSet);
+    if (isPresent) {
+      await supabase.from('attendance').delete().eq('event_id', activeEvent.id).eq('member_id', memberId);
+    } else {
+      await supabase.from('attendance').insert([{ event_id: activeEvent.id, member_id: memberId }]);
+    }
   };
 
-    useEffect(() => {
-      fetchPrimaryEvent();
-      const channel = supabase.channel('home-realtime')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, () => fetchPrimaryEvent())
-        .subscribe();
-      return () => { supabase.removeChannel(channel); };
-    }, [fetchPrimaryEvent]);
-
-    // Stats Logic
-    const myPresentCount = members.filter(m => presentIds.has(m.id)).length;
-    const myTotalCount = members.length;
-
-    // --- FILTER & ENGINE ---
-    useEffect(() => {
-      let result = [...members];
-      if (search) {
-        const lower = search.toLowerCase();
-        result = result.filter(m => (m.name + m.surname + m.id).toLowerCase().includes(lower));
-      }
-      activeFilters.forEach(filter => {
-        if (filter.column && filter.values.length > 0) {
-          result = result.filter(m => filter.values.includes(m[filter.column]));
-        }
-      });
-      result.sort((a, b) => {
-        for (const sort of activeSorts) {
-          if (!sort.column) continue;
-          let valA = a[sort.column];
-          let valB = b[sort.column];
-          valA = (valA || '').toString().toLowerCase();
-          valB = (valB || '').toString().toLowerCase();
-          if (valA < valB) return sort.asc ? -1 : 1;
-          if (valA > valB) return sort.asc ? 1 : -1;
-        }
-        return 0;
-      });
-      setFilteredMembers(result);
-    }, [members, search, activeFilters, activeSorts]);
-
-    // --- ACTIONS ---
-    const toggleAttendance = async (memberId) => {
-      if (!activeEvent || !canMark) return; 
-
-      const isPresent = presentIds.has(memberId);
-      const newSet = new Set(presentIds);
-      if (isPresent) newSet.delete(memberId); else newSet.add(memberId);
-      setPresentIds(newSet);
-
-      if (isPresent) {
-        await supabase.from('attendance').delete().eq('event_id', activeEvent.id).eq('member_id', memberId);
+  const handleScan = async (detectedCodes) => {
+    if (isScanPaused || !detectedCodes?.length || !activeEvent || !canMark) return;
+    const rawValue = detectedCodes[0].rawValue;
+    if (lastScannedRef.current === rawValue) return;
+    lastScannedRef.current = rawValue;
+    setIsScanPaused(true);
+    try {
+      const member = members.find(m => m.id === rawValue);
+      if (!member) {
+         setScanMessage({ type: 'error', text: 'Member Not Found / Out of Scope' });
       } else {
-        await supabase.from('attendance').insert([{ event_id: activeEvent.id, member_id: memberId }]);
+         await supabase.from('attendance').upsert([{ event_id: activeEvent.id, member_id: rawValue }], { onConflict: 'event_id, member_id' });
+         setPresentIds(prev => new Set(prev).add(rawValue));
+         setScanMessage({ type: 'success', text: `Marked: ${member.name}` });
       }
-    };
+    } catch (e) { setScanMessage({ type: 'error', text: 'Scan Error' }); }
+    setTimeout(() => { setScanMessage(null); setIsScanPaused(false); lastScannedRef.current = null; }, 2000); 
+  };
 
-    const handleScan = async (detectedCodes) => {
-      if (isScanPaused || !detectedCodes || detectedCodes.length === 0 || !activeEvent || !canMark) return;
-      
-      const rawValue = detectedCodes[0].rawValue;
-      if (lastScannedRef.current === rawValue) return;
-      lastScannedRef.current = rawValue;
-      setIsScanPaused(true);
+  // --- RENDER ---
+  if (authLoading || !profile) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50">
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[#002B3D]"></div>
+      </div>
+    );
+  }
 
-      try {
-        const member = members.find(m => m.id === rawValue);
-        if (!member) {
-          setScanMessage({ type: 'error', text: 'Member Not Found (or out of scope)' });
-        } else {
-          await supabase.from('attendance').upsert([{ event_id: activeEvent.id, member_id: rawValue }], { onConflict: 'event_id, member_id' });
-          setPresentIds(prev => new Set(prev).add(rawValue));
-          setScanMessage({ type: 'success', text: `Welcome! ${member.name}` });
-        }
-      } catch (error) {
-        setScanMessage({ type: 'error', text: 'Scan Error' });
-      }
-
-      setTimeout(() => {
-        setScanMessage(null);
-        setIsScanPaused(false);
-        lastScannedRef.current = null;
-      }, 2000); 
-    };
-
-    const handleScannerError = (error) => {
-      console.error(error);
-      if (error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError') {
-        setCameraError("Camera permission denied.");
-      } else {
-        setCameraError("Camera error.");
-      }
-    };
-
-    const openDrawer = (mode) => {
-      setDrawerMode(mode);
-      setIsDrawerOpen(true);
-    };
-
-    // ✅ 4. LOADING STATE GUARD
-    // If Auth is still loading or Profile isn't ready, show loading screen instead of data
-    if (authLoading || !profile) {
-      return (
-        <div className="flex flex-col h-[100dvh] bg-slate-50 items-center justify-center p-6 text-center pt-safe-top">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#002B3D]"></div>
-          <p className="text-slate-400 mt-4 text-sm font-bold">Verifying Access...</p>
-        </div>
-      );
-    }
-
-    // --- NO EVENT STATE ---
-    if (!loading && !activeEvent) {
-      return (
-        <div className="flex flex-col h-[100dvh] bg-slate-50 items-center justify-center p-6 text-center pt-safe-top">
-          <div className="bg-slate-200 p-6 rounded-full mb-4 shadow-inner"><Calendar size={48} className="text-slate-400"/></div>
-          <h2 className="text-xl font-bold text-[#002B3D]">No Active Event</h2>
-          <p className="text-slate-500 mt-2 max-w-xs text-sm leading-relaxed">Admins must mark an event as "Primary" to start taking attendance.</p>
-          <button onClick={fetchPrimaryEvent} className="mt-6 p-3 bg-white border border-slate-200 rounded-full shadow-sm text-slate-500 hover:bg-slate-50"><RefreshCcw size={20}/></button>
-        </div>
-      );
-    }
-
-    // ==========================================
-    // VIEW 1: FULL SCREEN SCANNER (Only if canMark)
-    // ==========================================
-    if (viewMode === 'scanner' && canMark) {
-      return (
-        <div className="flex flex-col h-[100dvh] bg-[#002B3D] fixed inset-0 z-[100]">
-          {/* Navbar */}
-          <div className="bg-[#002B3D] text-white px-4 py-3 flex justify-between items-center shadow-md z-20 shrink-0 pt-safe-top">
-            <div className="flex items-center gap-3">
-              <h1 className="text-lg font-medium tracking-wide">Scanner Mode</h1>
-            </div>
-            <button onClick={() => setViewMode('dashboard')} className="p-2 bg-white/10 rounded-full text-white hover:bg-white/20"><X size={20} /></button>
-          </div>
-
-          {/* Sub Header */}
-          <div className="bg-white px-4 py-3 flex items-center justify-between shadow-sm border-b border-slate-100 z-10 shrink-0">
-            <div className="flex items-center gap-2">
-              <span className="text-lg font-bold text-slate-800 truncate max-w-[200px]">{activeEvent?.name}</span>
-            </div>
-          </div>
-
-          {/* Scanner Area */}
-          <div className="flex-1 flex flex-col items-center justify-center px-6 relative bg-slate-50">
-            <div className={`absolute top-8 left-0 right-0 flex justify-center transition-all duration-300 transform ${scanMessage ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'}`}>
-              {scanMessage && (
-                <div className={`flex items-center gap-2 px-6 py-2.5 rounded-full shadow-lg font-bold text-white text-sm tracking-wide z-30 ${scanMessage.type === 'success' ? 'bg-[#00A67E]' : 'bg-red-500'}`}>
-                  {scanMessage.type === 'success' ? <CheckCircle2 size={18} strokeWidth={3} /> : <X size={18} />}
-                  {scanMessage.text}
-                </div>
-              )}
-            </div>
-
-            <div className="relative w-72 h-72 bg-black rounded-3xl overflow-hidden shadow-2xl border-4 border-white ring-1 ring-slate-200">
-              {cameraError ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 text-white bg-slate-900">
-                  <AlertCircle className="text-red-500 mb-3" size={40} />
-                  <p className="text-sm font-bold leading-relaxed">{cameraError}</p>
-                </div>
-              ) : (
-                <Scanner 
-                  onScan={handleScan}
-                  onError={handleScannerError}
-                  formats={['qr_code']} 
-                  constraints={{ facingMode: 'environment' }}
-                  components={{ audio: false, finder: false }}
-                  styles={{ container: { width: '100%', height: '100%' }, video: { width: '100%', height: '100%', objectFit: 'cover' } }}
-                />
-              )}
-              
-              {!isScanPaused && !cameraError && (
-                <div className="absolute inset-0 pointer-events-none">
-                    <div className="absolute top-5 left-5 w-10 h-10 border-t-[5px] border-l-[5px] border-white/90 rounded-tl-xl"></div>
-                    <div className="absolute top-5 right-5 w-10 h-10 border-t-[5px] border-r-[5px] border-white/90 rounded-tr-xl"></div>
-                    <div className="absolute bottom-5 left-5 w-10 h-10 border-b-[5px] border-l-[5px] border-white/90 rounded-bl-xl"></div>
-                    <div className="absolute bottom-5 right-5 w-10 h-10 border-b-[5px] border-r-[5px] border-white/90 rounded-br-xl"></div>
-                </div>
-              )}
-            </div>
-            <div className="mt-8 text-center max-w-xs">
-              <p className="text-[#002B3D] font-bold text-[15px]">Place QR code in frame</p>
-            </div>
-          </div>
-        </div>
-      );
-    }
 
     // ==========================================
     // VIEW 2: DASHBOARD

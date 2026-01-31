@@ -324,7 +324,7 @@ export default function UserManagement() {
                            <div>
                               <label className="text-xs font-bold text-orange-700 uppercase mb-1 block">Gender Scope</label>
                               <select value={formData.gender} onChange={e => setFormData({...formData, gender: e.target.value})} className="w-full p-4 border border-orange-200 rounded-xl bg-white font-medium outline-none">
-                                 <option value="Male">Male</option><option value="Female">Female</option>
+                                 <option value="Yuvak">Yuvak</option><option value="Yuvati">Yuvati</option>
                               </select>
                            </div>
                         </div>

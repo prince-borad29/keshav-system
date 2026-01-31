@@ -1,0 +1,36 @@
+@import "tailwindcss";
+/* Ensure body CAN be transparent */
+body {
+  background-color: transparent; /* Changed from #f8fafc */
+}
+#root {
+  width: 100%;
+  /* Removed max-width constraint for root so it can fill the laptop screen */
+  background: #f8fafc;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+/* index.css */
+body {
+  /* ... existing styles ... */
+  padding-top: env(safe-area-inset-top); /* Pushes content below Status Bar */
+  padding-bottom: env(safe-area-inset-bottom); /* Pushes content above Home Bar */
+  background-color: #f8fafc; /* Match your app background */
+}
+
+/* Fix for full-height modals on mobile */
+.h-screen {
+  height: 100vh; /* Fallback */
+  height: 100dvh; /* Dynamic Viewport Height (ignores browser bars) */
+}
+/* Hide number input arrows (spinners) */
+input[type=number]::-webkit-inner-spin-button, 
+input[type=number]::-webkit-outer-spin-button { 
+  -webkit-appearance: none; 
+  margin: 0; 
+}
+input[type=number] {
+  -moz-appearance: textfield; /* Firefox */
+}
+

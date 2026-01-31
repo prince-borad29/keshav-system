@@ -78,7 +78,7 @@ export default function App() {
             } />
 
             <Route path="/registration" element={
-              <RoleRoute allowedRoles={['admin', 'nirdeshak', 'sanchalak']}>
+              <RoleRoute allowedRoles={['admin', 'nirdeshak', 'nirikshak','sanchalak']}>
                 <Registration />
               </RoleRoute>
             } />

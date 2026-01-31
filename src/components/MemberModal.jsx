@@ -1,265 +1,250 @@
-import React, { useState, useEffect } from 'react';
-import { X, Check, User, Phone, Tag, ChevronDown } from 'lucide-react';
-import { supabase } from '../lib/supabase';
-
-const DESIGNATION_OPTIONS = ['Nirdeshak', 'Nirikshak', 'Sanchalak', 'Sah Sanchalak', 'Sampark Karyakar', 'Yuvak'];
-const MANDAL_OPTIONS = ['University Road', 'Pramukh Nagar', 'Gandhigram', 'Gunatit Nagar', 'Kalawad Road', 'Gurudev Park', 'Narayan Nagar', 'Marketing Yard', 'Vaniyavadi', 'Tirupati Park', 'Shri Hari Park', 'Gokul Park', 'Shraddha Park', 'Subhash Nagar'];
-const KSHETRA_OPTIONS = ['Rajkot - 1 Yuva', 'Rajkot - 2 Yuva'];
-const GENDER_OPTIONS = ['Yuvak', 'Yuvati'];
-
-// --- REUSABLE COMPONENTS ---
-
-const CustomSelect = ({ label, value, onChange, options, placeholder }) => (
-  <div className="flex flex-col gap-1.5">
-    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider pl-1">{label}</label>
-    <div className="relative group">
-      <select 
-        value={value} 
-        onChange={onChange} 
-        required
-        className={`w-full p-3.5 pr-10 border rounded-xl outline-none appearance-none bg-slate-50 transition-all font-medium cursor-pointer ${
-          value ? 'text-[#002B3D] border-slate-200 bg-white shadow-sm' : 'text-slate-400 border-slate-100'
-        } focus:border-[#002B3D] focus:ring-1 focus:ring-[#002B3D] focus:bg-white`}
-      >
-        <option value="" disabled>{placeholder}</option>
-        {options.map(o => <option key={o} value={o} className="text-slate-800">{o}</option>)}
-      </select>
-      <ChevronDown 
-        className={`absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none transition-colors ${value ? 'text-[#002B3D]' : 'text-slate-400'}`} 
-        size={18} 
-      />
-    </div>
-  </div>
-);
-
-// Added 'required' prop so we can control it individually
-const CustomInput = ({ label, value, onChange, placeholder, type = "text", icon: Icon, required = true, isOptionalLabel = false }) => (
-  <div className="flex flex-col gap-1.5">
-    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider pl-1">
-      {label} {isOptionalLabel && <span className="text-slate-400 font-normal lowercase"></span>}
-    </label>
-    <div className="relative group">
-      {Icon && <Icon className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[#002B3D] transition-colors" size={18} />}
-      
-      <input 
-        required={required} 
-        type={type} 
-        value={value || ''} // Handle null values safely
-        onChange={onChange} 
-        className={`w-full p-3.5 border rounded-xl outline-none transition-all font-medium text-[#002B3D] placeholder:text-slate-400
-          ${Icon ? 'pl-11' : 'pl-4'} pr-10
-          ${value ? 'border-slate-200 bg-white shadow-sm' : 'border-slate-100 bg-slate-50'}
-          focus:border-[#002B3D] focus:ring-1 focus:ring-[#002B3D] focus:bg-white`} 
-        placeholder={placeholder} 
-      />
-      
-      {value && value.toString().length > 0 && (
-        <button
-          type="button"
-          onClick={() => onChange({ target: { value: '' } })}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-500 p-1 rounded-full hover:bg-slate-100 transition-all"
-        >
-          <X size={16} />
-        </button>
-      )}
-    </div>
-  </div>
-);
-
-// --- MAIN COMPONENT ---
+import React, { useEffect, useState } from "react";
+import { X, Save, Tag } from "lucide-react";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../contexts/AuthContext";
 
 export default function MemberModal({ isOpen, onClose, memberToEdit, onSave }) {
-  const [formData, setFormData] = useState({
-    name: '', surname: '', father_name: '', mobile_number: '',
-    mandal: '', kshetra: '', designation: '', gender: ''
-  });
-  
-  const [availableTags, setAvailableTags] = useState([]);
-  const [selectedContexts, setSelectedContexts] = useState([]); 
+  const { profile } = useAuth();
   const [loading, setLoading] = useState(false);
 
+  // Dropdown Data
+  const [mandals, setMandals] = useState([]);
+  const [kshetras, setKshetras] = useState([]);
+  const [availableTags, setAvailableTags] = useState([]);
+
+  // Form State
+  const [formData, setFormData] = useState({
+    id: "",
+    name: "",
+    surname: "",
+    father_name: "",
+    mobile_number: "",
+    designation: "Yuvak",
+    gender: "Yuvak",
+    mandal_id: "",
+    kshetra_id: "",
+  });
+
+  // Selected Tag IDs
+  const [selectedTags, setSelectedTags] = useState(new Set());
+
+  const userRole = (profile?.role || "").toLowerCase();
+
+  // 1. Fetch Options (Mandals, Kshetras, Tags)
   useEffect(() => {
-    if (isOpen) {
-      const fetchTags = async () => {
-        const { data } = await supabase.from('tags').select('*');
-        if (data) {
-          const memberTags = data.filter(t => t.contexts?.includes('Member'));
-          setAvailableTags(memberTags);
-        }
-      };
-      fetchTags();
-    }
+    const fetchData = async () => {
+      const { data: mData } = await supabase.from("mandals").select("id, name");
+      const { data: kData } = await supabase.from("kshetras").select("id, name");
+      const { data: tData } = await supabase.from("tags").select("id, name, color");
+
+      setMandals(mData || []);
+      setKshetras(kData || []);
+      setAvailableTags(tData || []);
+    };
+    if (isOpen) fetchData();
   }, [isOpen]);
 
+  // 2. Sync Form & Autofill Logic
   useEffect(() => {
     if (memberToEdit) {
       setFormData({
-        name: memberToEdit.name || '',
-        surname: memberToEdit.surname || '',
-        father_name: memberToEdit.father_name || '', // Can be null now
-        mobile_number: memberToEdit.mobile_number || '',
-        mandal: memberToEdit.mandal || '',
-        kshetra: memberToEdit.kshetra || '',
-        designation: memberToEdit.designation || '',
-        gender: memberToEdit.gender || ''
+        id: memberToEdit.id || "",
+        name: memberToEdit.name || "",
+        surname: memberToEdit.surname || "",
+        father_name: memberToEdit.father_name || "",
+        mobile_number: memberToEdit.mobile_number || "",
+        designation: memberToEdit.designation || "Yuvak",
+        gender: memberToEdit.gender || "Yuvak",
+        mandal_id: memberToEdit.mandal_id || "",
+        kshetra_id: memberToEdit.kshetra_id || "",
       });
-      const currentTags = memberToEdit.entity_tags?.map(et => et.tag_id) || [];
-      setSelectedContexts(currentTags);
+
+      const fetchMemberTags = async () => {
+        const { data } = await supabase
+          .from("entity_tags")
+          .select("tag_id")
+          .eq("entity_id", memberToEdit.id)
+          .eq("entity_type", "Member");
+        if (data) setSelectedTags(new Set(data.map((t) => t.tag_id)));
+      };
+      fetchMemberTags();
     } else {
-      setFormData({ name: '', surname: '', father_name: '', mobile_number: '', mandal: '', kshetra: '', designation: '', gender: '' });
-      setSelectedContexts([]);
+      // ✅ AUTOFILL LOGIC FOR NEW ENTRIES
+      setFormData({
+        id: "",
+        name: "",
+        surname: "",
+        father_name: "",
+        mobile_number: "",
+        designation: "Yuvak",
+        gender: profile?.gender || "Yuvak",
+        // Sanchalak / Nirikshak: Autofill BOTH
+        mandal_id: ["sanchalak", "nirikshak"].includes(userRole) ? profile?.mandal_id : "",
+        // Nirdeshak / Sanchalak / Nirikshak: Autofill Kshetra
+        kshetra_id: ["nirdeshak", "sanchalak", "nirikshak"].includes(userRole) ? profile?.kshetra_id : "",
+      });
+      setSelectedTags(new Set());
     }
-  }, [memberToEdit, isOpen]);
+  }, [memberToEdit, isOpen, profile, userRole]);
 
-  const toggleTag = (id) => setSelectedContexts(prev => prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]);
+  // --- ACTIONS ---
 
-  const generateId = () => {
-    // ID generation only relies on Name, Surname, and Mobile. Father Name is irrelevant here.
-    const { name, surname, mobile_number } = formData;
-    if (!name || !surname || !mobile_number || mobile_number.length < 5) return null;
-    return `${name[0].toUpperCase()}${surname[0].toUpperCase()}${mobile_number.slice(-5)}`;
+  const generateId = (name, surname) => {
+    const prefix = (name.charAt(0) + surname.charAt(0)).toUpperCase();
+    const randomNum = Math.floor(10000 + Math.random() * 90000); // 5 digit random
+    return `${prefix}${randomNum}`;
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const toggleTag = (tagId) => {
+    const newTags = new Set(selectedTags);
+    if (newTags.has(tagId)) newTags.delete(tagId);
+    else newTags.add(tagId);
+    setSelectedTags(newTags);
+  };
+
+  const handleSubmit = async () => {
+    if (!formData.name || !formData.surname) return alert("Name and Surname required");
+
     setLoading(true);
-    try {
-      let finalId = memberToEdit ? memberToEdit.id : generateId();
-      
-      // Strict Check: Ensure core fields exist
-      if (!finalId) throw new Error("Name, Surname, and valid Mobile (5+ digits) required.");
 
-      // Prepare payload (convert empty strings to null for father_name if preferred, or keep as '')
-      const payload = { 
-        id: finalId, 
-        ...formData,
-        // Optional: Ensure father_name is saved as NULL if empty string
-        father_name: formData.father_name ? formData.father_name : null 
-      };
-      
-      if (memberToEdit) {
-        await supabase.from('members').update(payload).eq('id', finalId);
-      } else {
-        await supabase.from('members').insert([payload]);
-      }
+    const selectedMandal = mandals.find((m) => m.id === formData.mandal_id)?.name || null;
+    const selectedKshetra = kshetras.find((k) => k.id === formData.kshetra_id)?.name || null;
 
-      // Handle Tags
-      await supabase.from('entity_tags').delete().eq('entity_id', finalId);
-      
-      if (selectedContexts.length > 0) {
-        const tagInserts = selectedContexts.map(tagId => ({ 
-          entity_id: finalId, 
-          tag_id: tagId, 
-          entity_type: 'Member' 
-        }));
-        await supabase.from('entity_tags').insert(tagInserts);
-      }
+    // Generate ID only if it's a new member
+    const finalId = memberToEdit ? formData.id : generateId(formData.name, formData.surname);
 
-      onSave(); 
-      onClose();
-    } catch (error) {
-      alert("Error: " + error.message);
-    } finally {
-      setLoading(false);
+    const payload = {
+      id: finalId,
+      name: formData.name,
+      surname: formData.surname,
+      father_name: formData.father_name || null,
+      mobile_number: formData.mobile_number || null,
+      designation: formData.designation,
+      gender: formData.gender,
+      mandal_id: formData.mandal_id || null,
+      kshetra_id: formData.kshetra_id || null,
+      mandal: selectedMandal,
+      kshetra: selectedKshetra,
+    };
+
+    let error;
+    if (memberToEdit) {
+      const { error: err } = await supabase.from("members").update(payload).eq("id", memberToEdit.id);
+      error = err;
+    } else {
+      const { error: err } = await supabase.from("members").insert([payload]);
+      error = err;
     }
+
+    if (error) {
+      alert("Error saving member: " + error.message);
+      setLoading(false);
+      return;
+    }
+
+    // Save Tags
+    await supabase.from("entity_tags").delete().eq("entity_id", finalId).eq("entity_type", "Member");
+    if (selectedTags.size > 0) {
+      const tagInserts = Array.from(selectedTags).map((tagId) => ({
+        entity_id: finalId,
+        entity_type: "Member",
+        tag_id: tagId,
+      }));
+      await supabase.from("entity_tags").insert(tagInserts);
+    }
+
+    setLoading(false);
+    onSave(finalId);
+    onClose();
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose}></div>
-      
-      <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
-        
-        {/* Header */}
-        <div className="bg-[#002B3D] p-5 flex justify-between items-center text-white shrink-0">
-          <h2 className="text-xl font-bold flex items-center gap-2">
-            <User size={24} className="text-sky-300"/> 
-            {memberToEdit ? 'Edit Profile' : 'New Member'}
-          </h2>
-          <button onClick={onClose} className="p-2 bg-white/10 rounded-full hover:bg-white/20 transition-colors">
-            <X size={20} />
-          </button>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="bg-[#002B3D] p-4 flex justify-between items-center text-white shrink-0">
+          <h3 className="font-bold text-lg">{memberToEdit ? "Edit Profile" : "New Member"}</h3>
+          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full"><X size={20} /></button>
         </div>
 
-        {/* Form Body */}
-        <div className="overflow-y-auto p-6 flex-1">
-          <form id="memberForm" onSubmit={handleSubmit} className="space-y-8">
-            
-            {/* Section 1: Personal Info */}
-            <div className="space-y-4">
-              <h3 className="text-sm font-bold text-[#002B3D] uppercase tracking-wider border-b pb-2 flex items-center gap-2">
-                <User size={16} /> Personal Info
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                {/* ✅ SWAPPED: Surname First, then Name */}
-                <CustomInput label="Surname" value={formData.surname} onChange={e => setFormData({...formData, surname: e.target.value})} placeholder="Enter Surname" />
-                <CustomInput label="First Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Enter Name" />
-                
-                {/* ✅ FATHER NAME: Not Required + Label Update */}
-                <CustomInput 
-                  label="Father Name" 
-                  value={formData.father_name} 
-                  onChange={e => setFormData({...formData, father_name: e.target.value})} 
-                  placeholder="Enter Father Name" 
-                  required={false} 
-                  isOptionalLabel={true}
-                />
-                
-                <CustomInput label="Mobile Number" type="number" icon={Phone} value={formData.mobile_number} onChange={e => setFormData({...formData, mobile_number: e.target.value})} placeholder="Enter Mobile" />
+        <div className="p-6 overflow-y-auto space-y-5">
+          <div className="space-y-4">
+            <h4 className="text-xs font-bold text-slate-400 uppercase border-b pb-1">Personal Details</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-bold text-slate-500 mb-1 block">First Name</label>
+                <input className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:border-[#002B3D]" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="First Name" />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 mb-1 block">Surname</label>
+                <input className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:border-[#002B3D]" value={formData.surname} onChange={(e) => setFormData({ ...formData, surname: e.target.value })} placeholder="Surname" />
+              </div>
+            </div>
+            <input className="w-full p-3 border border-slate-200 rounded-xl outline-none" value={formData.father_name} onChange={(e) => setFormData({ ...formData, father_name: e.target.value })} placeholder="Father's Name" />
+            <input className="w-full p-3 border border-slate-200 rounded-xl outline-none" value={formData.mobile_number} onChange={(e) => setFormData({ ...formData, mobile_number: e.target.value })} placeholder="Mobile Number" />
+          </div>
+
+          <div className="space-y-4">
+            <h4 className="text-xs font-bold text-slate-400 uppercase border-b pb-1">Organization</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-bold text-slate-500 mb-1 block">Designation</label>
+                <select className="w-full p-3 border border-slate-200 rounded-xl bg-white" value={formData.designation} onChange={(e) => setFormData({ ...formData, designation: e.target.value })}>
+                  {["Nirdeshak", "Nirikshak", "Sanchalak", "Sah Sanchalak", "Sampark Karyakar", "Yuvak"].map((d) => (<option key={d} value={d}>{d}</option>))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 mb-1 block">Gender</label>
+                <select className="w-full p-3 border border-slate-200 rounded-xl bg-white" value={formData.gender} onChange={(e) => setFormData({ ...formData, gender: e.target.value })}>
+                  <option value="Yuvak">Yuvak</option>
+                  <option value="Yuvati">Yuvati</option>
+                </select>
               </div>
             </div>
 
-            {/* Section 2: Organization */}
-            <div className="space-y-4">
-              <h3 className="text-sm font-bold text-[#002B3D] uppercase tracking-wider border-b pb-2 flex items-center gap-2">
-                <Tag size={16} /> Organization Details
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                <CustomSelect label="Designation" value={formData.designation} onChange={e => setFormData({...formData, designation: e.target.value})} options={DESIGNATION_OPTIONS} placeholder="Select Designation" />
-                <CustomSelect label="Gender" value={formData.gender} onChange={e => setFormData({...formData, gender: e.target.value})} options={GENDER_OPTIONS} placeholder="Select Gender" />
-                <CustomSelect label="Mandal" value={formData.mandal} onChange={e => setFormData({...formData, mandal: e.target.value})} options={MANDAL_OPTIONS} placeholder="Select Mandal" />
-                <CustomSelect label="Kshetra" value={formData.kshetra} onChange={e => setFormData({...formData, kshetra: e.target.value})} options={KSHETRA_OPTIONS} placeholder="Select Kshetra" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-bold text-slate-500 mb-1 block">Kshetra</label>
+                <select 
+                  className={`w-full p-3 border rounded-xl bg-white ${formData.kshetra_id && userRole !== 'admin' ? "bg-slate-50 text-slate-500 cursor-not-allowed" : ""}`}
+                  disabled={formData.kshetra_id && userRole !== 'admin'}
+                  value={formData.kshetra_id} 
+                  onChange={(e) => setFormData({ ...formData, kshetra_id: e.target.value })}
+                >
+                  <option value="">Select Kshetra...</option>
+                  {kshetras.map((k) => (<option key={k.id} value={k.id}>{k.name}</option>))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 mb-1 block">Mandal</label>
+                <select 
+                  className={`w-full p-3 border rounded-xl bg-white ${formData.mandal_id && userRole !== 'admin' ? "bg-slate-50 text-slate-500 cursor-not-allowed" : ""}`}
+                  disabled={formData.mandal_id && userRole !== 'admin'}
+                  value={formData.mandal_id} 
+                  onChange={(e) => setFormData({ ...formData, mandal_id: e.target.value })}
+                >
+                  <option value="">Select Mandal...</option>
+                  {mandals.map((m) => (<option key={m.id} value={m.id}>{m.name}</option>))}
+                </select>
               </div>
             </div>
+          </div>
 
-            {/* Section 3: Tags */}
-            <div className="space-y-4">
-               <h3 className="text-sm font-bold text-[#002B3D] uppercase tracking-wider border-b pb-2 flex items-center gap-2">
-                <Check size={16} /> Assign Tags
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {availableTags.length === 0 && <span className="text-sm text-slate-400 italic">No tags available.</span>}
-                {availableTags.map(tag => {
-                  const isSelected = selectedContexts.includes(tag.id);
-                  return (
-                    <button
-                      key={tag.id}
-                      type="button"
-                      onClick={() => toggleTag(tag.id)}
-                      className={`px-4 py-2 rounded-lg text-xs font-bold transition-all border shadow-sm flex items-center gap-2 ${
-                        isSelected 
-                          ? 'text-white border-transparent scale-105 shadow-md ring-2 ring-offset-1 ring-slate-200' 
-                          : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                      }`}
-                      style={{ backgroundColor: isSelected ? tag.color : undefined }}
-                    >
-                      {tag.name} {isSelected && <Check size={14} strokeWidth={3} />}
-                    </button>
-                  );
-                })}
-              </div>
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold text-slate-400 uppercase border-b pb-1 flex items-center gap-2"><Tag size={14} /> Assign Tags</h4>
+            <div className="flex flex-wrap gap-2">
+              {availableTags.map((tag) => (
+                <button key={tag.id} onClick={() => toggleTag(tag.id)} className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${selectedTags.has(tag.id) ? "bg-[#002B3D] text-white border-[#002B3D]" : "bg-white text-slate-600 border-slate-200"}`}>{tag.name}</button>
+              ))}
             </div>
-
-          </form>
+          </div>
         </div>
 
-        {/* Footer */}
-        <div className="p-5 border-t bg-slate-50 flex justify-end gap-3 shrink-0">
-          <button type="button" onClick={onClose} className="px-6 py-3 font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors">Cancel</button>
-          <button form="memberForm" disabled={loading} className="px-8 py-3 bg-[#002B3D] text-white font-bold rounded-xl hover:bg-[#155e7a] disabled:opacity-70 shadow-lg shadow-sky-900/20">
-            {loading ? 'Saving...' : 'Save Member'}
+        <div className="p-4 border-t bg-slate-50 flex justify-end gap-3 shrink-0">
+          <button onClick={onClose} className="px-6 py-3 text-slate-500 font-bold hover:bg-slate-200 rounded-xl">Cancel</button>
+          <button onClick={handleSubmit} disabled={loading} className="px-6 py-3 bg-[#002B3D] text-white font-bold rounded-xl hover:bg-[#0b3d52] flex items-center gap-2 shadow-lg">
+            <Save size={18} /> {loading ? "Saving..." : "Save Member"}
           </button>
         </div>
       </div>

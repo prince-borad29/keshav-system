@@ -9,8 +9,9 @@ import { supabase } from '../../lib/supabase';
 import EventModal from '../../components/EventModal';
 import EventReports from '../../components/EventReports';
 import ConfirmModal from '../../components/ConfirmModal'; 
+import { useAuth } from '../../contexts/AuthContext'; // <--- 1. IMPORT AUTH
 
-// --- CONSTANTS ---
+// ... (Keep CONSTANTS) ...
 const ALL_COLUMNS = [
   { key: 'name', label: 'Event Name' },
   { key: 'start_date', label: 'Start Date' },
@@ -21,6 +22,10 @@ export default function Events() {
   const { state } = useLocation();
   const navigate = useNavigate();
   const project = state?.project;
+  
+  const { profile } = useAuth(); // <--- 2. GET PROFILE
+  // 3. DEFINE PERMISSIONS
+  const canManageEvents = ['admin'].includes(profile?.role);
 
   const [events, setEvents] = useState([]);
   const [filteredEvents, setFilteredEvents] = useState([]);
@@ -39,22 +44,18 @@ export default function Events() {
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [reportModalData, setReportModalData] = useState(null);
 
-  // DELETE STATE
   const [deleteId, setDeleteId] = useState(null);
 
   const fetchEvents = useCallback(async () => {
     if (!project) return;
     setLoading(true);
 
-    // 1. Get Registration Count
     const { count } = await supabase.from('project_registrations').select('*', { count: 'exact', head: true }).eq('project_id', project.id);
     setRegCount(count || 0);
 
-    // 2. Get Events
     const { data: eventsData } = await supabase.from('events').select('*').eq('project_id', project.id);
 
     if (eventsData) {
-      // Auto-expire old events
       const now = new Date();
       eventsData.forEach(async (e) => {
         if (e.is_active && e.end_date) {
@@ -68,7 +69,6 @@ export default function Events() {
 
       const eventIds = eventsData.map(e => e.id);
       
-      // 3. Get Attendance Counts
       let attCounts = {};
       if (eventIds.length > 0) {
         const { data: attData } = await supabase.from('attendance').select('event_id').in('event_id', eventIds);
@@ -77,14 +77,12 @@ export default function Events() {
         }
       }
 
-      // 4. ✅ GET TAGS (Fixed Query)
       const { data: tagsData } = await supabase
         .from('entity_tags')
         .select('entity_id, tag_id, tags ( name, color )')
         .eq('entity_type', 'Event')
         .in('entity_id', eventIds);
 
-      // 5. Merge Data
       const finalEvents = eventsData.map(e => {
         const myTags = tagsData ? tagsData.filter(t => t.entity_id === e.id) : [];
         return { 
@@ -207,7 +205,6 @@ export default function Events() {
           <button onClick={() => navigate('/projects')} className="p-2 hover:bg-slate-100 rounded-full text-slate-500"><ArrowLeft size={24} /></button>
           <div>
             <h1 className="text-xl font-bold text-[#002B3D] leading-none">{project?.name}</h1>
-            <span className="text-xs text-slate-400 font-medium">Events Management</span>
           </div>
           <div className="ml-auto flex gap-2">
             <button onClick={fetchEvents} className="p-2.5 bg-slate-100 rounded-xl text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform">
@@ -233,51 +230,49 @@ export default function Events() {
                <div 
                  key={e.id} 
                  onClick={() => navigate('/attendance', { state: { event: e, project, totalReg: regCount } })} 
-                 // ✅ Z-INDEX FIX: Pop to front if menu is open
                  className={`bg-white p-4 rounded-xl shadow-sm border relative cursor-pointer active:scale-[0.99] transition-all ${e.is_active ? 'border-sky-300 ring-1 ring-sky-100' : 'border-slate-100'} ${activeMenuId === e.id ? 'z-20' : ''}`}
                >
                   <div className="flex justify-between items-start">
                       <div className="flex items-start gap-3 w-full">
-                         <div className="bg-slate-100 p-2.5 rounded-xl text-center min-w-[60px] shrink-0">
-                            <div className="text-xs font-bold text-slate-500 uppercase">{date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
-                            <div className="text-xl font-bold text-[#002B3D]">{date.getDate()}</div>
-                         </div>
-                         <div className="min-w-0 flex-1">
-                            <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 truncate">
-                              {e.name}
-                              {e.is_active && <span className="bg-sky-100 text-sky-700 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide shrink-0">Primary</span>}
-                            </h3>
-                            
-                            {/* ✅ TAGS DISPLAY */}
-                            <div className="flex flex-wrap gap-1 mt-1">
-                              {e.entity_tags?.map((et, index) => (
-                                <span 
-                                  key={index} 
-                                  className="text-[10px] px-2 py-0.5 rounded-full font-bold text-white shadow-sm"
-                                  style={{ backgroundColor: et.tags?.color || '#94a3b8' }}
-                                >
-                                  {et.tags?.name}
-                                </span>
-                              ))}
-                            </div>
+                          <div className="bg-slate-100 p-2.5 rounded-xl text-center min-w-[60px] shrink-0">
+                             <div className="text-xs font-bold text-slate-500 uppercase">{date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                             <div className="text-xl font-bold text-[#002B3D]">{date.getDate()}</div>
+                          </div>
+                          <div className="min-w-0 flex-1">
+                             <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 truncate">
+                               {e.name}
+                               {e.is_active && <span className="bg-sky-100 text-sky-700 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide shrink-0">Primary</span>}
+                             </h3>
+                             
+                             <div className="flex flex-wrap gap-1 mt-1">
+                               {e.entity_tags?.map((et, index) => (
+                                 <span key={index} className="text-[10px] px-2 py-0.5 rounded-full font-bold text-white shadow-sm" style={{ backgroundColor: et.tags?.color || '#94a3b8' }}>{et.tags?.name}</span>
+                               ))}
+                             </div>
 
-                            <div className="flex items-center gap-2 text-xs text-slate-500 font-bold mt-2 bg-slate-50 px-2 py-1 rounded w-fit">
-                               <Clock size={12} className="text-slate-400" /> {formatTimeRange(e.start_date, e.end_date)}
-                            </div>
-                            <div className="mt-2 inline-flex items-center gap-1 px-2.5 py-1 bg-[#002B3D] text-white text-xs font-bold rounded-full">
-                               {e.present_count} <span className="text-white/60">/ {regCount} Present</span>
-                            </div>
-                         </div>
+                             <div className="flex items-center gap-2 text-xs text-slate-500 font-bold mt-2 bg-slate-50 px-2 py-1 rounded w-fit">
+                                <Clock size={12} className="text-slate-400" /> {formatTimeRange(e.start_date, e.end_date)}
+                             </div>
+                             <div className="mt-2 inline-flex items-center gap-1 px-2.5 py-1 bg-[#002B3D] text-white text-xs font-bold rounded-full">
+                                {e.present_count} <span className="text-white/60">/ {regCount} Present</span>
+                             </div>
+                          </div>
                       </div>
                       <button onClick={(ev) => { ev.stopPropagation(); setActiveMenuId(activeMenuId === e.id ? null : e.id); }} className="p-2 text-slate-400 hover:bg-slate-50 rounded-full shrink-0"><MoreVertical size={20} /></button>
                   </div>
 
                   {activeMenuId === e.id && (
                     <div className="absolute right-4 top-12 bg-white shadow-xl border border-slate-100 rounded-xl w-48 py-2 z-30 animate-in zoom-in-95 duration-100 origin-top-right" onClick={(ev) => ev.stopPropagation()}>
-                       <button onClick={() => togglePrimary(e)} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 font-medium flex items-center gap-2"><CheckCircle size={16} className={e.is_active ? 'text-sky-600' : ''}/> {e.is_active ? 'Unmark Primary' : 'Make Primary'}</button>
                        <button onClick={() => openReportForEvent(e)} className="w-full text-left px-4 py-2 text-sm text-[#002B3D] hover:bg-slate-50 font-medium flex items-center gap-2"><FileText size={16} /> Reports</button>
-                       <button onClick={() => { setEventToEdit(e); setIsModalOpen(true); setActiveMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 font-medium flex items-center gap-2"><Edit2 size={16} /> Edit</button>
-                       <button onClick={() => handleDelete(e.id)} className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 font-medium flex items-center gap-2"><Trash2 size={16} /> Delete</button>
+                       
+                       {/* 4. CONDITIONAL RENDER: MANAGEMENT ACTIONS */}
+                       {canManageEvents && (
+                         <>
+                           <button onClick={() => togglePrimary(e)} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 font-medium flex items-center gap-2"><CheckCircle size={16} className={e.is_active ? 'text-sky-600' : ''}/> {e.is_active ? 'Unmark Primary' : 'Make Primary'}</button>
+                           <button onClick={() => { setEventToEdit(e); setIsModalOpen(true); setActiveMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 font-medium flex items-center gap-2"><Edit2 size={16} /> Edit</button>
+                           <button onClick={() => handleDelete(e.id)} className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 font-medium flex items-center gap-2"><Trash2 size={16} /> Delete</button>
+                         </>
+                       )}
                     </div>
                   )}
                </div>
@@ -286,7 +281,10 @@ export default function Events() {
         )}
       </div>
 
-      <button onClick={() => { setEventToEdit(null); setIsModalOpen(true); }} className="fixed bottom-6 right-6 w-14 h-14 bg-[#002B3D] text-white rounded-full shadow-lg flex items-center justify-center hover:bg-[#155e7a] hover:scale-105 transition-all z-20"><Plus size={28} /></button>
+      {/* 5. HIDE ADD BUTTON FOR NON-MANAGERS */}
+      {canManageEvents && (
+        <button onClick={() => { setEventToEdit(null); setIsModalOpen(true); }} className="fixed bottom-6 right-6 w-14 h-14 bg-[#002B3D] text-white rounded-full shadow-lg flex items-center justify-center hover:bg-[#155e7a] hover:scale-105 transition-all z-20"><Plus size={28} /></button>
+      )}
       
       <EventModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} eventToEdit={eventToEdit} projectId={project?.id} onSave={fetchEvents} />
       <EventReports isOpen={!!reportModalData} onClose={() => setReportModalData(null)} event={reportModalData?.event} members={reportModalData?.members} presentIds={reportModalData?.presentIds} />
@@ -304,6 +302,8 @@ export default function Events() {
     </div>
   );
 }
+
+// ... (KEEP RightDrawer and MultiSelectDropdown EXACTLY AS THEY WERE) ...
 
 // --- REUSED DRAWER & DROPDOWN ---
 function RightDrawer({ isOpen, mode, onClose, onApply, initialFilters, initialSorts, data }) {

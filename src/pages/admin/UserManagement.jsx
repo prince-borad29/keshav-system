@@ -1,306 +1,437 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Users, UserPlus, Shield, CheckCircle, Copy, RefreshCw, Smartphone 
+  Users, UserPlus, CheckCircle, RefreshCw, Trash2, Search, 
+  Link as LinkIcon, X, Copy, Globe, List, Edit2, Save
 } from 'lucide-react';
 import { supabase, createGhostClient } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 
 export default function UserManagement() {
-  const [activeUsers, setActiveUsers] = useState([]);
-  const [hierarchy, setHierarchy] = useState({ kshetras: [], mandals: [] });
+  const { profile } = useAuth();
+  
+  // Data State
+  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   
-  // Success State (To show the credentials card)
-  const [createdUser, setCreatedUser] = useState(null);
+  // Search & Selection
+  const [memberQuery, setMemberQuery] = useState('');
+  const [memberResults, setMemberResults] = useState([]);
+  const [selectedMember, setSelectedMember] = useState(null);
 
   // Form State
+  const [viewMode, setViewMode] = useState('list'); // 'list' | 'create' | 'edit' | 'success'
+  const [createdUsersList, setCreatedUsersList] = useState([]); // Stores bulk created creds
+
   const [formData, setFormData] = useState({
+    id: null, // For Edit Mode
+    role: 'sanchalak',
+    // Standard User Fields
     email: '',
     password: '',
-    role: 'sanchalak', // Default
+    // Taker Fields
+    takerCount: 1, 
     gender: 'Male',
-    kshetra_id: '',
-    mandal_id: ''
+    // Linked Member Fields
+    member_id: null
   });
 
+  useEffect(() => { fetchData(); }, []);
+
+  // --- AUTO-FILL LOGIC (Linked Members) ---
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (selectedMember) {
+      setFormData(prev => ({
+        ...prev,
+        member_id: selectedMember.id,
+        gender: selectedMember.gender === 'Female' ? 'Female' : 'Male'
+      }));
+    }
+  }, [selectedMember]);
 
   const fetchData = async () => {
-    // 1. Fetch Active Profiles
-    const { data: profiles } = await supabase.from('user_profiles').select('*').order('created_at', { ascending: false });
-    setActiveUsers(profiles || []);
-
-    // 2. Fetch Hierarchy
-    const { data: kData } = await supabase.from('kshetras').select('*');
-    const { data: mData } = await supabase.from('mandals').select('*');
-    setHierarchy({ kshetras: kData || [], mandals: mData || [] });
+    const { data: userData } = await supabase
+      .from('user_profiles')
+      .select('*, members(name, surname)') 
+      .order('created_at', { ascending: false });
+    setUsers(userData || []);
   };
 
-  const generatePassword = () => {
-    const chars = "abcdefghjkmnpqrstuvwxyz23456789"; // No ambiguous chars like i,l,1,o,0
-    let pass = "Keshav@";
-    for (let i = 0; i < 4; i++) {
-      pass += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    setFormData(prev => ({ ...prev, password: pass }));
+  // --- MEMBER SEARCH ---
+  useEffect(() => {
+    const searchMembers = async () => {
+      if (memberQuery.length < 2) { setMemberResults([]); return; }
+      const { data } = await supabase.from('members')
+        .select('*, kshetras(name), mandals(name)')
+        .or(`name.ilike.%${memberQuery}%,surname.ilike.%${memberQuery}%,id.ilike.%${memberQuery}%`)
+        .limit(5);
+      setMemberResults(data || []);
+    };
+    const timer = setTimeout(searchMembers, 400);
+    return () => clearTimeout(timer);
+  }, [memberQuery]);
+
+  // --- HELPER: GENERATE RANDOM STRING ---
+  const generateRandomSuffix = (length = 4) => {
+    const chars = "23456789abcdefghjkmnpqrstuvwxyz";
+    let result = "";
+    for (let i = 0; i < length; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+    return result;
   };
 
-  const handleCreateUser = async () => {
-    if (!formData.email || !formData.password) return alert("Email and Password required");
-    
+  const generatePassword = () => `Keshav@${generateRandomSuffix(4)}`;
+
+  // --- ACTIONS ---
+
+  // 1. CREATE USER(S)
+  const handleCreate = async () => {
+    const isTaker = formData.role === 'taker';
+    const ghost = createGhostClient();
+    const adminId = profile?.id || null;
+    let newCredentials = [];
+
     setLoading(true);
-    setCreatedUser(null);
-
+    
     try {
-      // 1. Prepare the Invite Data (This tells the DB what role to give)
-      const inviteData = {
-        email: formData.email.toLowerCase(),
-        role: formData.role,
-        gender: formData.gender,
-        kshetra_id: formData.role === 'nirdeshak' ? formData.kshetra_id : null,
-        mandal_id: ['nirikshak', 'sanchalak'].includes(formData.role) ? formData.mandal_id : null
-      };
+      if (isTaker) {
+        // --- BULK CREATE MODE ---
+        const count = parseInt(formData.takerCount) || 1;
+        if (count > 20) return alert("Please create max 20 takers at a time.");
 
-      // 2. Insert into 'app_invitations' FIRST
-      // The database trigger we wrote earlier will watch for the new user and apply these details.
-      const { error: inviteError } = await supabase.from('app_invitations').insert([inviteData]);
-      if (inviteError) throw inviteError;
+        for (let i = 0; i < count; i++) {
+          const suffix = generateRandomSuffix(5);
+          const autoEmail = `taker.${suffix}@keshavsystem.com`;
+          const autoPassword = generatePassword();
+          const autoName = `Keshav System Taker ${suffix.toUpperCase()}`;
 
-      // 3. Create the Auth User using "Ghost Client"
-      const ghost = createGhostClient();
-      const { data: authData, error: authError } = await ghost.auth.signUp({
-        email: formData.email,
-        password: formData.password,
-      });
+          const { error } = await ghost.auth.signUp({
+            email: autoEmail,
+            password: autoPassword,
+            options: { 
+              data: {
+                role: 'taker',
+                created_by: adminId,
+                member_id: null,
+                first_name: "Keshav System",
+                last_name: `Taker ${suffix.toUpperCase()}`,
+                gender: formData.gender,
+                kshetra_id: null,
+                mandal_id: null
+              } 
+            }
+          });
 
-      if (authError) throw authError;
+          if (!error) {
+             newCredentials.push({ name: autoName, email: autoEmail, password: autoPassword });
+          }
+        }
+      } else {
+        // --- STANDARD SINGLE USER MODE ---
+        if (!selectedMember) return alert("Please select a member.");
+        if (!formData.email || !formData.password) return alert("Email & Password required.");
 
-      // 4. Success! Show the "Share Credentials" card
-      setCreatedUser({
-        email: formData.email,
-        password: formData.password,
-        role: formData.role
-      });
-      
-      // Reset Form
-      setFormData({ ...formData, email: '', password: '' });
-      fetchData(); // Refresh list
+        const { error } = await ghost.auth.signUp({
+          email: formData.email,
+          password: formData.password,
+          options: { 
+            data: {
+              role: formData.role,
+              created_by: adminId,
+              member_id: selectedMember.id
+            } 
+          }
+        });
+
+        if (error) throw error;
+        
+        newCredentials.push({
+          name: `${selectedMember.name} ${selectedMember.surname}`,
+          email: formData.email,
+          password: formData.password
+        });
+      }
+
+      setCreatedUsersList(newCredentials);
+      setViewMode('success');
+      fetchData();
 
     } catch (err) {
-      alert("Error creating user: " + err.message);
-      // Clean up invite if auth failed (optional but good practice)
-      await supabase.from('app_invitations').delete().eq('email', formData.email);
+      alert("Error: " + (err.message || "Database error"));
     } finally {
       setLoading(false);
     }
   };
 
-  const getWhatsAppLink = () => {
-    if (!createdUser) return '';
-    const text = `*Welcome to Keshav App!*%0A%0AHere are your login details:%0A👤 *Email:* ${createdUser.email}%0A🔑 *Password:* ${createdUser.password}%0A%0APlease login here:%0Ahttps://your-app-url.com`;
-    return `https://wa.me/?text=${text}`;
+  // 2. UPDATE USER ROLE
+  const handleUpdate = async () => {
+    if (!formData.id) return;
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ role: formData.role })
+        .eq('id', formData.id);
+
+      if (error) throw error;
+      
+      alert("Role updated successfully!");
+      setViewMode('list');
+      fetchData();
+    } catch (err) {
+      alert("Update failed: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 3. DELETE USER
+  const handleDelete = async (userId) => {
+    if (confirm("Revoke access for this user? This cannot be undone.")) {
+      await supabase.from('user_profiles').delete().eq('id', userId);
+      fetchData();
+    }
+  };
+
+  // --- UI HELPERS ---
+  const openEdit = (user) => {
+    setFormData({
+      id: user.id,
+      role: user.role,
+      email: 'Hidden',
+      password: '',
+      gender: user.gender
+    });
+    setViewMode('edit');
+  };
+
+  const resetForm = () => {
+    setFormData({
+      id: null, role: 'sanchalak', email: '', password: '', 
+      takerCount: 1, gender: 'Male', member_id: null
+    });
+    setSelectedMember(null);
+    setViewMode('create');
+  };
+
+  const copyAllCredentials = () => {
+    const text = createdUsersList.map(u => 
+      `Name: ${u.name}\nEmail: ${u.email}\nPassword: ${u.password}\n-------------------`
+    ).join('\n');
+    navigator.clipboard.writeText(text);
   };
 
   return (
-    <div className="space-y-8 pb-20">
+    <div className="space-y-6 pb-20">
       
-      {/* 1. SUCCESS CARD (Shown after creation) */}
-      {createdUser && (
-        <div className="bg-green-50 border border-green-200 p-6 rounded-2xl animate-in slide-in-from-top-4 shadow-sm">
-          <div className="flex items-start gap-4">
-            <div className="p-3 bg-green-100 rounded-full text-green-600"><CheckCircle size={32} /></div>
-            <div className="flex-1">
-              <h3 className="text-xl font-bold text-green-800">User Created Successfully!</h3>
-              <p className="text-green-700 text-sm mb-4">Share these credentials with the {createdUser.role} immediately.</p>
-              
-              <div className="bg-white p-4 rounded-xl border border-green-200 font-mono text-sm space-y-2 select-all">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Email:</span>
-                  <span className="font-bold text-slate-800">{createdUser.email}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Password:</span>
-                  <span className="font-bold text-[#002B3D]">{createdUser.password}</span>
-                </div>
-              </div>
+      {/* HEADER */}
+      <div className="flex justify-between items-center">
+         <div>
+            <h2 className="text-2xl font-bold text-[#002B3D]">User Management</h2>
+            <p className="text-slate-500 text-sm">Create & Manage Access</p>
+         </div>
+         {viewMode === 'list' && (
+           <button onClick={resetForm} className="bg-[#002B3D] text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-[#0b3d52]">
+             <UserPlus size={18} /> New User
+           </button>
+         )}
+      </div>
 
-              <div className="flex gap-3 mt-4">
-                 <a 
-                   href={getWhatsAppLink()} 
-                   target="_blank" 
-                   rel="noreferrer"
-                   className="flex items-center gap-2 bg-[#25D366] text-white px-4 py-2 rounded-lg font-bold hover:shadow-lg transition-all"
-                 >
-                   <Smartphone size={18} /> Share via WhatsApp
-                 </a>
-                 <button onClick={() => navigator.clipboard.writeText(`Email: ${createdUser.email}\nPassword: ${createdUser.password}`)} className="flex items-center gap-2 bg-white border border-slate-300 text-slate-600 px-4 py-2 rounded-lg font-bold hover:bg-slate-50">
-                   <Copy size={18} /> Copy
-                 </button>
+      {/* SUCCESS SCREEN */}
+      {viewMode === 'success' && (
+        <div className="bg-green-50 border border-green-200 p-6 rounded-2xl animate-in zoom-in-95">
+           <div className="flex items-start gap-4">
+              <div className="p-3 bg-green-100 rounded-full text-green-600"><CheckCircle size={32}/></div>
+              <div className="flex-1">
+                 <h3 className="text-xl font-bold text-green-800">{createdUsersList.length} User(s) Created!</h3>
+                 <p className="text-green-700 text-sm mb-4">Copy these details immediately.</p>
+                 <div className="max-h-60 overflow-y-auto bg-white rounded-xl border border-green-200 shadow-sm mb-4">
+                   <table className="w-full text-left text-sm">
+                     <thead className="bg-green-50 text-green-800 font-bold border-b border-green-100">
+                        <tr><th className="p-3">Name</th><th className="p-3">Email</th><th className="p-3">Password</th></tr>
+                     </thead>
+                     <tbody className="divide-y divide-green-50">
+                        {createdUsersList.map((creds, idx) => (
+                          <tr key={idx}>
+                             <td className="p-3 font-medium">{creds.name}</td>
+                             <td className="p-3 font-mono text-xs">{creds.email}</td>
+                             <td className="p-3 font-mono font-bold text-[#002B3D]">{creds.password}</td>
+                          </tr>
+                        ))}
+                     </tbody>
+                   </table>
+                 </div>
+                 <div className="flex gap-3">
+                    <button onClick={copyAllCredentials} className="flex-1 px-4 py-3 bg-[#002B3D] text-white font-bold rounded-xl hover:bg-[#0b3d52]">Copy All</button>
+                    <button onClick={() => setViewMode('list')} className="px-6 py-3 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl">Done</button>
+                 </div>
               </div>
-            </div>
-          </div>
+           </div>
         </div>
       )}
 
-      {/* 2. CREATION FORM */}
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-        <h3 className="text-lg font-bold text-[#002B3D] mb-4 flex items-center gap-2">
-          <UserPlus size={20} className="text-sky-500"/> Provision New User
-        </h3>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          
-          {/* Role Selection */}
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-400 uppercase">Role</label>
-            <select 
-              value={formData.role}
-              onChange={e => setFormData({...formData, role: e.target.value})}
-              className="w-full p-3 bg-slate-50 border rounded-xl outline-none focus:border-sky-500 font-medium"
-            >
-              <option value="sanchalak">Sanchalak (Mandal Leader)</option>
-              <option value="nirikshak">Nirikshak (Mandal Supervisor)</option>
-              <option value="nirdeshak">Nirdeshak (Kshetra Leader)</option>
-              <option value="taker">Attendance Taker</option>
-              <option value="admin">Admin</option>
-            </select>
-          </div>
+      {/* CREATE & EDIT FORMS */}
+      {(viewMode === 'create' || viewMode === 'edit') && (
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 max-w-3xl mx-auto animate-in slide-in-from-top-4">
+           
+           <div className="flex justify-between items-center mb-6 pb-4 border-b">
+              <h3 className="text-xl font-bold text-[#002B3D]">
+                {viewMode === 'edit' ? 'Update User Role' : 'Provision New Users'}
+              </h3>
+              <button onClick={() => setViewMode('list')} className="p-2 text-slate-400 hover:bg-slate-50 rounded-full"><X size={20}/></button>
+           </div>
 
-          {/* Gender Scope */}
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-400 uppercase">Gender Scope</label>
-            <select 
-              value={formData.gender}
-              onChange={e => setFormData({...formData, gender: e.target.value})}
-              className="w-full p-3 bg-slate-50 border rounded-xl outline-none focus:border-sky-500 font-medium"
-            >
-              <option value="Male">Male</option>
-              <option value="Female">Female</option>
-            </select>
-          </div>
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              {/* 1. ROLE SELECTION */}
+              <div className="md:col-span-2">
+                 <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">
+                   {viewMode === 'edit' ? 'Update Role To:' : '1. Select Role'}
+                 </label>
+                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {['sanchalak', 'nirikshak', 'nirdeshak', 'taker', 'admin'].map(r => (
+                       <button 
+                         key={r}
+                         onClick={() => {
+                           setFormData(prev => ({ ...prev, role: r }));
+                           if (r === 'taker') setSelectedMember(null); 
+                         }}
+                         className={`p-3 rounded-xl border text-sm font-bold capitalize transition-all ${
+                           formData.role === r 
+                             ? 'bg-[#002B3D] text-white border-[#002B3D]' 
+                             : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                         }`}
+                       >
+                         {r}
+                       </button>
+                    ))}
+                 </div>
+              </div>
 
-          {/* Conditional: Kshetra */}
-          {formData.role === 'nirdeshak' && (
-            <div className="space-y-1 animate-in fade-in">
-              <label className="text-xs font-bold text-slate-400 uppercase">Assign Region</label>
-              <select 
-                value={formData.kshetra_id}
-                onChange={e => setFormData({...formData, kshetra_id: e.target.value})}
-                className="w-full p-3 bg-slate-50 border rounded-xl outline-none focus:border-sky-500"
-              >
-                <option value="">Select Kshetra...</option>
-                {hierarchy.kshetras.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
-              </select>
-            </div>
-          )}
+              {/* CREATE MODE SPECIFIC UI */}
+              {viewMode === 'create' && (
+                <>
+                  {/* TAKER BULK OPTIONS */}
+                  {formData.role === 'taker' ? (
+                     <div className="md:col-span-2 bg-orange-50 p-6 rounded-xl border border-orange-100 animate-in fade-in">
+                        <div className="flex gap-2 text-orange-800 font-bold items-center mb-4"><Globe size={20}/> Bulk Create Takers</div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                           <div>
+                              <label className="text-xs font-bold text-orange-700 uppercase mb-1 block">Number of Users</label>
+                              <div className="flex items-center bg-white border border-orange-200 rounded-xl overflow-hidden">
+                                 <input type="number" min="1" max="20" value={formData.takerCount} onChange={e => setFormData({...formData, takerCount: e.target.value})} className="w-full p-3 font-bold text-lg outline-none"/>
+                                 <div className="bg-orange-100 p-3 text-orange-700 font-bold border-l border-orange-200">Users</div>
+                              </div>
+                           </div>
+                           <div>
+                              <label className="text-xs font-bold text-orange-700 uppercase mb-1 block">Gender Scope</label>
+                              <select value={formData.gender} onChange={e => setFormData({...formData, gender: e.target.value})} className="w-full p-4 border border-orange-200 rounded-xl bg-white font-medium outline-none">
+                                 <option value="Male">Male</option><option value="Female">Female</option>
+                              </select>
+                           </div>
+                        </div>
+                     </div>
+                  ) : (
+                    // STANDARD MEMBER SELECTOR
+                    <div className="md:col-span-2 space-y-4">
+                       <label className="text-xs font-bold text-slate-400 uppercase block">2. Select Member</label>
+                       {selectedMember ? (
+                         <div className="flex justify-between items-center bg-sky-50 p-4 rounded-xl border border-sky-100 animate-in fade-in">
+                            <div>
+                               <div className="font-bold text-[#002B3D]">{selectedMember.name} {selectedMember.surname}</div>
+                               <div className="text-xs text-slate-500 mt-1">{selectedMember.kshetras?.name} • {selectedMember.mandals?.name}</div>
+                            </div>
+                            <button onClick={() => setSelectedMember(null)} className="text-red-500 font-bold text-sm">Change</button>
+                         </div>
+                       ) : (
+                         <div className="relative">
+                            <input autoFocus type="text" placeholder="Search Existing Member..." value={memberQuery} onChange={e => setMemberQuery(e.target.value)} className="w-full p-3 pl-10 border rounded-xl focus:ring-2 focus:ring-sky-200 outline-none"/>
+                            <Search className="absolute left-3 top-3.5 text-slate-400" size={18}/>
+                            {memberResults.length > 0 && (
+                               <div className="absolute top-full left-0 right-0 bg-white shadow-xl rounded-xl mt-2 border border-slate-100 z-10 max-h-60 overflow-y-auto">
+                                 {memberResults.map(m => (
+                                   <div key={m.id} onClick={() => { setSelectedMember(m); setMemberQuery(''); }} className="p-3 hover:bg-sky-50 cursor-pointer border-b border-slate-50">
+                                      <div className="font-bold text-slate-700">{m.name} {m.surname}</div>
+                                      <div className="text-xs text-slate-400">{m.mandal} • {m.gender}</div>
+                                   </div>
+                                 ))}
+                               </div>
+                            )}
+                         </div>
+                       )}
+                       
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-4">
+                          <div><label className="text-xs font-bold text-slate-400 uppercase mb-1 block">Email</label><input type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full p-3 border rounded-xl"/></div>
+                          <div><label className="text-xs font-bold text-slate-400 uppercase mb-1 block">Password</label><div className="flex gap-2"><input type="text" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="flex-1 p-3 border rounded-xl font-mono"/><button onClick={() => setFormData({...formData, password: generatePassword()})} className="p-3 bg-slate-100 rounded-xl hover:bg-slate-200"><RefreshCw size={20}/></button></div></div>
+                       </div>
+                    </div>
+                  )}
+                </>
+              )}
+           </div>
 
-          {/* Conditional: Mandal */}
-          {['nirikshak', 'sanchalak'].includes(formData.role) && (
-            <div className="space-y-1 animate-in fade-in">
-              <label className="text-xs font-bold text-slate-400 uppercase">Assign Mandal</label>
-              <select 
-                value={formData.mandal_id}
-                onChange={e => setFormData({...formData, mandal_id: e.target.value})}
-                className="w-full p-3 bg-slate-50 border rounded-xl outline-none focus:border-sky-500"
-              >
-                <option value="">Select Mandal...</option>
-                {hierarchy.mandals.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </select>
-            </div>
-          )}
-
-          {/* Email */}
-          <div className="space-y-1 lg:col-start-1">
-            <label className="text-xs font-bold text-slate-400 uppercase">Email Address</label>
-            <input 
-              type="email" 
-              placeholder="e.g. rajkot.west@keshav.com"
-              value={formData.email}
-              onChange={e => setFormData({...formData, email: e.target.value})}
-              className="w-full p-3 bg-slate-50 border rounded-xl outline-none focus:border-sky-500"
-            />
-          </div>
-
-          {/* Password */}
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-400 uppercase">Password</label>
-            <div className="flex gap-2">
-              <input 
-                type="text" 
-                placeholder="Secure Password"
-                value={formData.password}
-                onChange={e => setFormData({...formData, password: e.target.value})}
-                className="flex-1 p-3 bg-slate-50 border rounded-xl outline-none focus:border-sky-500 font-mono"
-              />
+           <div className="mt-8 flex justify-end gap-3">
+              <button onClick={() => setViewMode('list')} className="px-6 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl">Cancel</button>
               <button 
-                onClick={generatePassword}
-                title="Generate Random Password"
-                className="p-3 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200"
+                onClick={viewMode === 'edit' ? handleUpdate : handleCreate} 
+                disabled={loading} 
+                className="px-6 py-3 bg-[#002B3D] text-white font-bold rounded-xl hover:bg-[#0b3d52] flex items-center gap-2"
               >
-                <RefreshCw size={20} />
+                 {loading ? 'Processing...' : (
+                    viewMode === 'edit' ? <><Save size={18}/> Update Role</> : <><UserPlus size={18}/> {formData.role === 'taker' ? `Create ${formData.takerCount} Users` : 'Create User'}</>
+                 )}
               </button>
-            </div>
-          </div>
-
-          {/* Submit Action */}
-          <div className="flex items-end">
-            <button 
-              onClick={handleCreateUser}
-              disabled={loading}
-              className={`w-full p-3 bg-[#002B3D] text-white font-bold rounded-xl hover:bg-[#0b3d52] transition-colors flex justify-center items-center gap-2 ${loading ? 'opacity-70 cursor-wait' : ''}`}
-            >
-              {loading ? 'Creating...' : <><Shield size={18} /> Create & Generate Keys</>}
-            </button>
-          </div>
+           </div>
         </div>
-      </div>
+      )}
 
-      {/* 3. EXISTING USERS TABLE */}
-      <div>
-        <h3 className="text-sm font-bold text-slate-400 uppercase mb-3 px-2">Active Team Members ({activeUsers.length})</h3>
+      {/* LIST VIEW */}
+      {viewMode === 'list' && (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 text-slate-500 font-bold border-b">
-              <tr>
-                <th className="p-4">Role</th>
-                <th className="p-4">Assigned To</th>
-                <th className="p-4 text-center">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {activeUsers.map(user => {
-                 // Resolve Mandal/Kshetra Name (Optional: Needs lookup, or just show ID for now)
-                 // For now, let's show simpler logic
+           <table className="w-full text-left text-sm">
+             <thead className="bg-slate-50 text-slate-500 font-bold border-b">
+               <tr>
+                 <th className="p-4">Name</th>
+                 <th className="p-4 hidden sm:table-cell">Role</th>
+                 <th className="p-4 hidden sm:table-cell">Scope</th>
+                 <th className="p-4 text-right">Actions</th>
+               </tr>
+             </thead>
+             <tbody className="divide-y divide-slate-100">
+               {users.map(user => {
+                 const displayName = user.members ? `${user.members.name} ${user.members.surname}` : `${user.name} ${user.surname}`;
                  let scope = 'Global Access';
-                 if (user.mandal_id) scope = 'Mandal Specific';
-                 else if (user.kshetra_id) scope = 'Kshetra Specific';
-                 else if (user.role === 'taker') scope = 'Task Specific';
+                 if (user.role !== 'taker') scope = user.gender; 
 
                  return (
-                  <tr key={user.id} className="hover:bg-slate-50">
-                    <td className="p-4">
-                      <span className={`px-2 py-1 rounded-md font-bold text-xs uppercase ${user.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-50 text-blue-600'}`}>
-                        {user.role}
-                      </span>
-                      <div className="text-[10px] text-slate-400 font-mono mt-1">{user.id.slice(0,8)}...</div>
-                    </td>
-                    <td className="p-4 text-slate-600 font-medium">
-                      {scope}
-                      <div className="text-xs text-slate-400">{user.gender}</div>
-                    </td>
-                    <td className="p-4 text-center">
-                      <div className="inline-flex items-center gap-1 text-green-600 text-xs font-bold bg-green-50 px-2 py-1 rounded-full">
-                        <CheckCircle size={12}/> Active
-                      </div>
-                    </td>
-                  </tr>
+                   <tr key={user.id} className="hover:bg-slate-50 group">
+                     <td className="p-4">
+                       <div className="font-bold text-slate-800">{displayName}</div>
+                       <div className="text-xs text-slate-400">
+                         {user.member_id ? <span className="text-sky-600 flex items-center gap-1"><LinkIcon size={10}/> Member Linked</span> : <span className="text-orange-600 flex items-center gap-1"><Globe size={10}/> External Taker</span>}
+                       </div>
+                     </td>
+                     <td className="p-4 hidden sm:table-cell">
+                       <span className={`px-2 py-1 rounded text-xs font-bold uppercase border ${user.role==='taker'?'bg-orange-50 text-orange-700 border-orange-100':'bg-sky-50 text-sky-700 border-sky-100'}`}>{user.role}</span>
+                     </td>
+                     <td className="p-4 hidden sm:table-cell text-slate-600">{scope}</td>
+                     <td className="p-4 text-right">
+                       <div className="flex justify-end gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                          {/* EDIT BUTTON */}
+                          <button onClick={() => openEdit(user)} className="p-2 text-slate-400 hover:text-sky-600 bg-slate-50 hover:bg-sky-50 rounded-lg">
+                             <Edit2 size={18}/>
+                          </button>
+                          {/* DELETE BUTTON */}
+                          <button onClick={() => handleDelete(user.id)} className="p-2 text-slate-400 hover:text-red-600 bg-slate-50 hover:bg-red-50 rounded-lg">
+                             <Trash2 size={18}/>
+                          </button>
+                       </div>
+                     </td>
+                   </tr>
                  );
-              })}
-            </tbody>
-          </table>
+               })}
+             </tbody>
+           </table>
         </div>
-      </div>
+      )}
 
     </div>
   );

@@ -1,12 +1,13 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { 
-  Search, Phone, FileText, Calendar, Zap, X, QrCode,
+  Search, Phone, FileText, Calendar, Zap, X, QrCode, 
   Filter, SortAsc, Plus, ChevronDown, GripVertical, ArrowUp, ArrowDown, 
-  Check, Trash2, Menu, CheckCircle2, ArrowLeft, AlertCircle, RefreshCcw
+  Check, Trash2, Menu, CheckCircle2, ArrowLeft, AlertCircle, RefreshCcw 
 } from 'lucide-react';
 import { Scanner } from '@yudiel/react-qr-scanner'; 
 import { supabase } from '../../lib/supabase';
 import EventReports from '../../components/EventReports'; 
+import { useAuth } from '../../contexts/AuthContext'; 
 
 // --- CONSTANTS ---
 const ALL_COLUMNS = [
@@ -18,10 +19,22 @@ const ALL_COLUMNS = [
 ];
 
 export default function Home() {
+  // ✅ 1. GET LOADING STATE (Assuming your AuthContext provides 'loading')
+  // If your AuthContext doesn't return 'loading', checking !profile is usually enough, 
+  // but adding a loading check is safer.
+  const { profile, loading: authLoading } = useAuth();
+  
+  // --- PERMISSIONS ---
+  const userRole = (profile?.role || '').toLowerCase();
+  const isAdmin = userRole === 'admin';
+  const isTaker = userRole === 'taker';
+  
+  const canMark = isAdmin || isTaker;
+  const showStats = !isTaker;
+
+  // State
   const [activeEvent, setActiveEvent] = useState(null);
   const [loading, setLoading] = useState(true);
-
-  // Data State
   const [members, setMembers] = useState([]);
   const [filteredMembers, setFilteredMembers] = useState([]);
   const [presentIds, setPresentIds] = useState(new Set());
@@ -43,8 +56,11 @@ export default function Home() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState('filter');
 
-  // --- 1. INITIAL FETCH ---
+  // --- 2. DATA FETCHING (Now dependent on Profile) ---
   const fetchPrimaryEvent = useCallback(async () => {
+    // 🛑 STOP IF PROFILE IS NOT READY
+    if (authLoading || !profile) return;
+
     setLoading(true);
     const { data: events } = await supabase.from('events').select('*, projects(id, name)').eq('is_active', true).limit(1);
 
@@ -55,34 +71,63 @@ export default function Home() {
     } else {
       setLoading(false);
     }
-  }, []);
+  }, [profile, authLoading]); // ✅ Re-run when profile loads
 
   const fetchAttendanceData = async (event) => {
     const { data: regData } = await supabase.from('project_registrations').select('member_id').eq('project_id', event.project_id);
+    const ids = regData?.map(r => r.member_id) || [];
     
-    if (regData && regData.length > 0) {
-       const ids = regData.map(r => r.member_id);
-       const { data: memData } = await supabase.from('members').select('id, name, surname, mandal, mobile_number, designation').in('id', ids).order('name');
-       setMembers(memData || []);
-       const { data: attData } = await supabase.from('attendance').select('member_id').eq('event_id', event.id);
-       setPresentIds(new Set(attData?.map(a => a.member_id) || []));
+    const { data: memData } = await supabase
+      .from('members')
+      .select('id, name, surname, mandal, mandal_id, kshetra_id, gender, mobile_number, designation')
+      .in('id', ids)
+      .order('name');
+    
+    const { data: attData } = await supabase.from('attendance').select('member_id').eq('event_id', event.id);
+    setPresentIds(new Set(attData?.map(a => a.member_id) || []));
+
+    // ✅ 3. SECURE FILTERING LOGIC
+    let scopedMembers = memData || [];
+
+    // If Admin, they see everything. If NOT Admin, we filter.
+    if (!isAdmin) {
+       // Only apply filters if we actually HAVE a profile (Double Check)
+       if (profile) {
+           if (['sanchalak', 'nirikshak'].includes(userRole) && profile.mandal_id) {
+              scopedMembers = scopedMembers.filter(m => m.mandal_id === profile.mandal_id);
+           }
+           else if (userRole === 'nirdeshak' && profile.kshetra_id) {
+              scopedMembers = scopedMembers.filter(m => m.kshetra_id === profile.kshetra_id);
+           }
+           else if (isTaker) {
+              scopedMembers = scopedMembers.filter(m => m.gender === profile.gender);
+           } else {
+              // Safety: If role is unknown or missing IDs, show nothing
+              scopedMembers = [];
+           }
+       } else {
+           // No profile loaded yet? Show nothing.
+           scopedMembers = [];
+       }
     }
+
+    setMembers(scopedMembers);
     setLoading(false);
   };
 
   useEffect(() => {
     fetchPrimaryEvent();
-    
     const channel = supabase.channel('home-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, () => {
-         fetchPrimaryEvent(); 
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, () => fetchPrimaryEvent())
       .subscribe();
-
     return () => { supabase.removeChannel(channel); };
   }, [fetchPrimaryEvent]);
 
-  // --- FILTER & SORT ENGINE ---
+  // Stats Logic
+  const myPresentCount = members.filter(m => presentIds.has(m.id)).length;
+  const myTotalCount = members.length;
+
+  // --- FILTER & ENGINE ---
   useEffect(() => {
     let result = [...members];
     if (search) {
@@ -109,8 +154,10 @@ export default function Home() {
     setFilteredMembers(result);
   }, [members, search, activeFilters, activeSorts]);
 
+  // --- ACTIONS ---
   const toggleAttendance = async (memberId) => {
-    if (!activeEvent) return;
+    if (!activeEvent || !canMark) return; 
+
     const isPresent = presentIds.has(memberId);
     const newSet = new Set(presentIds);
     if (isPresent) newSet.delete(memberId); else newSet.add(memberId);
@@ -124,10 +171,9 @@ export default function Home() {
   };
 
   const handleScan = async (detectedCodes) => {
-    if (isScanPaused || !detectedCodes || detectedCodes.length === 0 || !activeEvent) return;
+    if (isScanPaused || !detectedCodes || detectedCodes.length === 0 || !activeEvent || !canMark) return;
     
     const rawValue = detectedCodes[0].rawValue;
-
     if (lastScannedRef.current === rawValue) return;
     lastScannedRef.current = rawValue;
     setIsScanPaused(true);
@@ -135,7 +181,7 @@ export default function Home() {
     try {
       const member = members.find(m => m.id === rawValue);
       if (!member) {
-         setScanMessage({ type: 'error', text: 'Member Not Found' });
+         setScanMessage({ type: 'error', text: 'Member Not Found (or out of scope)' });
       } else {
          await supabase.from('attendance').upsert([{ event_id: activeEvent.id, member_id: rawValue }], { onConflict: 'event_id, member_id' });
          setPresentIds(prev => new Set(prev).add(rawValue));
@@ -155,9 +201,9 @@ export default function Home() {
   const handleScannerError = (error) => {
     console.error(error);
     if (error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError') {
-      setCameraError("Camera permission denied. Check settings.");
+      setCameraError("Camera permission denied.");
     } else {
-      setCameraError("Camera error. Try restarting app.");
+      setCameraError("Camera error.");
     }
   };
 
@@ -166,50 +212,52 @@ export default function Home() {
     setIsDrawerOpen(true);
   };
 
+  // ✅ 4. LOADING STATE GUARD
+  // If Auth is still loading or Profile isn't ready, show loading screen instead of data
+  if (authLoading || !profile) {
+    return (
+      <div className="flex flex-col h-[100dvh] bg-slate-50 items-center justify-center p-6 text-center pt-safe-top">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#002B3D]"></div>
+        <p className="text-slate-400 mt-4 text-sm font-bold">Verifying Access...</p>
+      </div>
+    );
+  }
+
   // --- NO EVENT STATE ---
   if (!loading && !activeEvent) {
     return (
       <div className="flex flex-col h-[100dvh] bg-slate-50 items-center justify-center p-6 text-center pt-safe-top">
         <div className="bg-slate-200 p-6 rounded-full mb-4 shadow-inner"><Calendar size={48} className="text-slate-400"/></div>
         <h2 className="text-xl font-bold text-[#002B3D]">No Active Event</h2>
-        <p className="text-slate-500 mt-2 max-w-xs text-sm leading-relaxed">Go to <b>Projects &gt; Events</b> and mark an event as "Primary" to start taking attendance.</p>
+        <p className="text-slate-500 mt-2 max-w-xs text-sm leading-relaxed">Admins must mark an event as "Primary" to start taking attendance.</p>
         <button onClick={fetchPrimaryEvent} className="mt-6 p-3 bg-white border border-slate-200 rounded-full shadow-sm text-slate-500 hover:bg-slate-50"><RefreshCcw size={20}/></button>
       </div>
     );
   }
 
   // ==========================================
-  // VIEW 1: FULL SCREEN SCANNER
+  // VIEW 1: FULL SCREEN SCANNER (Only if canMark)
   // ==========================================
-  if (viewMode === 'scanner') {
+  if (viewMode === 'scanner' && canMark) {
     return (
       <div className="flex flex-col h-[100dvh] bg-[#002B3D] fixed inset-0 z-[100]">
-        
-        {/* Top Navbar */}
+        {/* Navbar */}
         <div className="bg-[#002B3D] text-white px-4 py-3 flex justify-between items-center shadow-md z-20 shrink-0 pt-safe-top">
           <div className="flex items-center gap-3">
-            <button className="p-1 hover:bg-white/10 rounded-full transition-colors"><Menu className="w-6 h-6" /></button>
-            <h1 className="text-lg font-medium tracking-wide">Keshav Yuvak Mandal</h1>
+            <h1 className="text-lg font-medium tracking-wide">Scanner Mode</h1>
           </div>
-          <div className="w-9 h-9 bg-slate-100 text-[#002B3D] rounded-lg flex items-center justify-center font-bold text-sm shadow-sm">DG</div>
+          <button onClick={() => setViewMode('dashboard')} className="p-2 bg-white/10 rounded-full text-white hover:bg-white/20"><X size={20} /></button>
         </div>
 
         {/* Sub Header */}
         <div className="bg-white px-4 py-3 flex items-center justify-between shadow-sm border-b border-slate-100 z-10 shrink-0">
-          <div className="flex items-center gap-3">
-            <button onClick={() => setViewMode('dashboard')} className="p-2 -ml-2 hover:bg-slate-50 rounded-full text-slate-600 transition-colors"><ArrowLeft className="w-6 h-6" /></button>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-lg font-bold text-slate-800 leading-none truncate max-w-[180px]">{activeEvent?.name}</span>
-                <span className="bg-slate-100 text-slate-500 text-[11px] px-2 py-0.5 rounded font-medium whitespace-nowrap">{new Date(activeEvent?.start_date).toLocaleDateString()}</span>
-              </div>
-            </div>
-          </div>
+           <div className="flex items-center gap-2">
+             <span className="text-lg font-bold text-slate-800 truncate max-w-[200px]">{activeEvent?.name}</span>
+           </div>
         </div>
 
         {/* Scanner Area */}
         <div className="flex-1 flex flex-col items-center justify-center px-6 relative bg-slate-50">
-          
           <div className={`absolute top-8 left-0 right-0 flex justify-center transition-all duration-300 transform ${scanMessage ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'}`}>
             {scanMessage && (
               <div className={`flex items-center gap-2 px-6 py-2.5 rounded-full shadow-lg font-bold text-white text-sm tracking-wide z-30 ${scanMessage.type === 'success' ? 'bg-[#00A67E]' : 'bg-red-500'}`}>
@@ -245,9 +293,8 @@ export default function Home() {
                </div>
             )}
           </div>
-
           <div className="mt-8 text-center max-w-xs">
-            <p className="text-[#002B3D] font-bold text-[15px] leading-relaxed">Place the QR code within the camera frame to log your attendance.</p>
+            <p className="text-[#002B3D] font-bold text-[15px]">Place QR code in frame</p>
           </div>
         </div>
       </div>
@@ -266,18 +313,23 @@ export default function Home() {
           <div className="p-2 bg-yellow-100 rounded-full text-yellow-600"><Zap size={20} className="fill-yellow-600" /></div>
           <div>
             <h1 className="text-lg font-bold text-[#002B3D] leading-none">{activeEvent?.name}</h1>
-            <span className="text-xs text-slate-400 font-bold">{presentIds.size} / {members.length} Present</span>
+            {showStats && (
+               <span className="text-xs text-slate-400 font-bold">{myPresentCount} / {myTotalCount} Present</span>
+            )}
           </div>
           <div className="ml-auto flex gap-2">
-             <button onClick={() => setViewMode('scanner')} className="flex items-center gap-2 px-3 py-2 bg-[#002B3D] hover:bg-[#155e7a] text-white rounded-xl font-bold text-xs transition-colors shadow-lg shadow-sky-900/20">
-               <QrCode size={18} /> <span className="hidden sm:inline">Scan</span>
-             </button>
-             
-             {/* ✅ REMOVED REFRESH BUTTON FROM HERE */}
+             {canMark && (
+               <button onClick={() => setViewMode('scanner')} className="flex items-center gap-2 px-3 py-2 bg-[#002B3D] hover:bg-[#155e7a] text-white rounded-xl font-bold text-xs transition-colors shadow-lg shadow-sky-900/20">
+                 <QrCode size={18} /> <span className="hidden sm:inline">Scan</span>
+               </button>
+             )}
              
              <button onClick={() => openDrawer('sort')} className="relative p-2.5 bg-slate-100 rounded-xl text-slate-600 hover:bg-slate-200"><SortAsc size={20} />{activeSorts.length > 1 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border border-white"></span>}</button>
              <button onClick={() => openDrawer('filter')} className="relative p-2.5 bg-slate-100 rounded-xl text-slate-600 hover:bg-slate-200"><Filter size={20} />{activeFilters.length > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border border-white"></span>}</button>
-             <button onClick={() => setIsReportsOpen(true)} className="p-2.5 bg-slate-100 rounded-xl text-[#002B3D] hover:bg-slate-200"><FileText size={20} /></button>
+             
+             {showStats && (
+                <button onClick={() => setIsReportsOpen(true)} className="p-2.5 bg-slate-100 rounded-xl text-[#002B3D] hover:bg-slate-200"><FileText size={20} /></button>
+             )}
           </div>
         </div>
         <div className="relative">
@@ -300,10 +352,19 @@ export default function Home() {
                  </div>
                  <div className="flex items-center gap-2">
                     {m.mobile_number && <a href={`tel:${m.mobile_number}`} className="p-2.5 text-[#0EA5E9] bg-sky-50 rounded-full hover:bg-sky-100 transition-colors"><Phone size={18} /></a>}
-                    {isPresent ? (
-                      <button onClick={() => toggleAttendance(m.id)} className="px-4 py-2 bg-green-100 text-green-700 font-bold rounded-lg text-sm border border-green-200 hover:bg-green-200 transition-colors min-w-[90px]">Present</button>
+                    
+                    {canMark ? (
+                      isPresent ? (
+                        <button onClick={() => toggleAttendance(m.id)} className="px-4 py-2 bg-green-100 text-green-700 font-bold rounded-lg text-sm border border-green-200 hover:bg-green-200 transition-colors min-w-[90px]">Present</button>
+                      ) : (
+                        <button onClick={() => toggleAttendance(m.id)} className="px-4 py-2 bg-slate-100 text-slate-500 font-bold rounded-lg text-sm border border-slate-200 hover:bg-slate-200 transition-colors min-w-[90px]">Absent</button>
+                      )
                     ) : (
-                      <button onClick={() => toggleAttendance(m.id)} className="px-4 py-2 bg-slate-100 text-slate-500 font-bold rounded-lg text-sm border border-slate-200 hover:bg-slate-200 transition-colors min-w-[90px]">Absent</button>
+                      isPresent ? (
+                        <span className="flex items-center gap-1 px-3 py-1.5 bg-green-50 text-green-700 font-bold rounded-lg text-xs border border-green-100 cursor-default"><Check size={14} strokeWidth={3}/> Present</span>
+                      ) : (
+                        <span className="flex items-center gap-1 px-3 py-1.5 bg-slate-50 text-slate-400 font-bold rounded-lg text-xs border border-slate-100 cursor-default opacity-60"><X size={14}/> Absent</span>
+                      )
                     )}
                  </div>
               </div>
@@ -314,7 +375,9 @@ export default function Home() {
 
       {activeEvent && (
         <>
-          <EventReports isOpen={isReportsOpen} onClose={() => setIsReportsOpen(false)} event={activeEvent} members={members} presentIds={presentIds} />
+          {showStats && (
+             <EventReports isOpen={isReportsOpen} onClose={() => setIsReportsOpen(false)} event={activeEvent} members={members} presentIds={presentIds} />
+          )}
           <RightDrawer isOpen={isDrawerOpen} mode={drawerMode} onClose={() => setIsDrawerOpen(false)} initialFilters={activeFilters} initialSorts={activeSorts} onApply={(newFilters, newSorts) => { setActiveFilters(newFilters); setActiveSorts(newSorts); setIsDrawerOpen(false); }} data={members} />
         </>
       )}
@@ -322,7 +385,8 @@ export default function Home() {
   );
 }
 
-// --- REUSED COMPONENTS (Unchanged) ---
+// ... (RightDrawer & MultiSelectDropdown) ...
+// (These remain exactly as they were in your previous code)
 function RightDrawer({ isOpen, mode, onClose, onApply, initialFilters, initialSorts, data }) {
   const [localFilters, setLocalFilters] = useState([]);
   const [localSorts, setLocalSorts] = useState([]);
@@ -335,19 +399,7 @@ function RightDrawer({ isOpen, mode, onClose, onApply, initialFilters, initialSo
   const updateSortRow = (id, key, value) => setLocalSorts(localSorts.map(s => s.id === id ? { ...s, [key]: value } : s));
   const getOptionsForColumn = (column) => { if (!column) return []; const unique = [...new Set(data.map(m => m[column]))].filter(Boolean); return unique.sort(); };
   if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-[1000] flex justify-end">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" onClick={onClose}></div>
-      <div className="relative w-full sm:w-96 bg-white h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 pt-safe-top">
-        <div className="p-5 border-b flex justify-between items-center bg-white"><h2 className="text-xl font-bold text-[#002B3D] capitalize">{mode === 'filter' ? 'Filter' : 'Sort'}</h2><button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-500"><X size={20} /></button></div>
-        <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-slate-50 pb-24">
-          {mode === 'filter' && (<div className="space-y-3">{localFilters.map((filter) => (<div key={filter.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-3"><div className="flex justify-between items-center"><span className="text-xs font-bold text-slate-400 uppercase">Field</span><button onClick={() => removeFilterRow(filter.id)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button></div><select value={filter.column} onChange={(e) => updateFilterRow(filter.id, 'column', e.target.value)} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-700 outline-none"><option value="" disabled>Select Column</option>{ALL_COLUMNS.map(col => <option key={col.key} value={col.key}>{col.label}</option>)}</select>{filter.column && (<div className="relative"><MultiSelectDropdown options={getOptionsForColumn(filter.column)} selected={filter.values} onChange={(newValues) => updateFilterRow(filter.id, 'values', newValues)} /></div>)}</div>))}<button onClick={addFilterRow} className="w-full py-3 border-2 border-dashed border-slate-300 rounded-xl text-slate-500 font-bold hover:bg-white transition-all flex items-center justify-center gap-2"><Plus size={18} /> Add Filter</button></div>)}
-          {mode === 'sort' && (<div className="space-y-3">{localSorts.map((sort) => (<div key={sort.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center gap-2"><div className="text-slate-300 cursor-grab"><GripVertical size={20} /></div><div className="flex-1 space-y-2"><select value={sort.column} onChange={(e) => updateSortRow(sort.id, 'column', e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-700 outline-none"><option value="" disabled>Select Field</option>{ALL_COLUMNS.map(col => <option key={col.key} value={col.key}>{col.label}</option>)}</select></div><button onClick={() => updateSortRow(sort.id, 'asc', !sort.asc)} className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-600 font-bold text-xs min-w-[60px] flex flex-col items-center justify-center">{sort.asc ? <ArrowUp size={14} className="text-sky-600 mb-1"/> : <ArrowDown size={14} className="text-orange-500 mb-1"/>} {sort.asc ? 'ASC' : 'DESC'}</button><button onClick={() => removeSortRow(sort.id)} className="p-2 text-slate-400 hover:text-red-500"><Trash2 size={18} /></button></div>))}<button onClick={addSortRow} className="w-full py-3 border-2 border-dashed border-slate-300 rounded-xl text-slate-500 font-bold hover:bg-white transition-all flex items-center justify-center gap-2"><Plus size={18} /> Add Sort</button></div>)}
-        </div>
-        <div className="p-4 border-t bg-white shrink-0 flex gap-3 pb-safe-bottom"><button onClick={() => { if(mode === 'filter') setLocalFilters([]); else setLocalSorts([]); }} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200">Clear</button><button onClick={() => onApply(localFilters, localSorts)} className="flex-1 py-3 bg-[#002B3D] text-white font-bold rounded-xl hover:bg-[#155e7a] shadow-lg">Apply</button></div>
-      </div>
-    </div>
-  );
+  return (<div className="fixed inset-0 z-[1000] flex justify-end"><div className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" onClick={onClose}></div><div className="relative w-full sm:w-96 bg-white h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 pt-safe-top"><div className="p-5 border-b flex justify-between items-center bg-white"><h2 className="text-xl font-bold text-[#002B3D] capitalize">{mode === 'filter' ? 'Filter' : 'Sort'}</h2><button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-500"><X size={20} /></button></div><div className="flex-1 overflow-y-auto p-5 space-y-4 bg-slate-50 pb-24">{mode === 'filter' && (<div className="space-y-3">{localFilters.map((filter) => (<div key={filter.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-3"><div className="flex justify-between items-center"><span className="text-xs font-bold text-slate-400 uppercase">Field</span><button onClick={() => removeFilterRow(filter.id)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button></div><select value={filter.column} onChange={(e) => updateFilterRow(filter.id, 'column', e.target.value)} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-700 outline-none"><option value="" disabled>Select Column</option>{ALL_COLUMNS.map(col => <option key={col.key} value={col.key}>{col.label}</option>)}</select>{filter.column && (<div className="relative"><MultiSelectDropdown options={getOptionsForColumn(filter.column)} selected={filter.values} onChange={(newValues) => updateFilterRow(filter.id, 'values', newValues)} /></div>)}</div>))}<button onClick={addFilterRow} className="w-full py-3 border-2 border-dashed border-slate-300 rounded-xl text-slate-500 font-bold hover:bg-white transition-all flex items-center justify-center gap-2"><Plus size={18} /> Add Filter</button></div>)}{mode === 'sort' && (<div className="space-y-3">{localSorts.map((sort) => (<div key={sort.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center gap-2"><div className="text-slate-300 cursor-grab"><GripVertical size={20} /></div><div className="flex-1 space-y-2"><select value={sort.column} onChange={(e) => updateSortRow(sort.id, 'column', e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-700 outline-none"><option value="" disabled>Select Field</option>{ALL_COLUMNS.map(col => <option key={col.key} value={col.key}>{col.label}</option>)}</select></div><button onClick={() => updateSortRow(sort.id, 'asc', !sort.asc)} className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-600 font-bold text-xs min-w-[60px] flex flex-col items-center justify-center">{sort.asc ? <ArrowUp size={14} className="text-sky-600 mb-1"/> : <ArrowDown size={14} className="text-orange-500 mb-1"/>} {sort.asc ? 'ASC' : 'DESC'}</button><button onClick={() => removeSortRow(sort.id)} className="p-2 text-slate-400 hover:text-red-500"><Trash2 size={18} /></button></div>))}<button onClick={addSortRow} className="w-full py-3 border-2 border-dashed border-slate-300 rounded-xl text-slate-500 font-bold hover:bg-white transition-all flex items-center justify-center gap-2"><Plus size={18} /> Add Sort</button></div>)}</div><div className="p-4 border-t bg-white shrink-0 flex gap-3 pb-safe-bottom"><button onClick={() => { if(mode === 'filter') setLocalFilters([]); else setLocalSorts([]); }} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200">Clear</button><button onClick={() => onApply(localFilters, localSorts)} className="flex-1 py-3 bg-[#002B3D] text-white font-bold rounded-xl hover:bg-[#155e7a] shadow-lg">Apply</button></div></div></div>);
 }
 
 function MultiSelectDropdown({ options, selected, onChange }) {

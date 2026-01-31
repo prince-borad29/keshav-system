@@ -1,160 +1,280 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
-  Plus, Search, Folder, MoreVertical, Edit2, Trash2, 
-  PlayCircle, StopCircle, X, Calendar 
+  Folder, Plus, Trash2, Calendar, Users, Lock, Unlock, Edit2, X, Save 
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { useNavigate } from 'react-router-dom';
-import ProjectModal from '../../components/ProjectModal';
-import ConfirmModal from '../../components/ConfirmModal'; 
+import { useAuth } from '../../contexts/AuthContext';
 
 export default function Projects() {
   const navigate = useNavigate();
+  const { profile } = useAuth();
+  
+  // ✅ STRICT PERMISSION CHECK
+  // Only 'admin' can change data. Everyone else is Read-Only.
+  const canManage = profile?.role === 'admin';
+
   const [projects, setProjects] = useState([]);
-  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [projectToEdit, setProjectToEdit] = useState(null);
-  const [activeMenuId, setActiveMenuId] = useState(null);
-  const [deleteId, setDeleteId] = useState(null);
+  // Modal State
+  const [showModal, setShowModal] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  
+  // Form State
+  const [formData, setFormData] = useState({ 
+    id: null, 
+    name: '', 
+    description: '', 
+    is_reg_open: true 
+  });
+
+  useEffect(() => {
+    fetchProjects();
+  }, []);
 
   const fetchProjects = async () => {
     setLoading(true);
-
-    // 1. Fetch Projects
-    const { data: projectsData, error: projectError } = await supabase
+    // Fetch projects with a count of registrations
+    const { data, error } = await supabase
       .from('projects')
-      .select('*')
-      .order('name', { ascending: true });
-
-    if (projectError) {
-      console.error(projectError);
-      setLoading(false);
-      return;
-    }
-
-    // 2. Fetch Tags for Projects
-    const { data: tagsData } = await supabase
-      .from('entity_tags')
-      .select('entity_id, tag_id, tags ( name, color )')
-      .eq('entity_type', 'Project');
-
-    // 3. Merge Tags into Projects
-    const combinedData = projectsData.map(project => {
-      const myTags = tagsData ? tagsData.filter(t => t.entity_id === project.id) : [];
-      return { ...project, entity_tags: myTags };
-    });
-
-    setProjects(combinedData);
+      .select('*, project_registrations(count)')
+      .order('created_at', { ascending: false }); 
+    
+    if (data) setProjects(data);
     setLoading(false);
   };
 
-  useEffect(() => { fetchProjects(); }, []);
+  // --- ACTIONS ---
 
-  const toggleRegistration = async (project) => {
-    const newStatus = project.reg_visibility === 'open' ? 'closed' : 'open';
-    await supabase.from('projects').update({ reg_visibility: newStatus }).eq('id', project.id);
-    fetchProjects();
+  const openCreateModal = () => {
+    if (!canManage) return;
+    setFormData({ id: null, name: '', description: '', is_reg_open: true });
+    setIsEditing(false);
+    setShowModal(true);
   };
 
-  const handleDelete = (id) => {
-    setDeleteId(id);
-    setActiveMenuId(null);
+  const openEditModal = (e, project) => {
+    e.stopPropagation(); 
+    if (!canManage) return;
+    setFormData({ 
+      id: project.id, 
+      name: project.name, 
+      description: project.description, 
+      is_reg_open: project.is_reg_open 
+    });
+    setIsEditing(true);
+    setShowModal(true);
   };
 
-  const confirmDelete = async () => {
-    if (deleteId) {
-      await supabase.from('projects').delete().eq('id', deleteId);
-      setDeleteId(null);
+  const handleSave = async () => {
+    if (!canManage) return;
+    if (!formData.name) return alert("Project Name is required");
+
+    let error;
+    if (isEditing) {
+      // UPDATE existing
+      const { error: updateError } = await supabase
+        .from('projects')
+        .update({ 
+          name: formData.name, 
+          description: formData.description,
+          is_reg_open: formData.is_reg_open
+        })
+        .eq('id', formData.id);
+      error = updateError;
+    } else {
+      // CREATE new
+      const { error: insertError } = await supabase
+        .from('projects')
+        .insert([{ 
+          name: formData.name, 
+          description: formData.description,
+          is_reg_open: formData.is_reg_open
+        }]);
+      error = insertError;
+    }
+
+    if (!error) {
+      setShowModal(false);
       fetchProjects();
+    } else {
+      alert("Error saving project: " + error.message);
     }
   };
 
-  const filteredProjects = projects.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
+  const handleDelete = async (e, id) => {
+    e.stopPropagation();
+    if (!canManage) return;
+    if (!window.confirm("WARNING: This will delete the project and ALL associated attendance data. Are you sure?")) return;
+    
+    await supabase.from('projects').delete().eq('id', id);
+    fetchProjects();
+  };
+
+  const toggleStatus = async (e, project) => {
+    e.stopPropagation();
+    if (!canManage) return; // Prevent toggle if not admin
+    await supabase.from('projects').update({ is_reg_open: !project.is_reg_open }).eq('id', project.id);
+    fetchProjects();
+  };
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 relative" onClick={() => setActiveMenuId(null)}>
+    <div className="flex flex-col h-full bg-slate-50">
       
       {/* HEADER */}
-      <div className="bg-white p-4 pb-2 shadow-sm z-10 sticky top-0 pt-safe-top">
-        <h1 className="text-2xl font-bold text-[#002B3D] mb-4">Projects</h1>
-        <div className="relative mb-2">
-           <Search className="absolute left-3 top-3 text-slate-400" size={20} />
-           <input type="text" placeholder="Search projects..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-[#002B3D]" />
-           {search && <button onClick={() => setSearch('')} className="absolute right-3 top-3 text-slate-400"><X size={18} /></button>}
+      <div className="bg-white p-4 shadow-sm sticky top-0 z-10 flex justify-between items-center border-b border-gray-100">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">Projects</h1>
         </div>
-      </div>
-
-      {/* LIST */}
-      <div className="flex-1 overflow-y-auto p-4 pb-24 space-y-3 pb-safe-bottom">
-        {loading ? <div className="text-center text-slate-400 mt-10">Loading...</div> : (
-           filteredProjects.map(project => (
-             <div 
-                key={project.id} 
-                onClick={() => navigate('/events', { state: { project } })} 
-                // ✅ Z-INDEX FIX: activeMenuId check forces this card to top
-                className={`bg-white p-4 rounded-xl shadow-sm border border-slate-100 relative group active:scale-[0.99] transition-all ${activeMenuId === project.id ? 'z-20' : ''}`}
-             >
-                <div className="flex justify-between items-start">
-                   <div className="flex items-start gap-3 w-full">
-                      <div className="p-3 bg-sky-50 text-[#002B3D] rounded-xl shrink-0"><Folder size={24} /></div>
-                      <div className="min-w-0 flex-1">
-                         <h3 className="text-lg font-bold text-slate-800 truncate">{project.name}</h3>
-                         
-                         <p className="text-sm text-slate-500 line-clamp-2 mt-0.5 leading-snug">
-                           {project.description || 'No description provided.'}
-                         </p>
-
-                         {/* TAGS DISPLAY AREA */}
-                         <div className="flex flex-wrap gap-1 mt-2 mb-2">
-                           {project.entity_tags?.map((et, index) => (
-                             <span 
-                               key={index} 
-                               className="text-[10px] px-2 py-0.5 rounded-full font-bold text-white shadow-sm"
-                               style={{ backgroundColor: et.tags?.color || '#94a3b8' }}
-                             >
-                               {et.tags?.name}
-                             </span>
-                           ))}
-                         </div>
-
-                         <div className="flex items-center gap-3 text-xs text-slate-400 font-medium">
-                            {/* Open/Closed Chip REMOVED from here as requested */}
-                            {project.created_at && <span className="flex items-center gap-1"><Calendar size={12}/> {new Date(project.created_at).toLocaleDateString()}</span>}
-                         </div>
-                      </div>
-                   </div>
-                   <button onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === project.id ? null : project.id); }} className="p-2 text-slate-400 hover:bg-slate-50 rounded-full shrink-0"><MoreVertical size={20} /></button>
-                </div>
-
-                {activeMenuId === project.id && (
-                  <div className="absolute right-4 top-14 bg-white shadow-xl border border-slate-100 rounded-xl w-48 py-2 z-30 animate-in zoom-in-95 duration-100 origin-top-right" onClick={(e) => e.stopPropagation()}>
-                     <button onClick={() => { setProjectToEdit(project); setIsModalOpen(true); setActiveMenuId(null); }} className="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 font-medium flex items-center gap-2"><Edit2 size={16} /> Edit Details</button>
-                     <button onClick={() => toggleRegistration(project)} className={`w-full text-left px-4 py-3 text-sm font-medium flex items-center gap-2 ${project.reg_visibility === 'open' ? 'text-orange-600' : 'text-green-600'}`}>{project.reg_visibility === 'open' ? <StopCircle size={16}/> : <PlayCircle size={16}/>} {project.reg_visibility === 'open' ? 'Close Reg' : 'Start Reg'}</button>
-                     <div className="h-px bg-slate-100 my-1"></div>
-                     <button onClick={() => handleDelete(project.id)} className="w-full text-left px-4 py-3 text-sm text-red-500 hover:bg-red-50 font-medium flex items-center gap-2"><Trash2 size={16} /> Delete</button>
-                  </div>
-                )}
-             </div>
-           ))
+        {/* ✅ HIDE BUTTON FOR NON-ADMINS */}
+        {canManage && (
+          <button 
+            onClick={openCreateModal} 
+            className="bg-[#002B3D] text-white p-3 rounded-xl shadow-lg hover:bg-[#0b3d52] transition-all flex items-center gap-2"
+          >
+            <Plus size={20} /> <span className="hidden sm:inline font-bold">New Project</span>
+          </button>
         )}
-        {!loading && filteredProjects.length === 0 && <div className="text-center text-slate-400 mt-10">No projects found.</div>}
       </div>
 
-      <button onClick={() => { setProjectToEdit(null); setIsModalOpen(true); }} className="fixed bottom-6 right-6 w-14 h-14 bg-[#002B3D] text-white rounded-full shadow-lg flex items-center justify-center hover:bg-[#155e7a] hover:scale-105 transition-all z-20"><Plus size={28} /></button>
-      
-      <ProjectModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} projectToEdit={projectToEdit} onSave={fetchProjects} />
-      
-      <ConfirmModal 
-        isOpen={!!deleteId} 
-        onClose={() => setDeleteId(null)}
-        onConfirm={confirmDelete}
-        title="Delete Project?"
-        message="Are you sure? This will permanently delete the project, all events, and attendance records."
-        confirmText="Yes, Delete"
-        isDanger={true}
-      />
+      {/* MODAL (Create / Edit) */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95">
+            <div className="bg-slate-50 p-4 border-b flex justify-between items-center">
+              <h3 className="font-bold text-slate-800">{isEditing ? 'Edit Project' : 'Create New Project'}</h3>
+              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20}/></button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+               <div>
+                 <label className="text-xs font-bold text-slate-400 uppercase block mb-1">Project Name</label>
+                 <input 
+                   className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-sky-500 font-bold text-slate-700" 
+                   placeholder="e.g. Summer Camp 2026"
+                   value={formData.name}
+                   onChange={e => setFormData({...formData, name: e.target.value})}
+                   autoFocus
+                 />
+               </div>
+               
+               <div>
+                 <label className="text-xs font-bold text-slate-400 uppercase block mb-1">Description</label>
+                 <textarea 
+                   className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-sky-500 min-h-[100px]" 
+                   placeholder="Brief details about this event..."
+                   value={formData.description}
+                   onChange={e => setFormData({...formData, description: e.target.value})}
+                 />
+               </div>
+
+               <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100 cursor-pointer" onClick={() => setFormData({...formData, is_reg_open: !formData.is_reg_open})}>
+                  <div className={`p-2 rounded-lg ${formData.is_reg_open ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                    {formData.is_reg_open ? <Unlock size={20}/> : <Lock size={20}/>}
+                  </div>
+                  <div className="flex-1">
+                    <div className="font-bold text-sm text-slate-700">Registration Status</div>
+                    <div className="text-xs text-slate-400">{formData.is_reg_open ? 'Open for new members' : 'Closed for registration'}</div>
+                  </div>
+                  <div className={`w-10 h-6 rounded-full relative transition-colors ${formData.is_reg_open ? 'bg-green-500' : 'bg-slate-300'}`}>
+                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${formData.is_reg_open ? 'left-5' : 'left-1'}`}></div>
+                  </div>
+               </div>
+            </div>
+
+            <div className="p-4 border-t bg-slate-50 flex justify-end gap-3">
+               <button onClick={() => setShowModal(false)} className="px-4 py-2 text-slate-500 font-bold hover:bg-slate-100 rounded-lg">Cancel</button>
+               <button onClick={handleSave} className="px-6 py-2 bg-[#002B3D] text-white font-bold rounded-lg hover:bg-[#0b3d52] flex items-center gap-2">
+                 <Save size={18}/> {isEditing ? 'Update Project' : 'Create Project'}
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PROJECT LIST */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-20">
+        {loading ? <div className="text-center text-slate-400 mt-10">Loading Projects...</div> : projects.map(p => (
+          <div 
+            key={p.id} 
+            onClick={() => navigate('/events', { state: { project: p } })}
+            className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 relative group cursor-pointer hover:shadow-md hover:border-sky-100 transition-all"
+          >
+            <div className="flex justify-between items-start mb-2">
+              <div className="flex items-center gap-3">
+                 <div className="p-3 bg-sky-50 text-sky-600 rounded-xl">
+                    <Folder size={24} />
+                 </div>
+                 <div>
+                    <h3 className="font-bold text-lg text-slate-800 leading-tight">{p.name}</h3>
+                    <div className="flex items-center gap-2 text-xs text-slate-400 mt-1">
+                       <Calendar size={12}/> 
+                       <span>{p.created_at ? new Date(p.created_at).toLocaleDateString() : 'No Date'}</span>
+                    </div>
+                 </div>
+              </div>
+              
+              {/* ✅ HIDE EDIT/DELETE FOR NON-ADMINS */}
+              {canManage && (
+                <div className="flex items-center gap-1">
+                  <button 
+                    onClick={(e) => openEditModal(e, p)}
+                    className="p-2 text-slate-300 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition-colors"
+                    title="Edit Project"
+                  >
+                    <Edit2 size={18} />
+                  </button>
+                  
+                  <button 
+                    onClick={(e) => handleDelete(e, p.id)}
+                    className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Delete Project"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <p className="text-slate-500 text-sm mb-4 line-clamp-2 pl-1">
+              {p.description || "No description provided."}
+            </p>
+
+            <div className="flex items-center justify-between pt-3 border-t border-slate-50">
+               <div className="flex items-center gap-2 text-slate-600 font-bold text-sm">
+                  <Users size={16} /> {p.project_registrations?.[0]?.count || 0} Members
+               </div>
+               
+               {/* ✅ DISABLE STATUS TOGGLE FOR NON-ADMINS */}
+               <div 
+                 className={`flex items-center gap-2 ${canManage ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`} 
+                 onClick={(e) => toggleStatus(e, p)}
+               >
+                  {p.is_reg_open ? (
+                    <span className="flex items-center gap-1 text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded-full border border-green-100">
+                      <Unlock size={12}/> Open
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-full border border-slate-200">
+                      <Lock size={12}/> Closed
+                    </span>
+                  )}
+               </div>
+            </div>
+          </div>
+        ))}
+        
+        {projects.length === 0 && !loading && (
+          <div className="flex flex-col items-center justify-center h-64 text-slate-400">
+             <div className="bg-slate-100 p-4 rounded-full mb-3">
+               <Folder size={32} className="opacity-40"/>
+             </div>
+             <p className="font-medium">No projects found.</p>
+             {canManage && <p className="text-xs">Click "New Project" to start.</p>}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

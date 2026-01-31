@@ -50,10 +50,46 @@ export default function Attendance() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState('filter');
 
+  // --- 2. REAL-TIME SUBSCRIPTION (Optimized) ---
   useEffect(() => {
-    if (!event) { navigate('/projects'); return; }
-    fetchData();
-  }, [event]);
+    // A. Initial Load
+    fetchEventData();
+
+    // B. Setup Realtime Listener
+    const channel = supabase
+      .channel(`live-attendance-${id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "attendance", filter: `event_id=eq.${id}` },
+        (payload) => {
+          // 🚀 OPTIMIZATION: Update state locally instead of re-fetching
+          if (payload.eventType === 'INSERT') {
+             const newMemberId = payload.new.member_id;
+             setPresentIds(prev => new Set(prev).add(newMemberId));
+          } 
+          else if (payload.eventType === 'DELETE') {
+             // For deletes, we might need the ID. 
+             // Ideally, run SQL: ALTER TABLE attendance REPLICA IDENTITY FULL;
+             // If not, we fallback to a background refresh for deletes (safer).
+             if (payload.old && payload.old.member_id) {
+                setPresentIds(prev => {
+                  const next = new Set(prev);
+                  next.delete(payload.old.member_id);
+                  return next;
+                });
+             } else {
+                // Fallback if DB doesn't send the ID for deletes
+                fetchEventData(true);
+             }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [id]); // Only re-run if Event ID changes
 
   const fetchData = async () => {
     setLoading(true);

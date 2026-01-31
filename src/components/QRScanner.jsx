@@ -3,7 +3,10 @@ import { Scanner } from '@yudiel/react-qr-scanner';
 import { X, CheckCircle, AlertCircle } from 'lucide-react';
 import { decryptMemberData } from '../lib/qrUtils';
 
-export default function QRScanner({ isOpen, onClose, event, onScanSuccess, members = [] }) {
+export default function QRScanner({ isOpen, onClose, event, onScanSuccess, 
+  
+  
+  members = [] }) {
   const [message, setMessage] = useState(null); 
   const [isProcessing, setIsProcessing] = useState(false);
   const lastScannedRef = useRef(null);
@@ -26,8 +29,6 @@ export default function QRScanner({ isOpen, onClose, event, onScanSuccess, membe
     if (!detectedCodes?.length || isProcessingRef.current) return;
     
     const rawValue = detectedCodes[0].rawValue;
-    console.log(rawValue);
-    
     
     // Prevent double scanning the same code instantly
     if (lastScannedRef.current === rawValue) return;
@@ -38,14 +39,10 @@ export default function QRScanner({ isOpen, onClose, event, onScanSuccess, membe
     setIsProcessing(true);
 
     // 1. Decrypt
-    const decrypted = decryptMemberData(rawValue);
-
-    console.log(decrypted);
-    
+    const decrypted = decryptMemberData(rawValue);    
     
     // 2. Validate
     if (!decrypted || !decrypted.id) {
-      console.error("Invalid QR");
       showStatus('error', 'Invalid or Unauthorized QR');
       return;
     }

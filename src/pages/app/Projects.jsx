@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
-  Folder, Plus, Trash2, Calendar, Users, Lock, Unlock, Edit2, X, Save 
+  Folder, Plus, Trash2, Calendar, Users, Lock, Unlock, Edit2, X, Save, Tag 
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -10,13 +10,15 @@ export default function Projects() {
   const navigate = useNavigate();
   const { profile } = useAuth();
   
-  // ✅ STRICT PERMISSION CHECK
-  // Only 'admin' can change data. Everyone else is Read-Only.
   const canManage = profile?.role === 'admin';
 
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   
+  // Tag State
+  const [availableTags, setAvailableTags] = useState([]);
+  const [selectedTags, setSelectedTags] = useState(new Set());
+
   // Modal State
   const [showModal, setShowModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -31,11 +33,16 @@ export default function Projects() {
 
   useEffect(() => {
     fetchProjects();
+    fetchTags(); // ✅ Fetch tags on load
   }, []);
+
+  const fetchTags = async () => {
+    const { data } = await supabase.from('tags').select('*').order('name');
+    if (data) setAvailableTags(data);
+  };
 
   const fetchProjects = async () => {
     setLoading(true);
-    // Fetch projects with a count of registrations
     const { data, error } = await supabase
       .from('projects')
       .select('*, project_registrations(count)')
@@ -50,30 +57,55 @@ export default function Projects() {
   const openCreateModal = () => {
     if (!canManage) return;
     setFormData({ id: null, name: '', description: '', is_reg_open: true });
+    setSelectedTags(new Set()); // Reset tags
     setIsEditing(false);
     setShowModal(true);
   };
 
-  const openEditModal = (e, project) => {
+  const openEditModal = async (e, project) => {
     e.stopPropagation(); 
     if (!canManage) return;
+    
     setFormData({ 
       id: project.id, 
       name: project.name, 
       description: project.description, 
       is_reg_open: project.is_reg_open 
     });
+
+    // ✅ Fetch existing tags for this project
+    const { data: projectTags } = await supabase
+      .from('entity_tags')
+      .select('tag_id')
+      .eq('entity_id', project.id)
+      .eq('entity_type', 'Project');
+
+    const tagSet = new Set(projectTags?.map(t => t.tag_id) || []);
+    setSelectedTags(tagSet);
+
     setIsEditing(true);
     setShowModal(true);
+  };
+
+  const toggleTag = (tagId) => {
+    const newTags = new Set(selectedTags);
+    if (newTags.has(tagId)) {
+      newTags.delete(tagId);
+    } else {
+      newTags.add(tagId);
+    }
+    setSelectedTags(newTags);
   };
 
   const handleSave = async () => {
     if (!canManage) return;
     if (!formData.name) return alert("Project Name is required");
 
+    let projectId = formData.id;
     let error;
+
+    // 1. Save Project Details
     if (isEditing) {
-      // UPDATE existing
       const { error: updateError } = await supabase
         .from('projects')
         .update({ 
@@ -81,26 +113,49 @@ export default function Projects() {
           description: formData.description,
           is_reg_open: formData.is_reg_open
         })
-        .eq('id', formData.id);
+        .eq('id', projectId);
       error = updateError;
     } else {
-      // CREATE new
-      const { error: insertError } = await supabase
+      const { data: newProject, error: insertError } = await supabase
         .from('projects')
         .insert([{ 
           name: formData.name, 
           description: formData.description,
           is_reg_open: formData.is_reg_open
-        }]);
+        }])
+        .select()
+        .single();
+      
+      if (newProject) projectId = newProject.id;
       error = insertError;
     }
 
-    if (!error) {
-      setShowModal(false);
-      fetchProjects();
-    } else {
-      alert("Error saving project: " + error.message);
+    if (error) {
+      return alert("Error saving project: " + error.message);
     }
+
+    // 2. ✅ Save Tags (Delete old -> Insert new)
+    if (projectId) {
+      // Clear existing tags
+      await supabase
+        .from('entity_tags')
+        .delete()
+        .eq('entity_id', projectId)
+        .eq('entity_type', 'Project');
+
+      // Insert selected tags
+      if (selectedTags.size > 0) {
+        const tagInserts = Array.from(selectedTags).map(tagId => ({
+          entity_id: projectId,
+          entity_type: 'Project',
+          tag_id: tagId
+        }));
+        await supabase.from('entity_tags').insert(tagInserts);
+      }
+    }
+
+    setShowModal(false);
+    fetchProjects();
   };
 
   const handleDelete = async (e, id) => {
@@ -114,7 +169,7 @@ export default function Projects() {
 
   const toggleStatus = async (e, project) => {
     e.stopPropagation();
-    if (!canManage) return; // Prevent toggle if not admin
+    if (!canManage) return; 
     await supabase.from('projects').update({ is_reg_open: !project.is_reg_open }).eq('id', project.id);
     fetchProjects();
   };
@@ -127,7 +182,6 @@ export default function Projects() {
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Projects</h1>
         </div>
-        {/* ✅ HIDE BUTTON FOR NON-ADMINS */}
         {canManage && (
           <button 
             onClick={openCreateModal} 
@@ -141,13 +195,13 @@ export default function Projects() {
       {/* MODAL (Create / Edit) */}
       {showModal && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95">
-            <div className="bg-slate-50 p-4 border-b flex justify-between items-center">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 max-h-[90vh] flex flex-col">
+            <div className="bg-slate-50 p-4 border-b flex justify-between items-center shrink-0">
               <h3 className="font-bold text-slate-800">{isEditing ? 'Edit Project' : 'Create New Project'}</h3>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20}/></button>
             </div>
             
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 overflow-y-auto">
                <div>
                  <label className="text-xs font-bold text-slate-400 uppercase block mb-1">Project Name</label>
                  <input 
@@ -169,6 +223,35 @@ export default function Projects() {
                  />
                </div>
 
+               {/* ✅ TAGS SELECTION SECTION */}
+               <div>
+                 <label className="text-xs font-bold text-slate-400 uppercase block mb-2 flex items-center gap-2">
+                   <Tag size={12} /> Assign Tags
+                 </label>
+                 <div className="flex flex-wrap gap-2">
+                   {availableTags.length === 0 ? (
+                     <p className="text-xs text-slate-400 italic">No tags available.</p>
+                   ) : (
+                     availableTags.map(tag => {
+                       const isActive = selectedTags.has(tag.id);
+                       return (
+                         <button
+                           key={tag.id}
+                           onClick={() => toggleTag(tag.id)}
+                           className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
+                             isActive 
+                               ? 'bg-[#002B3D] text-white border-[#002B3D] shadow-md' 
+                               : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                           }`}
+                         >
+                           {tag.name}
+                         </button>
+                       );
+                     })
+                   )}
+                 </div>
+               </div>
+
                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100 cursor-pointer" onClick={() => setFormData({...formData, is_reg_open: !formData.is_reg_open})}>
                   <div className={`p-2 rounded-lg ${formData.is_reg_open ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
                     {formData.is_reg_open ? <Unlock size={20}/> : <Lock size={20}/>}
@@ -183,7 +266,7 @@ export default function Projects() {
                </div>
             </div>
 
-            <div className="p-4 border-t bg-slate-50 flex justify-end gap-3">
+            <div className="p-4 border-t bg-slate-50 flex justify-end gap-3 shrink-0">
                <button onClick={() => setShowModal(false)} className="px-4 py-2 text-slate-500 font-bold hover:bg-slate-100 rounded-lg">Cancel</button>
                <button onClick={handleSave} className="px-6 py-2 bg-[#002B3D] text-white font-bold rounded-lg hover:bg-[#0b3d52] flex items-center gap-2">
                  <Save size={18}/> {isEditing ? 'Update Project' : 'Create Project'}
@@ -203,19 +286,19 @@ export default function Projects() {
           >
             <div className="flex justify-between items-start mb-2">
               <div className="flex items-center gap-3">
-                 <div className="p-3 bg-sky-50 text-sky-600 rounded-xl">
+                  <div className="p-3 bg-sky-50 text-sky-600 rounded-xl">
                     <Folder size={24} />
-                 </div>
-                 <div>
+                  </div>
+                  <div>
                     <h3 className="font-bold text-lg text-slate-800 leading-tight">{p.name}</h3>
                     <div className="flex items-center gap-2 text-xs text-slate-400 mt-1">
                        <Calendar size={12}/> 
                        <span>{p.created_at ? new Date(p.created_at).toLocaleDateString() : 'No Date'}</span>
                     </div>
-                 </div>
+                  </div>
               </div>
               
-              {/* ✅ HIDE EDIT/DELETE FOR NON-ADMINS */}
+              {/* EDIT/DELETE BUTTONS */}
               {canManage && (
                 <div className="flex items-center gap-1">
                   <button 
@@ -246,7 +329,6 @@ export default function Projects() {
                   <Users size={16} /> {p.project_registrations?.[0]?.count || 0} Members
                </div>
                
-               {/* ✅ DISABLE STATUS TOGGLE FOR NON-ADMINS */}
                <div 
                  className={`flex items-center gap-2 ${canManage ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`} 
                  onClick={(e) => toggleStatus(e, p)}
@@ -267,11 +349,11 @@ export default function Projects() {
         
         {projects.length === 0 && !loading && (
           <div className="flex flex-col items-center justify-center h-64 text-slate-400">
-             <div className="bg-slate-100 p-4 rounded-full mb-3">
-               <Folder size={32} className="opacity-40"/>
-             </div>
-             <p className="font-medium">No projects found.</p>
-             {canManage && <p className="text-xs">Click "New Project" to start.</p>}
+              <div className="bg-slate-100 p-4 rounded-full mb-3">
+                <Folder size={32} className="opacity-40"/>
+              </div>
+              <p className="font-medium">No projects found.</p>
+              {canManage && <p className="text-xs">Click "New Project" to start.</p>}
           </div>
         )}
       </div>

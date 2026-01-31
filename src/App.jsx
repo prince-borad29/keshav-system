@@ -14,7 +14,6 @@ import Projects from "./pages/app/Projects";
 import Registration from "./pages/app/Registration";
 import Events from "./pages/app/Events";
 import Attendance from "./pages/app/Attendance";
-import AttendanceScanner from './pages/app/AttendanceScanner';
 import QRManager from './pages/admin/QrManager';
 
 const LoadingScreen = () => (

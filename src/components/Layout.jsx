@@ -20,6 +20,7 @@ export default function Layout() {
     { name: 'Registration', icon: <UserCheck size={20} />, path: '/registration', roles: ['admin', 'nirdeshak', 'sanchalak' , 'nirikshak'] },
     { name: 'Database', icon: <Database size={20} />, path: '/database', roles: ['admin', 'nirdeshak', 'nirikshak', 'sanchalak'] },
     { name: 'Admin Console', icon: <Shield size={20} />, path: '/admin', roles: ['admin'] },
+    { name: 'Manage QR', icon: <Shield size={20} />, path: '/manage-qr', roles: ['admin'] },
     { name: 'Tags', icon: <Tag size={20} />, path: '/tags', roles: ['admin'] },
   ];
 

@@ -14,6 +14,8 @@ import Projects from "./pages/app/Projects";
 import Registration from "./pages/app/Registration";
 import Events from "./pages/app/Events";
 import Attendance from "./pages/app/Attendance";
+import AttendanceScanner from './pages/app/AttendanceScanner';
+import QRManager from './pages/admin/QrManager';
 
 const LoadingScreen = () => (
   <div className="h-screen w-full flex items-center justify-center bg-slate-50">
@@ -87,6 +89,12 @@ export default function App() {
             <Route path="/admin" element={
               <RoleRoute allowedRoles={['admin']}>
                 <AdminDashboard />
+              </RoleRoute>
+            } />
+            
+            <Route path="/manage-qr" element={
+              <RoleRoute allowedRoles={['admin']}>
+                <QRManager />
               </RoleRoute>
             } />
 

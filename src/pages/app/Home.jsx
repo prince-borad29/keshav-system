@@ -7,6 +7,7 @@ import { Scanner } from '@yudiel/react-qr-scanner';
 import { supabase } from '../../lib/supabase';
 import EventReports from '../../components/EventReports'; 
 import { useAuth } from '../../contexts/AuthContext'; 
+import { decryptMemberData } from '../../lib/qrUtils'; // Import the decryptor
 
 // --- CONSTANTS ---
 const ALL_COLUMNS = [
@@ -147,23 +148,49 @@ export default function Home() {
   };
 
   const handleScan = async (detectedCodes) => {
-    if (isScanPaused || !detectedCodes?.length || !activeEvent || !canMark) return;
-    const rawValue = detectedCodes[0].rawValue;
-    if (lastScannedRef.current === rawValue) return;
-    lastScannedRef.current = rawValue;
-    setIsScanPaused(true);
+  if (isScanPaused || !detectedCodes?.length || !activeEvent || !canMark) return;
+  
+  const rawValue = detectedCodes[0].rawValue;
+  if (lastScannedRef.current === rawValue) return;
+  lastScannedRef.current = rawValue;
+  setIsScanPaused(true);
+
+  // ✅ 1. DECRYPT THE SCANNED DATA
+  const decryptedMember = decryptMemberData(rawValue);
+
+  if (!decryptedMember || !decryptedMember.id) {
+    setScanMessage({ type: 'error', text: 'Invalid or Unauthorized QR Code' });
+  } else {
     try {
-      const member = members.find(m => m.id === rawValue);
+      // ✅ 2. VERIFY IF MEMBER IS IN USER'S SCOPE
+      const member = members.find(m => m.id === decryptedMember.id);
+      
       if (!member) {
-         setScanMessage({ type: 'error', text: 'Member Not Found / Out of Scope' });
+        setScanMessage({ type: 'error', text: 'Member Out of Scope / Not Found' });
       } else {
-         await supabase.from('attendance').upsert([{ event_id: activeEvent.id, member_id: rawValue }], { onConflict: 'event_id, member_id' });
-         setPresentIds(prev => new Set(prev).add(rawValue));
-         setScanMessage({ type: 'success', text: `Marked: ${member.name}` });
+        // ✅ 3. MARK ATTENDANCE
+        await supabase.from('attendance').upsert([
+          { event_id: activeEvent.id, member_id: decryptedMember.id }
+        ], { onConflict: 'event_id, member_id' });
+
+        setPresentIds(prev => new Set(prev).add(decryptedMember.id));
+        setScanMessage({ 
+          type: 'success', 
+          text: `Marked: ${decryptedMember.n} ${decryptedMember.s}` 
+        });
       }
-    } catch (e) { setScanMessage({ type: 'error', text: 'Scan Error' }); }
-    setTimeout(() => { setScanMessage(null); setIsScanPaused(false); lastScannedRef.current = null; }, 2000); 
-  };
+    } catch (e) {
+      setScanMessage({ type: 'error', text: 'Database Error' });
+    }
+  }
+
+  // Reset scanner after 2 seconds
+  setTimeout(() => {
+    setScanMessage(null);
+    setIsScanPaused(false);
+    lastScannedRef.current = null;
+  }, 2000); 
+};
 
   // --- RENDER ---
   if (authLoading || !profile) {

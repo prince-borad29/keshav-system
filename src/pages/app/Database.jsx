@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState ,useRef} from 'react';
 import { 
   Plus, Search, Phone, MoreVertical, X, Filter, SortAsc, 
-  ChevronDown, Trash2, Edit2, GripVertical
+  ChevronDown, Trash2, Edit2, GripVertical , Check
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import MemberModal from '../../components/MemberModal';

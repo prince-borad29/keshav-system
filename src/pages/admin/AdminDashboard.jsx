@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Users, MapPin, Shield, Plus, Trash2, ChevronRight, X, Edit2, Check, Save 
+  Network, Shield, Plus, Trash2, ChevronRight, X, Edit2, Check, MapPin, Loader2
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import UserManagement from './UserManagement'; 
@@ -9,59 +9,80 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState('hierarchy');
 
   return (
-    <div className="flex flex-col h-full bg-slate-50">
-      {/* Header */}
-      <div className="bg-white border-b px-6 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
+    <div className="flex flex-col h-[100dvh] bg-slate-50 relative">
+      
+      {/* --- HEADER --- */}
+      <div className="bg-white/90 backdrop-blur-md border-b border-slate-200 px-4 md:px-6 py-3 md:py-4 flex items-center justify-between sticky top-0 z-30 shrink-0 shadow-sm">
         <div>
-          <h1 className="text-2xl font-bold text-[#002B3D]">Admin Console</h1>
-          <p className="text-slate-500 text-sm">System Configuration & Access Control</p>
+          <h1 className="text-xl md:text-2xl font-bold text-[#002B3D]">Admin Console</h1>
+          <p className="text-slate-500 text-xs md:text-sm font-medium">System Configuration</p>
         </div>
         
-        {/* Tab Switcher */}
-        <div className="flex bg-slate-100 p-1 rounded-xl">
-          <button 
-            onClick={() => setActiveTab('hierarchy')}
-            className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all ${activeTab === 'hierarchy' ? 'bg-white shadow-sm text-[#002B3D]' : 'text-slate-500 hover:text-slate-700'}`}
-          >
-            <MapPin size={16} /> Structure
-          </button>
-          <button 
-            onClick={() => setActiveTab('users')}
-            className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all ${activeTab === 'users' ? 'bg-white shadow-sm text-[#002B3D]' : 'text-slate-500 hover:text-slate-700'}`}
-          >
-            <Shield size={16} /> Team Access
-          </button>
+        {/* DESKTOP TABS */}
+        <div className="hidden md:flex bg-slate-100 p-1 rounded-xl">
+          <TabButtonDesktop 
+            label="Structure" 
+            icon={Network} 
+            isActive={activeTab === 'hierarchy'} 
+            onClick={() => setActiveTab('hierarchy')} 
+          />
+          <TabButtonDesktop 
+            label="Team Access" 
+            icon={Shield} 
+            isActive={activeTab === 'users'} 
+            onClick={() => setActiveTab('users')} 
+          />
         </div>
       </div>
 
-      {/* Content Area */}
-      <div className="flex-1 overflow-y-auto p-6">
+      {/* --- CONTENT AREA --- */}
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-24 md:pb-6 scroll-smooth">
         <div className="max-w-5xl mx-auto">
-          {activeTab === 'hierarchy' ? <HierarchyManager /> : <UserManagement />}
+          <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+            {activeTab === 'hierarchy' ? <HierarchyManager /> : <UserManagement />}
+          </div>
         </div>
+      </div>
+
+      {/* --- MOBILE BOTTOM NAV --- */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-6 py-2 pb-safe flex justify-around items-center z-50 shadow-[0_-8px_30px_rgba(0,0,0,0.04)]">
+        <TabButtonMobile label="Structure" icon={Network} isActive={activeTab === 'hierarchy'} onClick={() => setActiveTab('hierarchy')} />
+        <TabButtonMobile label="Team Access" icon={Shield} isActive={activeTab === 'users'} onClick={() => setActiveTab('users')} />
       </div>
     </div>
   );
 }
 
-// --- SUB-COMPONENT: HIERARCHY MANAGER (Enhanced with Edit) ---
+// --- TAB HELPERS ---
+function TabButtonDesktop({ label, icon: Icon, isActive, onClick }) {
+  return (
+    <button onClick={onClick} className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all duration-200 ${isActive ? 'bg-white shadow-sm text-[#002B3D] ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}>
+      <Icon size={16} strokeWidth={2.5} /> {label}
+    </button>
+  );
+}
+
+function TabButtonMobile({ label, icon: Icon, isActive, onClick }) {
+  return (
+    <button onClick={onClick} className="flex flex-col items-center justify-center w-full gap-1 p-1 active:scale-95 transition-transform">
+      <div className={`p-1.5 rounded-full transition-colors duration-300 ${isActive ? 'bg-[#002B3D]/10' : 'bg-transparent'}`}>
+        <Icon size={22} strokeWidth={isActive ? 2.5 : 2} className={`transition-colors duration-300 ${isActive ? 'text-[#002B3D]' : 'text-slate-400'}`} />
+      </div>
+      <span className={`text-[10px] font-bold tracking-wide transition-colors duration-300 ${isActive ? 'text-[#002B3D]' : 'text-slate-400'}`}>{label}</span>
+    </button>
+  );
+}
+
+// --- SUB-COMPONENT: HIERARCHY MANAGER ---
 function HierarchyManager() {
   const [kshetras, setKshetras] = useState([]);
   const [loading, setLoading] = useState(true);
-  
-  // Create State
   const [newKshetra, setNewKshetra] = useState('');
   const [newMandal, setNewMandal] = useState('');
-  
-  // View State
   const [expandedKshetra, setExpandedKshetra] = useState(null);
-  
-  // Edit State
-  const [editingItem, setEditingItem] = useState(null); // { id: '...', type: 'kshetra'|'mandal', name: '...' }
+  const [editingItem, setEditingItem] = useState(null); 
 
-  useEffect(() => {
-    fetchHierarchy();
-  }, []);
+  useEffect(() => { fetchHierarchy(); }, []);
 
   const fetchHierarchy = async () => {
     setLoading(true);
@@ -70,165 +91,119 @@ function HierarchyManager() {
     setLoading(false);
   };
 
-  // --- CRUD: Kshetra ---
+  // CRUD Actions
   const addKshetra = async () => {
     if (!newKshetra.trim()) return;
     const { error } = await supabase.from('kshetras').insert([{ name: newKshetra }]);
     if (!error) { setNewKshetra(''); fetchHierarchy(); }
   };
 
-  const updateKshetra = async () => {
+  const updateItem = async (table) => {
     if (!editingItem.name.trim()) return;
-    const { error } = await supabase.from('kshetras').update({ name: editingItem.name }).eq('id', editingItem.id);
+    const { error } = await supabase.from(table).update({ name: editingItem.name }).eq('id', editingItem.id);
     if (!error) { setEditingItem(null); fetchHierarchy(); }
   };
 
-  const deleteKshetra = async (id) => {
-    if(!window.confirm("WARNING: Deleting a Kshetra will PERMANENTLY DELETE all its Mandals and associated user permissions. Continue?")) return;
-    await supabase.from('kshetras').delete().eq('id', id);
+  const deleteItem = async (table, id) => {
+    if(!window.confirm(`Delete this item? This will remove ALL related data (Mandals, Members, Users).`)) return;
+    await supabase.from(table).delete().eq('id', id);
     fetchHierarchy();
   };
 
-  // --- CRUD: Mandal ---
   const addMandal = async (kshetraId) => {
     if (!newMandal.trim()) return;
     const { error } = await supabase.from('mandals').insert([{ name: newMandal, kshetra_id: kshetraId }]);
     if (!error) { setNewMandal(''); fetchHierarchy(); }
   };
 
-  const updateMandal = async () => {
-    if (!editingItem.name.trim()) return;
-    const { error } = await supabase.from('mandals').update({ name: editingItem.name }).eq('id', editingItem.id);
-    if (!error) { setEditingItem(null); fetchHierarchy(); }
-  };
-
-  const deleteMandal = async (id) => {
-    if(!window.confirm("Delete this Mandal?")) return;
-    await supabase.from('mandals').delete().eq('id', id);
-    fetchHierarchy();
-  };
-
   return (
-    <div className="space-y-6 pb-20">
-      
-      {/* 1. Add Kshetra Box */}
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-        <h3 className="text-lg font-bold text-[#002B3D] mb-4">Add New Kshetra (Region)</h3>
-        <div className="flex gap-3">
-          <input 
-            type="text" placeholder="e.g. Rajkot West" value={newKshetra}
-            onChange={(e) => setNewKshetra(e.target.value)}
-            className="flex-1 p-3 border border-slate-200 rounded-xl outline-none focus:border-sky-500 bg-slate-50"
-          />
-          <button onClick={addKshetra} className="bg-[#002B3D] text-white px-6 py-3 rounded-xl font-bold hover:bg-[#0b3d52] shadow-sm">
-            Add Region
+    <div className="space-y-5">
+      {/* Add Box */}
+      <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 ring-1 ring-slate-50">
+        <h3 className="text-xs font-bold text-[#002B3D] uppercase tracking-wider mb-3 flex items-center gap-2">
+          <MapPin size={14} /> Add New Region (Kshetra)
+        </h3>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+             <input 
+               type="text" placeholder="Region Name (e.g. Rajkot West)" value={newKshetra}
+               onChange={(e) => setNewKshetra(e.target.value)}
+               className="w-full p-3 border border-slate-200 rounded-xl text-sm outline-none focus:border-[#002B3D] focus:ring-1 focus:ring-[#002B3D] bg-slate-50 pr-8"
+             />
+             {newKshetra && <button onClick={() => setNewKshetra('')} className="absolute right-3 top-3.5 text-slate-400 hover:text-slate-600"><X size={16}/></button>}
+          </div>
+          <button onClick={addKshetra} className="bg-[#002B3D] text-white px-6 py-3 rounded-xl text-sm font-bold hover:bg-[#0b3d52] shadow-lg shadow-sky-900/10 active:scale-95 transition-all flex items-center justify-center gap-2">
+            <Plus size={16} /> Add Region
           </button>
         </div>
       </div>
 
-      {/* 2. List Structure */}
-      <div className="space-y-4">
-        {loading ? <div className="text-center text-slate-400 py-10">Loading Structure...</div> : kshetras.map(k => (
-          <div key={k.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden transition-all duration-200">
+      {/* Structure List */}
+      <div className="space-y-3">
+        {loading ? <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#002B3D]" /></div> : kshetras.map(k => (
+          <div key={k.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden transition-all duration-200 hover:shadow-md">
             
-            {/* Kshetra Header Row */}
-            <div className="p-4 flex items-center justify-between group">
-              
-              {/* Left Side: Expand Icon + Name/Edit Input */}
-              <div className="flex items-center gap-3 flex-1">
-                <button 
-                   onClick={() => setExpandedKshetra(expandedKshetra === k.id ? null : k.id)}
-                   className={`p-2 rounded-lg transition-transform hover:bg-slate-100 ${expandedKshetra === k.id ? 'rotate-90 bg-sky-50 text-sky-600' : 'text-slate-400'}`}
-                >
-                   <ChevronRight size={20} />
-                </button>
-
-                {/* EDIT MODE: Kshetra */}
+            {/* Header */}
+            <div className="p-3 md:p-4 flex items-center justify-between group cursor-pointer active:bg-slate-50" onClick={() => { if(editingItem?.id !== k.id) setExpandedKshetra(expandedKshetra === k.id ? null : k.id) }}>
+              <div className="flex items-center gap-3 flex-1 overflow-hidden">
+                <div className={`p-2 rounded-full transition-transform duration-300 ${expandedKshetra === k.id ? 'rotate-90 bg-sky-50 text-[#002B3D]' : 'text-slate-300'}`}>
+                   <ChevronRight size={20} strokeWidth={2.5} />
+                </div>
                 {editingItem?.id === k.id && editingItem?.type === 'kshetra' ? (
-                  <div className="flex items-center gap-2 flex-1 max-w-sm animate-in fade-in">
-                    <input 
-                      autoFocus
-                      type="text" 
-                      value={editingItem.name}
-                      onChange={e => setEditingItem({...editingItem, name: e.target.value})}
-                      className="flex-1 px-3 py-1.5 border border-sky-400 rounded-lg outline-none font-bold text-lg"
-                    />
-                    <button onClick={updateKshetra} className="p-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200"><Check size={18}/></button>
-                    <button onClick={() => setEditingItem(null)} className="p-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-slate-200"><X size={18}/></button>
+                  <div className="flex items-center gap-2 flex-1 animate-in fade-in" onClick={e => e.stopPropagation()}>
+                    <input autoFocus type="text" value={editingItem.name} onChange={e => setEditingItem({...editingItem, name: e.target.value})} className="flex-1 min-w-0 px-2 py-1 border-b-2 border-[#002B3D] outline-none font-bold text-base bg-transparent" />
+                    <button onClick={() => updateItem('kshetras')} className="p-2 bg-green-50 text-green-600 rounded-lg"><Check size={16}/></button>
+                    <button onClick={() => setEditingItem(null)} className="p-2 bg-red-50 text-red-500 rounded-lg"><X size={16}/></button>
                   </div>
                 ) : (
-                  // VIEW MODE: Kshetra
-                  <div className="flex-1 cursor-pointer" onClick={() => setExpandedKshetra(expandedKshetra === k.id ? null : k.id)}>
-                    <h3 className="font-bold text-lg text-slate-800">{k.name}</h3>
-                    <p className="text-xs text-slate-500 font-medium">{k.mandals?.length || 0} Mandals</p>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-bold text-base text-slate-800 truncate">{k.name}</h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#002B3D]"></span> {k.mandals?.length || 0} Mandals</p>
                   </div>
                 )}
               </div>
-
-              {/* Right Side: Action Buttons */}
               {!(editingItem?.id === k.id) && (
-                <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => setEditingItem({ id: k.id, type: 'kshetra', name: k.name })} className="p-2 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded-lg" title="Rename Region">
-                    <Edit2 size={18} />
-                  </button>
-                  <button onClick={() => deleteKshetra(k.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete Region">
-                    <Trash2 size={18} />
-                  </button>
+                <div className="flex items-center gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                  <button onClick={() => setEditingItem({ id: k.id, type: 'kshetra', name: k.name })} className="p-2 text-slate-400 hover:text-[#002B3D] hover:bg-sky-50 rounded-lg transition-colors"><Edit2 size={16} /></button>
+                  <button onClick={() => deleteItem('kshetras', k.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={16} /></button>
                 </div>
               )}
             </div>
 
-            {/* Accordion Body: Mandals List */}
+            {/* Accordion Body */}
             {expandedKshetra === k.id && (
-              <div className="bg-slate-50 p-4 border-t border-slate-100 animate-in slide-in-from-top-2">
-                
-                {/* Add Mandal Input */}
+              <div className="bg-slate-50/50 p-3 md:p-4 border-t border-slate-100 animate-in slide-in-from-top-2 duration-200">
                 <div className="flex gap-2 mb-4">
-                   <input type="text" placeholder={`Add Mandal to ${k.name}...`} value={newMandal} onChange={(e) => setNewMandal(e.target.value)} className="flex-1 p-2.5 text-sm border border-slate-200 rounded-lg outline-none focus:border-sky-500 focus:bg-white bg-white/50"/>
-                   <button onClick={() => addMandal(k.id)} className="bg-white border border-slate-200 text-sky-600 p-2.5 rounded-lg hover:bg-sky-50 hover:border-sky-200 transition-all shadow-sm"><Plus size={20} /></button>
+                   <div className="relative flex-1">
+                      <input type="text" placeholder="Add Mandal Name..." value={newMandal} onChange={(e) => setNewMandal(e.target.value)} className="w-full p-2.5 text-sm border border-slate-200 rounded-xl outline-none focus:border-[#002B3D] focus:bg-white bg-white shadow-sm transition-all pr-8"/>
+                      {newMandal && <button onClick={() => setNewMandal('')} className="absolute right-2 top-2.5 text-slate-400 hover:text-slate-600"><X size={14}/></button>}
+                   </div>
+                   <button onClick={() => addMandal(k.id)} className="bg-[#002B3D] text-white w-10 h-10 flex items-center justify-center rounded-xl shadow-lg active:scale-95 transition-all shrink-0"><Plus size={20} /></button>
                 </div>
-
-                {/* Mandals Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                   {k.mandals?.map(m => (
-                    <div key={m.id} className="bg-white p-3 rounded-xl border border-slate-200 flex justify-between items-center group shadow-sm hover:shadow-md transition-all">
-                      
-                      {/* EDIT MODE: Mandal */}
+                    <div key={m.id} className="bg-white px-3 py-2.5 rounded-xl border border-slate-200 flex justify-between items-center group shadow-sm hover:border-[#002B3D]/30 transition-colors">
                       {editingItem?.id === m.id && editingItem?.type === 'mandal' ? (
-                         <div className="flex items-center gap-1 w-full animate-in zoom-in-95">
-                            <input 
-                              autoFocus
-                              type="text" 
-                              value={editingItem.name}
-                              onChange={e => setEditingItem({...editingItem, name: e.target.value})}
-                              className="flex-1 px-2 py-1 text-sm border border-sky-400 rounded outline-none font-semibold"
-                            />
-                            <button onClick={updateMandal} className="p-1 bg-green-100 text-green-700 rounded hover:bg-green-200"><Check size={14}/></button>
-                            <button onClick={() => setEditingItem(null)} className="p-1 bg-slate-100 text-slate-500 rounded hover:bg-slate-200"><X size={14}/></button>
+                         <div className="flex items-center gap-1 w-full animate-in fade-in">
+                            <input autoFocus type="text" value={editingItem.name} onChange={e => setEditingItem({...editingItem, name: e.target.value})} className="flex-1 min-w-0 px-2 py-1 text-sm border-b border-[#002B3D] outline-none font-medium bg-transparent" />
+                            <button onClick={() => updateItem('mandals')} className="text-green-600 p-1 bg-green-50 rounded"><Check size={14}/></button>
+                            <button onClick={() => setEditingItem(null)} className="text-red-500 p-1 bg-red-50 rounded"><X size={14}/></button>
                          </div>
                       ) : (
-                         // VIEW MODE: Mandal
                          <>
-                           <div className="flex items-center gap-2 truncate">
-                              <div className="w-2 h-2 rounded-full bg-sky-400 shrink-0"></div>
-                              <span className="font-semibold text-slate-700 text-sm truncate">{m.name}</span>
+                           <div className="flex items-center gap-2.5 truncate flex-1 min-w-0">
+                              <div className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0"></div>
+                              <span className="font-medium text-slate-700 text-sm truncate">{m.name}</span>
                            </div>
-                           
-                           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button onClick={() => setEditingItem({ id: m.id, type: 'mandal', name: m.name })} className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded">
-                                <Edit2 size={14} />
-                              </button>
-                              <button onClick={() => deleteMandal(m.id)} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded">
-                                <X size={14} />
-                              </button>
+                           <div className="flex gap-2 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => setEditingItem({ id: m.id, type: 'mandal', name: m.name })} className="text-slate-300 hover:text-[#002B3D] transition-colors"><Edit2 size={14} /></button>
+                              <button onClick={() => deleteItem('mandals', m.id)} className="text-slate-300 hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
                            </div>
                          </>
                       )}
                     </div>
                   ))}
-                  {(!k.mandals || k.mandals.length === 0) && (
-                    <div className="col-span-full text-center py-4 text-xs text-slate-400 italic">No Mandals added yet. Start by adding one above.</div>
-                  )}
+                  {(!k.mandals || k.mandals.length === 0) && <div className="col-span-full text-center py-3 text-[10px] text-slate-400 uppercase font-bold tracking-widest opacity-60 border border-dashed border-slate-200 rounded-xl">No Mandals Added</div>}
                 </div>
               </div>
             )}

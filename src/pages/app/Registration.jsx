@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { 
   Search, Filter, SortAsc, X, Check, ChevronDown, 
-  Plus, ArrowLeft, Phone, FileText, Folder, Users, GripVertical, ArrowUp, ArrowDown, Trash2
+  Plus, ArrowLeft, Phone, FileText, Folder, Users, GripVertical, ArrowUp, ArrowDown, Trash2, Loader2, Lock, Unlock
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import MemberModal from '../../components/MemberModal';
@@ -28,6 +28,7 @@ export default function Registration() {
   const isAdmin = userRole === 'admin';
   const isNirdeshak = userRole === 'nirdeshak';
   const isMandalLeader = ['sanchalak', 'nirikshak'].includes(userRole);
+  const isTaker = userRole === 'taker';
   const canRegister = ['admin', 'nirdeshak', 'nirikshak', 'sanchalak'].includes(userRole);
 
   const [view, setView] = useState('projects'); 
@@ -54,67 +55,109 @@ export default function Registration() {
   const [activeFilters, setActiveFilters] = useState([]);
   const [activeSorts, setActiveSorts] = useState([{ id: 1, column: 'designation', asc: true }]);
 
-  useEffect(() => { fetchProjects(); }, []);
+  useEffect(() => { 
+    if(profile) fetchProjects(); 
+  }, [profile]);
 
+  // --- 1. FETCH PROJECTS (Scoped Visibility & Counts) ---
   const fetchProjects = async () => {
     setProjectLoading(true);
     
-    // 1. Fetch Projects
-    const { data: projectsData } = await supabase
+    // A. Fetch All Projects
+    // ✅ FIXED: Removed filter on non-existent column 'reg_visibility'
+    const { data: allProjects } = await supabase
       .from('projects')
       .select('*')
-      .in('reg_visibility', ['open', 'closed'])
-      .order('name', { ascending: true });
+      .order('created_at', { ascending: false });
     
-    if (projectsData) {
-      setProjects(projectsData);
-      
-      // 2. ✅ FETCH SCOPED COUNTS
-      // We join 'members' to filter registrations by Mandal/Kshetra
-      let query = supabase
-        .from('project_registrations')
-        .select('project_id, members!inner(mandal_id, kshetra_id)');
-
-      // Apply Scope Filters
-      if (!isAdmin && profile) {
-         if (isMandalLeader && profile.mandal_id) {
-            query = query.eq('members.mandal_id', profile.mandal_id);
-         }
-         else if (isNirdeshak && profile.kshetra_id) {
-            query = query.eq('members.kshetra_id', profile.kshetra_id);
-         }
-      }
-
-      const { data: regData } = await query;
-      
-      // Count per project
-      const counts = {};
-      regData?.forEach(r => { 
-         counts[r.project_id] = (counts[r.project_id] || 0) + 1; 
+    if (allProjects) {
+      // B. Apply Visibility Logic (Matching Projects.jsx)
+      const visibleProjects = allProjects.filter(p => {
+        if (isAdmin) return true;
+        
+        // Gender Scope
+        if (p.allowed_gender !== 'Both' && p.allowed_gender !== profile.gender) return false;
+        
+        // Region Scope (Kshetra)
+        if (p.allowed_kshetras && p.allowed_kshetras.length > 0) {
+           if (!profile.kshetra_id) return false;
+           if (!p.allowed_kshetras.includes(profile.kshetra_id)) return false;
+        }
+        return true;
       });
-      setProjectCounts(counts);
+
+      setProjects(visibleProjects);
+      
+      // C. Fetch Scoped Counts
+      if (visibleProjects.length > 0) {
+          let query = supabase
+            .from('project_registrations')
+            .select('project_id, members!inner(mandal_id, kshetra_id, gender)'); 
+
+          // Apply Scope Filters to the COUNT query
+          if (!isAdmin) {
+             if (isMandalLeader && profile.mandal_id) {
+                query = query.eq('members.mandal_id', profile.mandal_id);
+             }
+             else if (isNirdeshak && profile.kshetra_id) {
+                query = query.eq('members.kshetra_id', profile.kshetra_id);
+             }
+             if (profile.gender) {
+                query = query.eq('members.gender', profile.gender);
+             }
+          }
+
+          const { data: regData } = await query;
+          
+          const counts = {};
+          regData?.forEach(r => { 
+             counts[r.project_id] = (counts[r.project_id] || 0) + 1; 
+          });
+          setProjectCounts(counts);
+      }
     }
     setProjectLoading(false);
   };
 
+  // --- 2. FETCH MEMBERS (Scoped List) ---
   const fetchData = async (project) => {
-    // 1. Get Registered IDs (Scoped by fetchProjects logic implicitly? No, need scope here too for list)
-    // Actually, for the list, we filter 'members' first, then check registration status.
-    
-    const { data: regData } = await supabase.from('project_registrations').select('member_id').eq('project_id', project.id);
+    // A. Get Registered IDs
+    const { data: regData } = await supabase
+        .from('project_registrations')
+        .select('member_id')
+        .eq('project_id', project.id);
+        
     const regSet = new Set(regData?.map(r => r.member_id) || []);
     setRegisteredIds(regSet);
 
-    // 2. Fetch Members
+    // B. Fetch Members (Database Scoped)
     let query = supabase.from('members').select('*');
-    if (project.reg_visibility === 'closed') {
+
+    // ✅ APPLY DB FILTERING (User can only see people in their scope)
+    if (!isAdmin) {
+        if (isMandalLeader && profile.mandal_id) {
+            query = query.eq('mandal_id', profile.mandal_id);
+        } else if (isNirdeshak && profile.kshetra_id) {
+            query = query.eq('kshetra_id', profile.kshetra_id);
+        } 
+        if (profile.gender) {
+            query = query.eq('gender', profile.gender);
+        }
+    }
+
+    // Special Case: If registration is CLOSED, ONLY show people who are already registered
+    // ✅ FIXED: Correct variable 'is_reg_open'
+    if (project.is_reg_open === false) {
       if (regSet.size === 0) { setMembers([]); return; }
       query = query.in('id', Array.from(regSet));
     }
 
     const { data: membersData } = await query;
+
+    // C. Fetch Tags
     const { data: tagsData } = await supabase.from('entity_tags').select(`entity_id, tag_id, tags ( name, color )`).eq('entity_type', 'Member');
 
+    // D. Merge
     const membersWithTags = (membersData || []).map(member => {
       const myTags = tagsData ? tagsData.filter(t => t.entity_id === member.id) : [];
       return { ...member, entity_tags: myTags };
@@ -132,23 +175,32 @@ export default function Registration() {
   };
 
   const toggleRegistration = async (memberId) => {
+    // ✅ FIXED: Strict Logic Check
     if (!canRegister) return;
+    if (selectedProject?.is_reg_open === false) return alert("Registration is closed for this project.");
 
     const isRegistered = registeredIds.has(memberId);
-    const newSet = new Set(registeredIds);
-    if (isRegistered) newSet.delete(memberId); else newSet.add(memberId);
-    setRegisteredIds(newSet);
+    
+    // Optimistic Update
+    setRegisteredIds(prev => {
+        const next = new Set(prev);
+        if (isRegistered) next.delete(memberId); else next.add(memberId);
+        return next;
+    });
 
     if (isRegistered) {
       await supabase.from('project_registrations').delete().eq('project_id', selectedProject.id).eq('member_id', memberId);
     } else {
       await supabase.from('project_registrations').insert([{ project_id: selectedProject.id, member_id: memberId }]);
     }
+    // Refresh counts in background
     fetchProjects(); 
   };
 
   const registerAllVisible = async () => {
+    // ✅ FIXED: Strict Logic Check
     if (!canRegister) return;
+    if (selectedProject?.is_reg_open === false) return alert("Registration is closed.");
 
     const unregistered = filteredMembers.filter(m => !registeredIds.has(m.id));
     if (unregistered.length === 0) return alert("All visible members are already registered!");
@@ -169,25 +221,16 @@ export default function Registration() {
 
   const handleNewMemberSaved = async (newMemberId) => {
     if (!newMemberId) return;
+    if (selectedProject?.is_reg_open === false) return alert("Member created, but Registration is closed.");
+    
     await supabase.from('project_registrations').insert([{ project_id: selectedProject.id, member_id: newMemberId }]);
     await fetchData(selectedProject);
     fetchProjects(); 
   };
 
-  // --- FILTER & ENGINE ---
+  // --- FILTER ENGINE (Same as before) ---
   useEffect(() => {
     let result = [...members];
-
-    // ✅ SCOPE SECURITY: Filter members based on logged-in user Role
-    if (profile && !isAdmin) {
-      if (isMandalLeader && profile.mandal_id) {
-        result = result.filter(m => m.mandal_id === profile.mandal_id);
-      }
-      if (isNirdeshak && profile.kshetra_id) {
-        result = result.filter(m => m.kshetra_id === profile.kshetra_id);
-      }
-    }
-
     if (search) {
       const lower = search.toLowerCase();
       result = result.filter(m => (m.name?.toLowerCase().includes(lower)) || (m.surname?.toLowerCase().includes(lower)) || (m.mobile_number?.includes(lower)));
@@ -226,11 +269,11 @@ export default function Registration() {
       return 0;
     });
     setFilteredMembers(result);
-  }, [members, search, quickDesigFilter, activeFilters, activeSorts, profile, userRole]);
+  }, [members, search, quickDesigFilter, activeFilters, activeSorts]);
 
   // Grouping Logic
   const groupedMembers = filteredMembers.reduce((acc, member) => {
-    const mandal = member.mandal || 'Unknown Mandal';
+    const mandal = member.mandal || 'Other';
     if (!acc[mandal]) acc[mandal] = [];
     acc[mandal].push(member);
     return acc;
@@ -248,8 +291,8 @@ export default function Registration() {
     setIsDrawerOpen(true);
   };
 
-  // ✅ LOCALIZED STATS
-  const isClosed = selectedProject?.reg_visibility === 'closed';
+  // ✅ LOCALIZED STATS & LOCK
+  const isClosed = selectedProject?.is_reg_open === false; // ✅ Correct Variable
   const myTotalMembers = filteredMembers.length; 
   const myRegisteredCount = filteredMembers.filter(m => registeredIds.has(m.id)).length; 
   const unregisteredCount = myTotalMembers - myRegisteredCount;
@@ -258,19 +301,19 @@ export default function Registration() {
   if (view === 'projects') {
     return (
       <div className="flex flex-col h-full bg-slate-50 p-4 pt-safe-top">
-        <h1 className="text-2xl font-bold text-[#002B3D] mb-6">Select Project</h1>
+        <h1 className="text-2xl font-bold text-[#002B3D] mb-6">Registration</h1>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {projectLoading ? <div className="text-slate-400">Loading...</div> : (
+          {projectLoading ? <div className="flex justify-center p-10 col-span-full"><Loader2 className="animate-spin text-[#002B3D]"/></div> : (
+            projects.length === 0 ? <div className="col-span-full text-center text-slate-400">No projects available for registration.</div> :
             projects.map(project => (
               <div key={project.id} onClick={() => handleSelectProject(project)} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md cursor-pointer group">
                 <div className="flex justify-between items-start mb-2">
                   <div className="p-2 bg-sky-50 text-[#002B3D] rounded-lg group-hover:bg-[#002B3D] group-hover:text-white transition-colors"><Folder size={24} /></div>
-                  <span className={`text-xs font-bold px-2 py-1 rounded-full ${project.reg_visibility === 'open' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{project.reg_visibility === 'open' ? 'Open' : 'Closed'}</span>
+                  <span className={`text-xs font-bold px-2 py-1 rounded-full ${project.is_reg_open ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{project.is_reg_open ? 'Open' : 'Closed'}</span>
                 </div>
                 <h3 className="text-lg font-bold text-slate-800">{project.name}</h3>
                 <div className="flex items-center gap-2 mt-3 text-slate-500 text-sm font-medium">
                   <Users size={16} />
-                  {/* ✅ DISPLAYS SCOPED COUNT */}
                   <span>{projectCounts[project.id] || 0} Members</span>
                 </div>
               </div>
@@ -290,21 +333,22 @@ export default function Registration() {
         <div className="flex items-center gap-3 mb-3">
           <button onClick={() => setView('projects')} className="p-2 hover:bg-slate-100 rounded-full text-slate-500"><ArrowLeft size={24} /></button>
           <div className="flex-1 overflow-hidden">
-            <h1 className="text-lg font-bold text-[#002B3D] truncate">{selectedProject.name}</h1>
+            <div className="flex items-center gap-2">
+               <h1 className="text-lg font-bold text-[#002B3D] truncate">{selectedProject.name}</h1>
+               {isClosed && <Lock size={14} className="text-red-500"/>}
+            </div>
             <span className="text-xs text-slate-400 font-medium">
               {isClosed ? `Closed • ${myRegisteredCount} Registered` : `Open • ${myRegisteredCount} / ${myTotalMembers} Registered`}
             </span>
           </div>
           
           <div className="flex gap-2 items-center">
-            
-            {/* Register All Button (Scoped) */}
+            {/* Register All Button (Hidden if Closed) */}
             {!isClosed && unregisteredCount > 0 && canRegister && (
                <button onClick={registerAllVisible} className="hidden md:flex items-center gap-2 px-3 py-2 bg-[#002B3D] text-white rounded-xl font-bold text-xs shadow-lg hover:bg-[#155e7a] transition-colors whitespace-nowrap">
-                  <Check size={18} /> Register All ({unregisteredCount})
+                  <Check size={18} /> Register All
                </button>
             )}
-
             <button onClick={() => openDrawer('sort')} className="relative p-2 bg-slate-100 rounded-xl text-slate-600"><SortAsc size={20} />{activeSorts.length > 1 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border border-white"></span>}</button>
             <button onClick={() => openDrawer('filter')} className="relative p-2 bg-slate-100 rounded-xl text-slate-600"><Filter size={20} />{activeFilters.length > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border border-white"></span>}</button>
             <button onClick={() => setIsReportsOpen(true)} className="p-2 bg-[#002B3D] text-white rounded-xl shadow-lg shadow-sky-900/20"><FileText size={20} /></button>
@@ -330,7 +374,7 @@ export default function Registration() {
 
       {/* MEMBER LIST */}
       <div className="flex-1 overflow-y-auto p-4 pb-24 space-y-6">
-        {loading ? <div className="text-center text-slate-400 mt-10">Loading...</div> : (
+        {loading ? <div className="flex justify-center p-10"><Loader2 className="animate-spin text-[#002B3D]"/></div> : (
            Object.keys(groupedMembers).sort().map(mandalName => (
              <div key={mandalName}>
                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 ml-1">{mandalName} ({groupedMembers[mandalName].length})</h3>
@@ -354,10 +398,26 @@ export default function Registration() {
                            {m.mobile_number && (
                              <a href={`tel:${m.mobile_number}`} className="p-2 text-[#0EA5E9] bg-sky-50 rounded-full hover:bg-sky-100 transition-colors"><Phone size={18} /></a>
                            )}
-                           {!isClosed && canRegister && (
-                              <button onClick={() => toggleRegistration(m.id)} className={`px-4 py-2 rounded-xl font-bold text-sm transition-all shadow-sm whitespace-nowrap ${isRegistered ? 'bg-slate-100 text-slate-500 hover:bg-slate-200' : 'bg-green-600 text-white hover:bg-green-700'}`}>
-                                {isRegistered ? 'Remove' : 'Register'}
-                              </button>
+                           
+                           {/* Register Button (Logic Fix) */}
+                           {canRegister && (
+                              isClosed && !isRegistered ? (
+                                // Case: Closed & Not Registered -> Show nothing or 'Closed' label
+                                <span className="text-xs text-red-400 font-bold px-2">Closed</span>
+                              ) : (
+                                // Case: Open OR (Closed & Registered -> allow removing if needed, or hide)
+                                <button 
+                                  onClick={() => toggleRegistration(m.id)} 
+                                  disabled={isClosed} // Disable interactions if closed
+                                  className={`px-4 py-2 rounded-xl font-bold text-sm transition-all shadow-sm whitespace-nowrap ${
+                                    isRegistered 
+                                      ? 'bg-slate-100 text-slate-500 hover:bg-slate-200' 
+                                      : (isClosed ? 'bg-slate-50 text-slate-300' : 'bg-green-600 text-white hover:bg-green-700')
+                                  }`}
+                                >
+                                  {isRegistered ? 'Remove' : 'Register'}
+                                </button>
+                              )
                            )}
                         </div>
                      </div>
@@ -395,14 +455,12 @@ export default function Registration() {
         />
       )}
 
-      {/* DRAWER */}
       <RightDrawer isOpen={isDrawerOpen} mode={drawerMode} onClose={() => setIsDrawerOpen(false)} initialFilters={activeFilters} initialSorts={activeSorts} onApply={(newFilters, newSorts) => { setActiveFilters(newFilters); setActiveSorts(newSorts); setIsDrawerOpen(false); }} membersData={members} />
     </div>
   );
 }
 
-// ... (Keep RightDrawer and MultiSelectDropdown) ...
-// (Add them below as usual)
+// ... Subcomponents remain the same ...
 function RightDrawer({ isOpen, mode, onClose, onApply, initialFilters, initialSorts, membersData }) {
   const [localFilters, setLocalFilters] = useState([]);
   const [localSorts, setLocalSorts] = useState([]);

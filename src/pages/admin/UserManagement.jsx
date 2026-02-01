@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Users, UserPlus, CheckCircle, RefreshCw, Trash2, Search, 
-  Link as LinkIcon, X, Copy, Globe, List, Edit2, Save
+  Link as LinkIcon, X, Copy, Globe, List, Edit2, Save, Loader2
 } from 'lucide-react';
-import { supabase, createGhostClient } from '../../lib/supabase';
+import { supabase } from '../../lib/supabase';
+import { createClient } from '@supabase/supabase-js'; // ✅ Import for isolated auth
 import { useAuth } from '../../contexts/AuthContext';
 
 export default function UserManagement() {
@@ -72,7 +73,7 @@ export default function UserManagement() {
 
   // --- HELPER: GENERATE RANDOM STRING ---
   const generateRandomSuffix = (length = 4) => {
-    const chars = "23456789abcdefghjkmnpqrstuvwxyz";
+    const chars = "234567891";
     let result = "";
     for (let i = 0; i < length; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
     return result;
@@ -80,12 +81,19 @@ export default function UserManagement() {
 
   const generatePassword = () => `Keshav@${generateRandomSuffix(4)}`;
 
+  // ✅ HELPER: Isolated Client to prevent Admin Logout during creation
+  const getGhostClient = () => {
+    return createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY, {
+      auth: { persistSession: false } // Crucial: Do not save this session
+    });
+  };
+
   // --- ACTIONS ---
 
-  // 1. CREATE USER(S)
+  // 1. CREATE USER(S) - FIXED LOGIC
   const handleCreate = async () => {
     const isTaker = formData.role === 'taker';
-    const ghost = createGhostClient();
+    const ghost = getGhostClient(); // Use local ghost client
     const adminId = profile?.id || null;
     let newCredentials = [];
 
@@ -97,62 +105,83 @@ export default function UserManagement() {
         const count = parseInt(formData.takerCount) || 1;
         if (count > 20) return alert("Please create max 20 takers at a time.");
 
+        // Fetch existing count for naming
+        const { count: existingCount } = await supabase.from('user_profiles').select('*', { count: 'exact', head: true }).ilike('name', 'Keshav System Taker%');
+        let startIndex = (existingCount || 0) + 1;
+
         for (let i = 0; i < count; i++) {
-          const suffix = generateRandomSuffix(5);
-          const autoEmail = `taker.${suffix}@keshavsystem.com`;
-          const autoPassword = generatePassword();
-          const autoName = `Keshav System Taker ${suffix.toUpperCase()}`;
+            const num = startIndex + i;
+            const suffix = generateRandomSuffix(5);
+            const autoEmail = `attendancetaker${suffix}@keshavsystem.com`;
+            const autoPassword = generatePassword();
+            const autoName = `Attendance Taker ${suffix}`;
 
-          const { error } = await ghost.auth.signUp({
-            email: autoEmail,
-            password: autoPassword,
-            options: { 
-              data: {
-                role: 'taker',
-                created_by: adminId,
-                member_id: null,
-                first_name: "Keshav System",
-                last_name: `Taker ${suffix.toUpperCase()}`,
-                gender: formData.gender,
-                kshetra_id: null,
-                mandal_id: null
-              } 
+            // A. Create Auth User (Isolated)
+            const { data: authData, error: authError } = await ghost.auth.signUp({
+                email: autoEmail,
+                password: autoPassword,
+                options: { data: { full_name: autoName } }
+            });
+
+            if (authData?.user && !authError) {
+                // B. Manual Profile Insert (Bypassing Triggers)
+                await supabase.from('user_profiles').insert([{
+                    id: authData.user.id,
+                    role: 'taker',
+                    name: autoName,
+                    gender: formData.gender, // 'Male' or 'Female' (Mapped to Yuvak/Yuvati in DB types if needed)
+                    created_by: adminId
+                }]);
+
+                newCredentials.push({ name: autoName, email: autoEmail, password: autoPassword });
             }
-          });
-
-          if (!error) {
-             newCredentials.push({ name: autoName, email: autoEmail, password: autoPassword });
-          }
         }
       } else {
         // --- STANDARD SINGLE USER MODE ---
         if (!selectedMember) return alert("Please select a member.");
         if (!formData.email || !formData.password) return alert("Email & Password required.");
 
-        const { error } = await ghost.auth.signUp({
+        const fullName = `${selectedMember.name} ${selectedMember.surname}`;
+
+        // A. Create Auth User
+        const { data: authData, error: authError } = await ghost.auth.signUp({
           email: formData.email,
           password: formData.password,
-          options: { 
-            data: {
-              role: formData.role,
-              created_by: adminId,
-              member_id: selectedMember.id
-            } 
-          }
+          options: { data: { full_name: fullName } }
         });
 
-        if (error) throw error;
+        if (authError) throw authError;
         
-        newCredentials.push({
-          name: `${selectedMember.name} ${selectedMember.surname}`,
-          email: formData.email,
-          password: formData.password
-        });
+        // B. Manual Profile Insert
+        if (authData?.user) {
+            const { error: profileError } = await supabase.from('user_profiles').insert([{
+                id: authData.user.id,
+                role: formData.role,
+                name: fullName,
+                member_id: selectedMember.id,
+                gender: selectedMember.gender === 'Female' ? 'Female' : 'Male',
+                kshetra_id: formData.role === 'nirdeshak' ? selectedMember.kshetra_id : null,
+                mandal_id: ['sanchalak', 'nirikshak'].includes(formData.role) ? selectedMember.mandal_id : null,
+                created_by: adminId
+            }]);
+
+            if (profileError) throw profileError;
+
+            newCredentials.push({
+                name: fullName,
+                email: formData.email,
+                password: formData.password
+            });
+        }
       }
 
-      setCreatedUsersList(newCredentials);
-      setViewMode('success');
-      fetchData();
+      if (newCredentials.length > 0) {
+          setCreatedUsersList(newCredentials);
+          setViewMode('success');
+          fetchData();
+      } else {
+          alert("No users were created. Check database permissions.");
+      }
 
     } catch (err) {
       alert("Error: " + (err.message || "Database error"));
@@ -217,6 +246,7 @@ export default function UserManagement() {
       `Name: ${u.name}\nEmail: ${u.email}\nPassword: ${u.password}\n-------------------`
     ).join('\n');
     navigator.clipboard.writeText(text);
+    alert("Copied to clipboard!");
   };
 
   return (
@@ -242,7 +272,8 @@ export default function UserManagement() {
               <div className="p-3 bg-green-100 rounded-full text-green-600"><CheckCircle size={32}/></div>
               <div className="flex-1">
                  <h3 className="text-xl font-bold text-green-800">{createdUsersList.length} User(s) Created!</h3>
-                 <p className="text-green-700 text-sm mb-4">Copy these details immediately.</p>
+                 <p className="text-green-700 text-sm mb-4">Copy these details immediately. They will not be shown again.</p>
+                 
                  <div className="max-h-60 overflow-y-auto bg-white rounded-xl border border-green-200 shadow-sm mb-4">
                    <table className="w-full text-left text-sm">
                      <thead className="bg-green-50 text-green-800 font-bold border-b border-green-100">
@@ -259,8 +290,9 @@ export default function UserManagement() {
                      </tbody>
                    </table>
                  </div>
+                 
                  <div className="flex gap-3">
-                    <button onClick={copyAllCredentials} className="flex-1 px-4 py-3 bg-[#002B3D] text-white font-bold rounded-xl hover:bg-[#0b3d52]">Copy All</button>
+                    <button onClick={copyAllCredentials} className="flex-1 px-4 py-3 bg-[#002B3D] text-white font-bold rounded-xl hover:bg-[#0b3d52] flex items-center justify-center gap-2"><Copy size={18}/> Copy All</button>
                     <button onClick={() => setViewMode('list')} className="px-6 py-3 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl">Done</button>
                  </div>
               </div>
@@ -324,7 +356,7 @@ export default function UserManagement() {
                            <div>
                               <label className="text-xs font-bold text-orange-700 uppercase mb-1 block">Gender Scope</label>
                               <select value={formData.gender} onChange={e => setFormData({...formData, gender: e.target.value})} className="w-full p-4 border border-orange-200 rounded-xl bg-white font-medium outline-none">
-                                 <option value="Yuvak">Yuvak</option><option value="Yuvati">Yuvati</option>
+                                 <option value="Male">Yuvak (Male)</option><option value="Female">Yuvati (Female)</option>
                               </select>
                            </div>
                         </div>
@@ -375,7 +407,7 @@ export default function UserManagement() {
                 disabled={loading} 
                 className="px-6 py-3 bg-[#002B3D] text-white font-bold rounded-xl hover:bg-[#0b3d52] flex items-center gap-2"
               >
-                 {loading ? 'Processing...' : (
+                 {loading ? <><Loader2 className="animate-spin" size={18}/> Processing...</> : (
                     viewMode === 'edit' ? <><Save size={18}/> Update Role</> : <><UserPlus size={18}/> {formData.role === 'taker' ? `Create ${formData.takerCount} Users` : 'Create User'}</>
                  )}
               </button>
@@ -397,9 +429,9 @@ export default function UserManagement() {
              </thead>
              <tbody className="divide-y divide-slate-100">
                {users.map(user => {
-                 const displayName = user.members ? `${user.members.name} ${user.members.surname}` : `${user.name} ${user.surname}`;
+                 const displayName = user.members ? `${user.members.name} ${user.members.surname}` : `${user.name}`;
                  let scope = 'Global Access';
-                 if (user.role !== 'taker') scope = user.gender; 
+                 if (user.role !== 'taker' && user.role !== 'admin') scope = user.gender; 
 
                  return (
                    <tr key={user.id} className="hover:bg-slate-50 group">

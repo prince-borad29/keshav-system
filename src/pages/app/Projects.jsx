@@ -263,7 +263,7 @@ export default function Projects() {
                 </div>
                 
                 {canManage && (
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-1 opacity-100 group-hover:opacity-100 transition-opacity">
                     <button onClick={(e) => openEditModal(e, p)} className="p-2 text-slate-400 hover:text-[#002B3D] bg-slate-50 rounded-lg"><Edit2 size={18} /></button>
                     <button onClick={(e) => handleDelete(e, p.id)} className="p-2 text-slate-400 hover:text-red-500 bg-slate-50 rounded-lg"><Trash2 size={18} /></button>
                   </div>

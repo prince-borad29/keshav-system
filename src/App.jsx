@@ -14,6 +14,8 @@ import MemberProfile from "./modules/members/MemberProfile";
 import ProjectDashboard from "./modules/projects/ProjectDashboard"
 import SettingsDashboard from "./modules/settings/SettingsDashboard";
 import Organization from "./modules/organization/Organization"
+import TagManager from "./modules/settings/TagManager";
+import ReportsDashboard from "./modules/reports/ReportsDashboard"
 
 // --- AUTH GUARD & HOME WRAPPER ---
 // This ensures the user is logged in and has a profile before showing the dashboard
@@ -92,6 +94,8 @@ export default function App() {
         {/* 5. SETTINGS: Admin Only */}
         <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
            <Route path="/settings" element={<SettingsDashboard />} />
+           <Route path="/tags" element={<TagManager />} />
+           <Route path="/reports" element={<ReportsDashboard />} />
            <Route path="/organization" element={<Organization />} />
         </Route>
 

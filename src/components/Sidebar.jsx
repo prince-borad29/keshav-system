@@ -71,7 +71,7 @@ export default function Sidebar({ isOpen, onClose }) {
               <div className="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Modules</div>
               <NavItem to="/projects" icon={Layers} label="Projects & Events" onClick={onClose} />
               <NavItem to="/reports" icon={FileText} label="Reports" onClick={onClose} />
-              <NavItem to="/tags" icon={Settings} label="Settings" onClick={onClose} />
+              <NavItem to="/settings" icon={Settings} label="Settings" onClick={onClose} />
               
             </>
           )}

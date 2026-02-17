@@ -5,7 +5,7 @@ import {
   Loader2, BarChart2, Filter, X, Lock, RefreshCw, AlertTriangle
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import QRScanner from './QRScanner'; 
+import QrScanner from './QrScanner'; 
 import { useAuth } from '../../contexts/AuthContext'; 
 import AttendanceSummary from './AttendanceSummary';
 
@@ -407,7 +407,7 @@ export default function Attendance({
         />
       )}
       
-      {canMark && <QRScanner isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onScan={handleScan} eventName={event.name} />}
+      {canMark && <QrScanner isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onScan={handleScan} eventName={event.name} />}
     </div>
   );
 }

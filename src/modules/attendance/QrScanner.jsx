@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Scanner } from '@yudiel/react-qr-scanner';
 import { X, CheckCircle, AlertTriangle, XCircle, Zap } from 'lucide-react';
 
-export default function QRScanner({ isOpen, onClose, onScan }) {
+export default function QrScanner({ isOpen, onClose, onScan }) {
   const [feedback, setFeedback] = useState(null); // null | { type: 'success'|'error'|'warning', msg: '' }
   const lastScannedCode = useRef(null);
   const isProcessing = useRef(false);

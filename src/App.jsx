@@ -13,6 +13,7 @@ import ProtectedRoute from './components/ProtectedRoute'; // Import the new file
 import MemberProfile from "./modules/members/MemberProfile";
 import ProjectDashboard from "./modules/projects/ProjectDashboard"
 import SettingsDashboard from "./modules/settings/SettingsDashboard";
+import Organization from "./modules/organization/Organization"
 
 // --- AUTH GUARD & HOME WRAPPER ---
 // This ensures the user is logged in and has a profile before showing the dashboard
@@ -74,8 +75,8 @@ export default function App() {
         {/* 2. MEMBER DIRECTORY: Block Takers & Volunteers */}
         {/* Only these roles can enter /members */}
         <Route element={<ProtectedRoute allowedRoles={['admin', 'nirdeshak', 'nirikshak', 'sanchalak']} />}>
-           <Route path="/members" element={<MemberDirectory />} />
-           <Route path="/members/:id" element={<MemberProfile />} />
+           <Route path="/directory" element={<MemberDirectory />} />
+           <Route path="/directory/:id" element={<MemberProfile />} />
         </Route>
 
         {/* 3. ATTENDANCE: Allow Takers here */}
@@ -91,6 +92,7 @@ export default function App() {
         {/* 5. SETTINGS: Admin Only */}
         <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
            <Route path="/settings" element={<SettingsDashboard />} />
+           <Route path="/organization" element={<Organization />} />
         </Route>
 
       </Route>

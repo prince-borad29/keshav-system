@@ -10,7 +10,7 @@ export default function HomeDashboard() {
   const [primaryEvent, setPrimaryEvent] = useState(null);
   const [primaryProject, setPrimaryProject] = useState(null);
 
-  useEffect(() => {
+  useEffect(() => {    
     fetchPrimaryEvent();
   }, []);
 

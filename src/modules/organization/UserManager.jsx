@@ -25,17 +25,7 @@ import {
 import { supabase } from "../../lib/supabase";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
-
-// --- GHOST CLIENT (Singleton) ---
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const ghostClient = createClient(supabaseUrl, supabaseKey, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false,
-    detectSessionInUrl: false,
-  },
-});
+import { ghostClient } from "../../lib/supabase";
 
 // --- INITIAL STATES ---
 const initialSystemForm = {

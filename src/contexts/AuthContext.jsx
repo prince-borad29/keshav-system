@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import { useNavigate } from 'react-router-dom';
 
 const AuthContext = createContext({});
 
@@ -12,6 +13,8 @@ export default function AuthProvider({ children }) {
   
   // Ref helps avoid stale closure issues in event listeners
   const isMounted = useRef(true);
+
+  const navigate = useNavigate()
 
   // --- Helper: Fetch Profile ---
   const fetchProfile = async (userId) => {
@@ -73,6 +76,8 @@ export default function AuthProvider({ children }) {
           }
           return prev; // Already logged in (Tab focus), do nothing
         });
+
+        navigate('/');
       } 
       else if (event === 'SIGNED_OUT') {
         if (isMounted.current) {
@@ -96,9 +101,10 @@ export default function AuthProvider({ children }) {
   const isSanchalak = profile?.role === 'sanchalak';
   const isNirdeshak = profile?.role === 'nirdeshak';
   const isNirikshak = profile?.role === 'nirikshak';
+  const isProjectAdmin = profile?.role === 'project_admin';
 
   return (
-    <AuthContext.Provider value={{ user, profile, isAdmin, isSanchalak, isNirdeshak, isNirikshak, loading }}>
+    <AuthContext.Provider value={{ user, profile, isAdmin, isSanchalak, isNirdeshak, isNirikshak,isProjectAdmin, loading }}>
       {children}
     </AuthContext.Provider>
   );

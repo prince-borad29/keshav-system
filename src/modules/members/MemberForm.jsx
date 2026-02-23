@@ -10,6 +10,10 @@ const INITIAL_FORM = {
   kshetra_id: '', mandal_id: '', internal_code: '', is_guest: false
 };
 
+// Extracted classes for standard Tailwind compilation and cleaner JSX
+const labelClasses = "block text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider";
+const inputClasses = "w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 outline-none text-sm text-slate-800 transition-all placeholder:text-slate-400";
+
 export default function MemberForm({ isOpen, onClose, onSuccess, initialData = null }) {
   const { profile } = useAuth();
   
@@ -120,7 +124,6 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
   };
 
   // -- 2. HANDLERS --
-
   const toggleTag = (tagId) => {
     setSelectedTags(prev => prev.includes(tagId) ? prev.filter(id => id !== tagId) : [...prev, tagId]);
   };
@@ -168,7 +171,6 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   };
 
-  // Helper to filter mandals based on selected Kshetra (For Admin UI only)
   const getDisplayMandals = () => {
     if (isAdmin && formData.kshetra_id) {
       return mandals.filter(m => m.kshetra_id === formData.kshetra_id);
@@ -179,91 +181,99 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+    // Backdrop - changes alignment on mobile (items-end) vs desktop (sm:items-center)
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 backdrop-blur-sm sm:p-4 animate-in fade-in duration-200">
+      
+      {/* Modal Container */}
+      <div className="bg-white w-full max-w-3xl h-[95vh] sm:h-auto sm:max-h-[90vh] rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom-8 sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-200">
         
         {/* HEADER */}
-        <div className="flex justify-between items-center px-6 py-4 border-b border-slate-100 bg-white">
+        <div className="flex justify-between items-center px-6 py-5 border-b border-slate-100 bg-white shrink-0">
           <div>
             <h2 className="text-xl font-bold text-slate-800">{initialData ? 'Edit Profile' : 'New Registration'}</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Please fill in the details carefully.</p>
+            <p className="text-xs text-slate-500 mt-1">Please fill in the details carefully.</p>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X size={20} className="text-slate-500"/></button>
+          <button 
+            onClick={onClose} 
+            className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600"
+          >
+            <X size={20} />
+          </button>
         </div>
 
         {/* SCROLLABLE BODY */}
-        <div className="overflow-y-auto p-6 flex-1">
-          <form id="member-form" onSubmit={handleSubmit} className="space-y-8">
+        <div className="overflow-y-auto px-4 sm:px-8 py-6 flex-1 scroll-smooth">
+          <form id="member-form" onSubmit={handleSubmit} className="space-y-8 max-w-none">
             
             {error && (
-              <div className="bg-red-50 text-red-700 p-4 rounded-xl flex items-start gap-3 text-sm border border-red-100">
+              <div className="bg-red-50 text-red-700 p-4 rounded-xl flex items-start gap-3 text-sm border border-red-100 animate-in fade-in">
                 <AlertTriangle size={18} className="shrink-0 mt-0.5"/> 
                 <span>{error}</span>
               </div>
             )}
 
             {/* SECTION 1: PERSONAL */}
-            <div>
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <User size={14}/> Personal Details
+            <section>
+              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-widest mb-5 flex items-center gap-2">
+                <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg"><User size={14}/></div>
+                Personal Details
               </h3>
               
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 mb-5">
                 <div>
-                  <label className="label-std">First Name <span className="text-red-500">*</span></label>
-                  <input required className="input-std" placeholder="First Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                  <label className={labelClasses}>First Name <span className="text-red-500">*</span></label>
+                  <input required className={inputClasses} placeholder="First Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
                 </div>
                 <div>
-                  <label className="label-std">Father's Name</label>
-                  <input className="input-std" placeholder="Middle Name" value={formData.father_name} onChange={e => setFormData({...formData, father_name: e.target.value})} />
+                  <label className={labelClasses}>Father's Name</label>
+                  <input className={inputClasses} placeholder="Middle Name" value={formData.father_name} onChange={e => setFormData({...formData, father_name: e.target.value})} />
                 </div>
                 <div>
-                  <label className="label-std">Surname <span className="text-red-500">*</span></label>
-                  <input required className="input-std" placeholder="Last Name" value={formData.surname} onChange={e => setFormData({...formData, surname: e.target.value})} />
+                  <label className={labelClasses}>Surname <span className="text-red-500">*</span></label>
+                  <input required className={inputClasses} placeholder="Last Name" value={formData.surname} onChange={e => setFormData({...formData, surname: e.target.value})} />
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <div>
-                  <label className="label-std">Mobile Number</label>
-                  <input type="tel" className="input-std" placeholder="10-digit number" value={formData.mobile} onChange={e => setFormData({...formData, mobile: e.target.value})} />
+                  <label className={labelClasses}>Mobile Number</label>
+                  <input type="tel" className={inputClasses} placeholder="10-digit number" value={formData.mobile} onChange={e => setFormData({...formData, mobile: e.target.value})} />
                 </div>
                 <div>
-                  <label className="label-std">Date of Birth</label>
+                  <label className={labelClasses}>Date of Birth</label>
                   <div className="relative">
-                    <Calendar size={16} className="absolute left-3 top-3 text-slate-400 pointer-events-none"/>
-                    <input type="date" className="input-std pl-10" value={formData.dob} onChange={e => setFormData({...formData, dob: e.target.value})} />
+                    <Calendar size={18} className="absolute left-3.5 top-3 text-slate-400 pointer-events-none"/>
+                    <input type="date" className={`${inputClasses} pl-11`} value={formData.dob} onChange={e => setFormData({...formData, dob: e.target.value})} />
                   </div>
                 </div>
               </div>
-            </div>
+            </section>
 
             <div className="h-px bg-slate-100 w-full" />
 
             {/* SECTION 2: ORGANIZATION */}
-            <div>
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <MapPin size={14}/> Organization Scope
+            <section>
+              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-widest mb-5 flex items-center gap-2">
+                <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg"><MapPin size={14}/></div>
+                Organization Scope
               </h3>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 
-                {/* Kshetra: Only Visible to Admin (Hidden for Nirdeshak/Others) */}
                 {isAdmin && (
                   <div>
-                    <label className="label-std">Kshetra (Region)</label>
-                    <select className="input-std" value={formData.kshetra_id} onChange={e => setFormData({...formData, kshetra_id: e.target.value, mandal_id: ''})}>
+                    <label className={labelClasses}>Kshetra (Region)</label>
+                    <select className={inputClasses} value={formData.kshetra_id} onChange={e => setFormData({...formData, kshetra_id: e.target.value, mandal_id: ''})}>
                       <option value="">Select Kshetra...</option>
                       {kshetras.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
                     </select>
                   </div>
                 )}
 
-                {/* Mandal: Visible to everyone except Sanchalak (who is auto-locked) */}
                 {!isSanchalak && (
                   <div>
-                    <label className="label-std">Mandal (Local) <span className="text-red-500">*</span></label>
-                    <select required className="input-std" value={formData.mandal_id} onChange={e => setFormData({...formData, mandal_id: e.target.value})}>
+                    <label className={labelClasses}>Mandal (Local) <span className="text-red-500">*</span></label>
+                    <select required className={inputClasses} value={formData.mandal_id} onChange={e => setFormData({...formData, mandal_id: e.target.value})}>
                       <option value="">Select Mandal...</option>
                       {getDisplayMandals().map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                     </select>
@@ -271,22 +281,21 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
                 )}
 
                 <div>
-                  <label className="label-std">Designation</label>
+                  <label className={labelClasses}>Designation</label>
                   <div className="relative">
-                    <Briefcase size={16} className="absolute left-3 top-3 text-slate-400 pointer-events-none"/>
-                    <select className="input-std pl-10" value={formData.designation} onChange={e => setFormData({...formData, designation: e.target.value})}>
+                    <Briefcase size={18} className="absolute left-3.5 top-3 text-slate-400 pointer-events-none"/>
+                    <select className={`${inputClasses} pl-11`} value={formData.designation} onChange={e => setFormData({...formData, designation: e.target.value})}>
                       {['Member', 'Nirdeshak', 'Nirikshak', 'Sanchalak', 'Sah Sanchalak', 'Sampark Karyakar', 'Utsahi Yuvak'].map(d => <option key={d} value={d}>{d}</option>)}
                     </select>
                   </div>
                 </div>
 
-                {/* Gender: Only Admin can change. Others see Hidden Field */}
                 {isAdmin ? (
                   <div>
-                    <label className="label-std">Gender <span className="text-red-500">*</span></label>
-                    <div className="flex gap-2">
+                    <label className={labelClasses}>Gender <span className="text-red-500">*</span></label>
+                    <div className="flex gap-3">
                       {['Yuvak', 'Yuvati'].map(g => (
-                        <label key={g} className={`flex-1 text-center py-2.5 rounded-xl border cursor-pointer text-sm font-medium transition-all ${formData.gender === g ? 'bg-indigo-50 border-indigo-500 text-indigo-700 ring-1 ring-indigo-500' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+                        <label key={g} className={`flex-1 text-center py-2.5 rounded-xl border cursor-pointer text-sm font-semibold transition-all ${formData.gender === g ? 'bg-indigo-50 border-indigo-500 text-indigo-700 ring-1 ring-indigo-500 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-white'}`}>
                           <input type="radio" className="hidden" name="gender" checked={formData.gender === g} onChange={() => setFormData({...formData, gender: g})}/>
                           {g}
                         </label>
@@ -295,63 +304,60 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
                   </div>
                 ) : (
                    <div className="hidden">
-                      {/* Stores auto-selected gender for Nirdeshak/Sanchalak/etc */}
                       <input type="hidden" value={formData.gender} />
                    </div>
                 )}
 
-                {/* Address spans full width */}
-                <div className="md:col-span-2">
-                   <label className="label-std">Address</label>
-                   <textarea className="input-std" rows="2" placeholder="Street, Area, City..." value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} />
+                <div className="sm:col-span-2">
+                   <label className={labelClasses}>Address</label>
+                   <textarea className={inputClasses} rows="2" placeholder="Street, Area, City..." value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} />
                 </div>
               </div>
-            </div>
+            </section>
 
             <div className="h-px bg-slate-100 w-full" />
 
             {/* SECTION 3: TAGS */}
-            <div>
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2"><Tag size={14}/> Skills & Tags</h3>
-              <div className="flex flex-wrap gap-2 p-4 bg-slate-50 rounded-xl border border-slate-100">
+            <section>
+              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2">
+                <div className="p-1.5 bg-amber-50 text-amber-600 rounded-lg"><Tag size={14}/></div>
+                Skills & Tags
+              </h3>
+              <div className="flex flex-wrap gap-2.5 p-5 bg-slate-50 rounded-2xl border border-slate-200">
                 {availableTags.length === 0 ? (
-                  <span className="text-sm text-slate-400 italic">No tags available. Admins can add them in Settings.</span>
+                  <span className="text-sm text-slate-500 italic w-full text-center py-2">No tags available. Admins can add them in Settings.</span>
                 ) : (
                   availableTags.map(tag => (
                     <button
                       key={tag.id}
                       type="button"
                       onClick={() => toggleTag(tag.id)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all active:scale-95 ${
+                      className={`px-4 py-2 rounded-full text-xs font-bold border transition-all active:scale-95 ${
                         selectedTags.includes(tag.id)
-                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-200'
-                          : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
+                          ? 'bg-slate-800 text-white border-slate-800 shadow-md shadow-slate-300'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400 hover:bg-slate-50'
                       }`}
                     >
-                      {selectedTags.includes(tag.id) && <span className="mr-1">✓</span>}
+                      {selectedTags.includes(tag.id) && <span className="mr-1.5 opacity-80">✓</span>}
                       {tag.name}
                     </button>
                   ))
                 )}
               </div>
-            </div>
+            </section>
 
           </form>
         </div>
 
         {/* FOOTER */}
-        <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3">
-          <Button variant="secondary" onClick={onClose} type="button">Cancel</Button>
-          <Button type="submit" form="member-form" disabled={loading}>
+        <div className="p-4 sm:px-6 sm:py-5 bg-white border-t border-slate-100 flex justify-end gap-3 shrink-0">
+          <Button variant="secondary" onClick={onClose} type="button" className="w-full sm:w-auto">Cancel</Button>
+          <Button type="submit" form="member-form" disabled={loading} className="w-full sm:w-auto">
             {loading ? <Loader2 className="animate-spin" /> : <><Save size={18} className="mr-2"/> Save Details</>}
           </Button>
         </div>
 
       </div>
-      <style>{`
-        .label-std { @apply block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide; }
-        .input-std { @apply w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none text-sm text-slate-800 transition-all placeholder:text-slate-400; }
-      `}</style>
     </div>
   );
 }

@@ -1,25 +1,37 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Loader2, ChevronRight, BarChart3, X, Download, FileText, FileSpreadsheet, UserX } from 'lucide-react';
 import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable'; // 1. Direct Import
+import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 
 export default function AttendanceSummary({ event, project, userScope, onMandalClick, isVisible, onClose }) {
   const [loading, setLoading] = useState(true);
+  
+  // Base Data State
+  const [rawRegs, setRawRegs] = useState([]);
+  const [presentSet, setPresentSet] = useState(new Set());
+  
+  // Computed Stats State
   const [data, setData] = useState([]);
   const [absentList, setAbsentList] = useState([]); 
   const [totals, setTotals] = useState({ present: 0, registered: 0 });
   const [showExportMenu, setShowExportMenu] = useState(false);
 
-  useEffect(() => {
-    if (isVisible) calculateStats();
-  }, [event.id, isVisible]);
+  // Reverse Lookup Dictionary for Realtime DELETEs
+  const attendanceIdMap = useRef(new Map());
 
-  const calculateStats = async () => {
+  // --- 1. FETCH INITIAL DATA ---
+  useEffect(() => {
+    if (isVisible && event?.id) {
+      loadInitialData();
+    }
+  }, [event?.id, isVisible]);
+
+  const loadInitialData = async () => {
     setLoading(true);
     try {
-      // 1. Fetch Registrations
+      // A. Fetch Registrations
       let regQuery = supabase
         .from('project_registrations')
         .select(`
@@ -33,7 +45,7 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
         `)
         .eq('project_id', project.id);
 
-      // --- APPLY FILTERS ---
+      // Apply Filters
       if (!userScope.isGlobal) {
           if (userScope.gender) {
             regQuery = regQuery.eq('members.gender', userScope.gender);
@@ -46,76 +58,126 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
             if (userScope.mandalIds && userScope.mandalIds.length > 0) {
                 regQuery = regQuery.in('members.mandal_id', userScope.mandalIds);
             } else {
-                setData([]); setTotals({ present: 0, registered: 0 }); setLoading(false); return; 
+                setRawRegs([]); setPresentSet(new Set()); setLoading(false); return; 
             }
           }
       }
 
       const { data: regs, error: regError } = await regQuery;
       if (regError) throw regError;
+      setRawRegs(regs || []);
 
-      // 2. Fetch Attendance
+      // B. Fetch Attendance (with row IDs for dictionary)
       const { data: atts, error: attError } = await supabase
         .from('attendance')
-        .select('member_id')
+        .select('id, member_id')
         .eq('event_id', event.id);
       
       if (attError) throw attError;
 
-      // 3. Aggregate & Build Absent List
-      const presentSet = new Set(atts.map(a => a.member_id));
+      const newSet = new Set();
+      attendanceIdMap.current.clear();
       
-      const groups = {};
-      const absents = [];
-      let totalReg = 0, totalPres = 0;
-
-      regs.forEach(r => {
-        const m = r.members;
-        const mandalName = m.mandals?.name || 'Unknown';
-        const mandalId = m.mandals?.id;
-        
-        if (!groups[mandalName]) {
-            groups[mandalName] = { 
-                id: mandalId, 
-                name: mandalName, 
-                registered: 0, 
-                present: 0 
-            };
-        }
-
-        groups[mandalName].registered++;
-        totalReg++;
-
-        if (presentSet.has(r.member_id)) {
-          groups[mandalName].present++;
-          totalPres++;
-        } else {
-          // Add to Absent List
-          absents.push({
-            name: `${m.name} ${m.surname}`,
-            mobile: m.mobile || 'N/A',
-            mandal: mandalName,
-            id: m.internal_code
-          });
-        }
+      atts?.forEach(a => {
+        newSet.add(a.member_id);
+        attendanceIdMap.current.set(a.id, a.member_id); // Save dictionary link
       });
-
-      const sortedData = Object.values(groups).sort((a, b) => b.present - a.present);
-      setData(sortedData);
-      setAbsentList(absents);
-      setTotals({ present: totalPres, registered: totalReg });
+      
+      setPresentSet(newSet);
 
     } catch (err) {
-      console.error("Summary Error:", err);
+      console.error("Summary Load Error:", err);
     } finally {
       setLoading(false);
     }
   };
 
+  // --- 2. REALTIME SYNC ---
+  useEffect(() => {
+    if (!isVisible || !event?.id) return;
+
+    const channel = supabase
+      .channel(`summary-sync-${event.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance' },
+        (payload) => {
+          
+          if (payload.eventType === 'INSERT' && payload.new.event_id === event.id) {
+             // Save to Dictionary
+             attendanceIdMap.current.set(payload.new.id, payload.new.member_id);
+             // Add to UI
+             setPresentSet(prev => {
+                const next = new Set(prev);
+                next.add(payload.new.member_id);
+                return next;
+             });
+          } 
+          else if (payload.eventType === 'DELETE') {
+             const delId = payload.old?.id;
+             const memberId = attendanceIdMap.current.get(delId);
+
+             if (memberId) {
+                attendanceIdMap.current.delete(delId);
+                setPresentSet(prev => {
+                   const next = new Set(prev);
+                   next.delete(memberId);
+                   return next;
+                });
+             }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isVisible, event?.id]);
+
+  // --- 3. COMPUTE STATS LOCALLY (Runs instantly when Realtime updates presentSet) ---
+  useEffect(() => {
+    if (!rawRegs) return;
+
+    const groups = {};
+    const absents = [];
+    let totalReg = 0, totalPres = 0;
+
+    rawRegs.forEach(r => {
+      const m = r.members;
+      const mandalName = m.mandals?.name || 'Unknown';
+      const mandalId = m.mandals?.id;
+      
+      if (!groups[mandalName]) {
+          groups[mandalName] = { id: mandalId, name: mandalName, registered: 0, present: 0 };
+      }
+
+      groups[mandalName].registered++;
+      totalReg++;
+
+      if (presentSet.has(r.member_id)) {
+        groups[mandalName].present++;
+        totalPres++;
+      } else {
+        absents.push({
+          name: `${m.name} ${m.surname}`,
+          mobile: m.mobile || 'N/A',
+          mandal: mandalName,
+          id: m.internal_code
+        });
+      }
+    });
+
+    const sortedData = Object.values(groups).sort((a, b) => b.present - a.present);
+    setData(sortedData);
+    setAbsentList(absents);
+    setTotals({ present: totalPres, registered: totalReg });
+
+  }, [rawRegs, presentSet]);
+
   const getPct = (curr, total) => total > 0 ? Math.round((curr / total) * 100) : 0;
 
-  // --- EXPORT FUNCTIONS (FIXED) ---
-
+  // --- EXPORT FUNCTIONS ---
   const exportPDFSummary = () => {
     const doc = new jsPDF();
     doc.text(`${event.name} - Attendance Summary`, 14, 15);
@@ -123,17 +185,10 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
     doc.text(`Total Present: ${totals.present} / ${totals.registered} (${getPct(totals.present, totals.registered)}%)`, 14, 22);
     
     const tableData = data.map(row => [
-      row.name, 
-      `${row.present} / ${row.registered}`, 
-      `${getPct(row.present, row.registered)}%`
+      row.name, `${row.present} / ${row.registered}`, `${getPct(row.present, row.registered)}%`
     ]);
 
-    // 2. Use Functional Call
-    autoTable(doc, {
-      head: [['Mandal', 'Count', '%']],
-      body: tableData,
-      startY: 30,
-    });
+    autoTable(doc, { head: [['Mandal', 'Count', '%']], body: tableData, startY: 30 });
     doc.save(`Summary_${event.name}.pdf`);
     setShowExportMenu(false);
   };
@@ -142,21 +197,10 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
     const doc = new jsPDF();
     doc.text(`${event.name} - Absent Members List`, 14, 15);
     
-    // Group by Mandal for better readability
     absentList.sort((a,b) => a.mandal.localeCompare(b.mandal));
-    
-    const tableData = absentList.map(row => [
-      row.name,
-      row.mobile,
-      row.mandal
-    ]);
+    const tableData = absentList.map(row => [row.name, row.mobile, row.mandal]);
 
-    // 2. Use Functional Call
-    autoTable(doc, {
-      head: [['Name', 'Mobile', 'Mandal']],
-      body: tableData,
-      startY: 25,
-    });
+    autoTable(doc, { head: [['Name', 'Mobile', 'Mandal']], body: tableData, startY: 25 });
     doc.save(`Absent_${event.name}.pdf`);
     setShowExportMenu(false);
   };
@@ -164,25 +208,15 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
   const exportExcel = () => {
     const wb = XLSX.utils.book_new();
     
-    // Sheet 1: Summary
     const summaryData = data.map(d => ({
-        Mandal: d.name,
-        Present: d.present,
-        Registered: d.registered,
-        Percentage: `${getPct(d.present, d.registered)}%`
+        Mandal: d.name, Present: d.present, Registered: d.registered, Percentage: `${getPct(d.present, d.registered)}%`
     }));
-    const wsSummary = XLSX.utils.json_to_sheet(summaryData);
-    XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryData), "Summary");
 
-    // Sheet 2: Absent List
     const absentData = absentList.map(a => ({
-        ID: a.id,
-        Name: a.name,
-        Mobile: a.mobile,
-        Mandal: a.mandal
+        ID: a.id, Name: a.name, Mobile: a.mobile, Mandal: a.mandal
     }));
-    const wsAbsent = XLSX.utils.json_to_sheet(absentData);
-    XLSX.utils.book_append_sheet(wb, wsAbsent, "Absent Members");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(absentData), "Absent Members");
 
     XLSX.writeFile(wb, `Attendance_Report_${event.name}.xlsx`);
     setShowExportMenu(false);
@@ -201,7 +235,6 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
           </h3>
           
           <div className="flex gap-2">
-             {/* EXPORT BUTTON & DROPDOWN */}
              {!loading && (
                <div className="relative">
                  <button 
@@ -239,11 +272,11 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
             <>
               {/* BIG STATS */}
               <div className="grid grid-cols-2 gap-4">
-                <div className="bg-indigo-600 text-white p-4 rounded-xl shadow-md text-center">
+                <div className="bg-indigo-600 text-white p-4 rounded-xl shadow-md text-center transition-all duration-300">
                   <div className="text-3xl font-bold">{totals.present}</div>
                   <div className="text-xs text-indigo-200 uppercase font-bold tracking-wide">Present</div>
                 </div>
-                <div className="bg-slate-100 text-slate-600 p-4 rounded-xl text-center border border-slate-200">
+                <div className="bg-slate-100 text-slate-600 p-4 rounded-xl text-center border border-slate-200 transition-all duration-300">
                   <div className="text-3xl font-bold">{totals.registered}</div>
                   <div className="text-xs text-slate-400 uppercase font-bold tracking-wide">Total Registered</div>
                 </div>

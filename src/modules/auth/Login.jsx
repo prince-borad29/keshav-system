@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, Lock, Mail, AlertCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext'; // Import Auth Context
 
 export default function Login() {
   const navigate = useNavigate();
+  const { user, profile, loading: authLoading } = useAuth(); // Destructure state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [formData, setFormData] = useState({
@@ -12,31 +14,38 @@ export default function Login() {
     password: ''
   });
 
+  // 🛑 SAFETY REDIRECT 🛑
+  // If the user is already fully logged in, push them to the dashboard
+  useEffect(() => {
+    if (!authLoading && user && profile) {
+      navigate('/');
+    }
+  }, [user, profile, authLoading, navigate]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
 
     try {
-      // 1. Supabase Auth Request
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { error } = await supabase.auth.signInWithPassword({
         email: formData.email,
         password: formData.password,
       });
 
       if (error) throw error;
-
-      // 2. Success! Redirect is handled by the AuthContext/Router
-      navigate('/');
+      
+      // DO NOT navigate here. AuthContext handles it cleanly now.
+      return; 
       
     } catch (err) {
       console.error(err);
       setError(err.message === "Invalid login credentials" 
         ? "Incorrect email or password." 
         : "Login failed. Please try again.");
-    } finally {
+        
       setLoading(false);
-    }
+    } 
   };
 
   return (
@@ -104,10 +113,10 @@ export default function Login() {
             {/* Submit Button */}
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || authLoading} // Disable if context is loading
               className="w-full bg-primary hover:bg-primary-dark text-white font-bold py-3.5 rounded-xl shadow-lg shadow-primary/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer"
             >
-              {loading ? (
+              {(loading || authLoading) ? (
                 <>
                   <Loader2 size={20} className="animate-spin" />
                   Verifying...

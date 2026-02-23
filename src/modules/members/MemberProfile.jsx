@@ -131,9 +131,6 @@ export default function MemberProfile({ member, isOpen, onClose, onEdit }) {
 
         {/* FOOTER */}
         <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
-          <button className="text-slate-500 hover:text-slate-800 text-sm flex items-center gap-2 font-medium px-4 py-2 hover:bg-white rounded-lg transition-all" onClick={() => window.print()}>
-            <Printer size={16} /> Print Card
-          </button>
           <div className="flex gap-3">
             <Button variant="secondary" onClick={onClose}>Close</Button>
             <Button onClick={() => { onEdit(member); onClose(); }} icon={Edit3}>Edit Profile</Button>

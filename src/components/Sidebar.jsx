@@ -5,10 +5,17 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 
 export default function Sidebar({ isOpen, onClose }) {
-  const { isAdmin, isSanchalak, profile } = useAuth();
+  const { profile } = useAuth();
+  
+  // Clean role definitions for the new architecture
+  const role = profile?.role;
+  const isAdmin = role === 'admin';
+  const isRegional = ['nirdeshak', 'nirikshak', 'sanchalak'].includes(role);
+  const isProjectOnly = ['project_admin', 'taker'].includes(role);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    localStorage.removeItem('sb-bdtjcwvmefjieauhnmdi-auth-token');
     window.location.href = '/login';
   };
 
@@ -19,7 +26,7 @@ export default function Sidebar({ isOpen, onClose }) {
       className={({ isActive }) => 
         `flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all font-medium text-sm ${
           isActive 
-            ? 'bg-primary text-white shadow-lg shadow-primary/30 font-bold' 
+            ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 font-bold' 
             : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
         }`
       }
@@ -47,9 +54,9 @@ export default function Sidebar({ isOpen, onClose }) {
         {/* Header */}
         <div className="p-6 flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-bold text-primary tracking-tight">Project Keshav</h1>
+            <h1 className="text-2xl font-bold text-indigo-600 tracking-tight">Project Keshav</h1>
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">
-              {isAdmin ? 'Global Admin' : profile?.role || 'Mandal Portal'}
+              {isAdmin ? 'Global Admin' : role?.replace('_', ' ') || 'Portal'}
             </p>
           </div>
           {/* Close Button (Mobile Only) */}
@@ -62,6 +69,7 @@ export default function Sidebar({ isOpen, onClose }) {
         <nav className="flex-1 px-4 space-y-2 overflow-y-auto py-4">
           <NavItem to="/" icon={LayoutDashboard} label="Dashboard" onClick={onClose} />
           
+          {/* ADMIN VIEW */}
           {isAdmin && (
             <>
               <div className="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Management</div>
@@ -72,15 +80,23 @@ export default function Sidebar({ isOpen, onClose }) {
               <NavItem to="/projects" icon={Layers} label="Projects & Events" onClick={onClose} />
               <NavItem to="/reports" icon={FileText} label="Reports" onClick={onClose} />
               <NavItem to="/settings" icon={Settings} label="Settings" onClick={onClose} />
-              
             </>
           )}
 
-          {(isSanchalak || !isAdmin && profile?.role !== 'taker') && (
+          {/* REGIONAL MANAGERS VIEW (Sanchalak, Nirdeshak, Nirikshak) */}
+          {isRegional && (
             <>
               <div className="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Operational</div>
               <NavItem to="/directory" icon={Users} label="My Mandal" onClick={onClose} />
-              <NavItem to="/projects" icon={Calendar} label="Projects" onClick={onClose} />
+              <NavItem to="/projects" icon={Calendar} label="Projects & Events" onClick={onClose} />
+            </>
+          )}
+
+          {/* PROJECT STAFF VIEW (Project Admin, Taker) */}
+          {isProjectOnly && (
+            <>
+              <div className="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">My Assignments</div>
+              <NavItem to="/projects" icon={Calendar} label="My Projects" onClick={onClose} />
             </>
           )}
         </nav>
@@ -88,12 +104,12 @@ export default function Sidebar({ isOpen, onClose }) {
         {/* Footer */}
         <div className="p-4 border-t border-slate-100 bg-slate-50/50">
           <div className="flex items-center gap-3 mb-4 px-2">
-            <div className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center text-primary font-bold shadow-sm text-sm">
+            <div className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center text-indigo-600 font-bold shadow-sm text-sm uppercase">
               {profile?.full_name?.[0] || 'U'}
             </div>
             <div className="overflow-hidden">
-              <p className="text-sm font-bold text-slate-800 truncate">{profile?.full_name}</p>
-              <p className="text-xs text-slate-500 capitalize">{profile?.role}</p>
+              <p className="text-sm font-bold text-slate-800 truncate">{profile?.full_name || 'User'}</p>
+              <p className="text-xs text-slate-500 capitalize">{role?.replace('_', ' ')}</p>
             </div>
           </div>
           <button 

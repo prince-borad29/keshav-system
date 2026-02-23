@@ -1,5 +1,5 @@
 import React from "react";
-import { Routes, Route, Navigate, Outlet } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "./contexts/AuthContext";
 
@@ -9,16 +9,15 @@ import Login from "./modules/auth/Login";
 import MemberDirectory from "./modules/members/MemberDirectory";
 import Attendance from "./modules/attendance/Attendance";
 import HomeDashboard from "./modules/home/HomeDashboard";
-import ProtectedRoute from './components/ProtectedRoute'; // Import the new file
+import ProtectedRoute from './components/ProtectedRoute'; 
 import MemberProfile from "./modules/members/MemberProfile";
-import ProjectDashboard from "./modules/projects/ProjectDashboard"
+import ProjectDashboard from "./modules/projects/ProjectDashboard";
 import SettingsDashboard from "./modules/settings/SettingsDashboard";
-import Organization from "./modules/organization/Organization"
+import Organization from "./modules/organization/Organization";
 import TagManager from "./modules/settings/TagManager";
-import ReportsDashboard from "./modules/reports/ReportsDashboard"
+import ReportsDashboard from "./modules/reports/ReportsDashboard";
 
 // --- AUTH GUARD & HOME WRAPPER ---
-// This ensures the user is logged in and has a profile before showing the dashboard
 const ProtectedHome = () => {
   const { user, profile, loading } = useAuth();
 
@@ -33,7 +32,6 @@ const ProtectedHome = () => {
 
   if (!user) return <Navigate to="/login" replace />;
 
-  // Edge Case: User exists in Auth, but data missing in 'user_profiles' table
   if (!profile) {
     return (
       <div className="h-screen flex items-center justify-center text-center p-8 bg-slate-50">
@@ -42,10 +40,7 @@ const ProtectedHome = () => {
           <p className="text-slate-500 mb-4">
             You are logged in, but your user profile details could not be found.
           </p>
-          <button
-            onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
-          >
+          <button onClick={() => window.location.reload()} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
             Retry Connection
           </button>
         </div>
@@ -53,9 +48,6 @@ const ProtectedHome = () => {
     );
   }
 
-  // ✅ LOGIC UPDATE: 
-  // We no longer need separate Admin/Sanchalak components here.
-  // HomeDashboard handles the role-based view internally.
   return <HomeDashboard />;
 };
 
@@ -63,35 +55,32 @@ const ProtectedHome = () => {
 export default function App() {
   return (
     <Routes>
-      {/* Public Route */}
       <Route path="/login" element={<Login />} />
 
-      {/* --- PROTECTED ROUTES --- */}
-      <Route element={<Layout />}> {/* Your Sidebar/Navbar Layout */}
+      <Route element={<Layout />}> 
         
-        {/* 1. Dashboard: Accessible by everyone logged in */}
+        {/* 1. Dashboard */}
         <Route element={<ProtectedRoute />}> 
-           <Route path="/" element={< HomeDashboard/>} />
+           <Route path="/" element={<ProtectedHome />} />
         </Route>
 
-        {/* 2. MEMBER DIRECTORY: Block Takers & Volunteers */}
-        {/* Only these roles can enter /members */}
+        {/* 2. MEMBER DIRECTORY */}
         <Route element={<ProtectedRoute allowedRoles={['admin', 'nirdeshak', 'nirikshak', 'sanchalak']} />}>
            <Route path="/directory" element={<MemberDirectory />} />
            <Route path="/directory/:id" element={<MemberProfile />} />
         </Route>
 
-        {/* 3. ATTENDANCE: Allow Takers here */}
-        <Route element={<ProtectedRoute allowedRoles={['admin', 'taker', 'sanchalak']} />}>
+        {/* 3. ATTENDANCE */}
+        <Route element={<ProtectedRoute allowedRoles={['admin', 'taker', 'sanchalak','project_admin']} />}>
            <Route path="/attendance/:projectId/:eventId" element={<Attendance />} />
         </Route>
 
-        {/* 4. PROJECTS: Maybe only Admin & Nirdeshak? */}
-        <Route element={<ProtectedRoute allowedRoles={['admin', 'nirdeshak']} />}>
+        {/* 4. PROJECTS: Allowed 'taker' here so they can see their assigned projects */}
+        <Route element={<ProtectedRoute allowedRoles={['admin', 'nirdeshak', 'nirikshak', 'sanchalak','project_admin']} />}>
            <Route path="/projects" element={<ProjectDashboard />} />
         </Route>
 
-        {/* 5. SETTINGS: Admin Only */}
+        {/* 5. SETTINGS */}
         <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
            <Route path="/settings" element={<SettingsDashboard />} />
            <Route path="/tags" element={<TagManager />} />

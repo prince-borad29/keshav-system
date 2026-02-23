@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
   Search, ArrowLeft, Check, QrCode, 
@@ -26,7 +26,7 @@ export default function Attendance({
   // Permissions
   const canMark = useMemo(() => {
     if (propReadOnly) return false;
-    return ['admin', 'taker', 'sanchalak'].includes((profile?.role || '').toLowerCase());
+    return ['admin', 'taker', 'project_admin'].includes((profile?.role || '').toLowerCase());
   }, [profile, propReadOnly]);
 
   // --- STATE ---
@@ -40,7 +40,10 @@ export default function Attendance({
   const [members, setMembers] = useState([]); 
   const [presentMap, setPresentMap] = useState(new Map()); 
   
-  // Scope State (Populated during data load)
+  // 🔥 REVERSE LOOKUP DICTIONARY (Solves the DELETE bug!)
+  const attendanceIdMap = useRef(new Map());
+
+  // Scope State 
   const [scopePermissions, setScopePermissions] = useState({ 
     mandalIds: [], 
     kshetraId: null 
@@ -79,7 +82,7 @@ export default function Attendance({
     }
   };
 
-  // --- 2. LOAD ROSTER (ROBUST SCOPING) ---
+  // --- 2. LOAD ROSTER ---
   const loadRosterData = async () => {
     if (!projectId) return;
 
@@ -87,74 +90,42 @@ export default function Attendance({
         setDataLoading(true);
         setError(null);
 
-        // --- A. PRE-FETCH PERMISSIONS (The Critical Part) ---
         const cleanRole = (profile?.role || '').toLowerCase().trim();
         let allowedMandalIds = [];
         let allowedKshetraId = null;
 
-        // 1. Sanchalak: Get Single ID
         if (cleanRole === 'sanchalak') {
             const mId = profile.assigned_mandal_id || profile.mandal_id;
             if (mId) allowedMandalIds = [mId];
         } 
-        // 2. Nirikshak: Get Multiple IDs (Table + Profile)
         else if (cleanRole === 'nirikshak') {
-            // Step 1: Check Assignments Table
-            const { data: assigns, error: assignError } = await supabase
-                .from('nirikshak_assignments')
-                .select('mandal_id')
-                .eq('nirikshak_id', profile.id);
-            
-            if (!assignError && assigns) {
-                allowedMandalIds = assigns.map(a => a.mandal_id);
-            }
-
-            // Step 2: Check Profile (Legacy or Primary assignment)
+            const { data: assigns } = await supabase.from('nirikshak_assignments').select('mandal_id').eq('nirikshak_id', profile.id);
+            if (assigns) allowedMandalIds = assigns.map(a => a.mandal_id);
             const profileMandal = profile.assigned_mandal_id || profile.mandal_id;
-            if (profileMandal) {
-                allowedMandalIds.push(profileMandal);
-            }
-
-            // Step 3: Deduplicate
+            if (profileMandal) allowedMandalIds.push(profileMandal);
             allowedMandalIds = [...new Set(allowedMandalIds)];
         }
-        // 3. Nirdeshak: Get Kshetra
-        else if (cleanRole === 'nirdeshak') {
-            // Priority 1: Assigned Kshetra ID
+        else if (cleanRole === 'nirdeshak' || cleanRole === 'project_admin') {
             allowedKshetraId = profile.assigned_kshetra_id || profile.kshetra_id;
-            
-            // Priority 2: Derive from Assigned Mandal if Kshetra missing
             if (!allowedKshetraId && (profile.assigned_mandal_id || profile.mandal_id)) {
                  const mId = profile.assigned_mandal_id || profile.mandal_id;
-                 const { data: mData } = await supabase
-                    .from('mandals')
-                    .select('kshetra_id')
-                    .eq('id', mId)
-                    .single();
+                 const { data: mData } = await supabase.from('mandals').select('kshetra_id').eq('id', mId).single();
                  if (mData) allowedKshetraId = mData.kshetra_id;
             }
         }
 
-        // Save for Summary Component
         setScopePermissions({ mandalIds: allowedMandalIds, kshetraId: allowedKshetraId });
 
-        // --- B. FETCH ROSTER ---
         const { data: regData, error: regError } = await supabase
             .from('project_registrations')
             .select(`
-                member_id,
-                seat_number, 
-                exam_level,
-                members (
-                    id, name, surname, internal_code, mobile, designation, gender, mandal_id,
-                    mandals ( id, name, kshetra_id )
-                )
+                member_id, seat_number, exam_level,
+                members (id, name, surname, internal_code, mobile, designation, gender, mandal_id, mandals ( id, name, kshetra_id ))
             `)
             .eq('project_id', projectId);
 
         if (regError) throw regError;
 
-        // --- C. FLATTEN DATA ---
         let rawRoster = (regData || []).map(r => {
             const m = r.members;
             if (!m) return null;
@@ -168,45 +139,34 @@ export default function Attendance({
             };
         }).filter(Boolean);
         
-        // --- D. APPLY FILTERS (STRICT & ROBUST) ---
         const userGender = profile?.gender;
 
         const filteredRoster = rawRoster.filter(m => {
-            // 1. Admin sees everything
             if (cleanRole === 'admin') return true;
-
-            // 2. Gender Check (Strict for non-admins)
             if (userGender && m.gender !== userGender) return false;
-
-            // 3. Role Logic
-            if (cleanRole === 'sanchalak' || cleanRole === 'nirikshak') {
-                // Simply check if this member's mandal is in our allowed list
-                // If allowedMandalIds is empty, this returns false (safe default)
-                return allowedMandalIds.includes(m.mandal_id);
-            }
-            if (cleanRole === 'nirdeshak') {
-                // Check if member belongs to the allowed Kshetra
-                return allowedKshetraId && m.kshetra_id === allowedKshetraId;
-            }
-            if (cleanRole === 'taker') {
-                // Takers usually scan everyone at the gate
-                return true; 
-            }
-
-            return false; // Default deny
+            if (cleanRole === 'sanchalak' || cleanRole === 'nirikshak') return allowedMandalIds.includes(m.mandal_id);
+            if (cleanRole === 'nirdeshak' || cleanRole === 'project_admin') return allowedKshetraId && m.kshetra_id === allowedKshetraId;
+            if (cleanRole === 'taker') return true; 
+            return false;
         });
         
         filteredRoster.sort((a, b) => a.name.localeCompare(b.name));
         setMembers(filteredRoster);
 
-        // --- E. FETCH ATTENDANCE ---
+        // --- FETCH ATTENDANCE WITH ROW IDs ---
         const { data: attData } = await supabase
             .from('attendance')
-            .select('member_id, scanned_at')
+            .select('id, member_id, scanned_at') // Added 'id' to query
             .eq('event_id', eventId);
             
         const newMap = new Map();
-        (attData || []).forEach(a => newMap.set(a.member_id, a.scanned_at));
+        attendanceIdMap.current.clear(); // Clear the dictionary
+
+        (attData || []).forEach(a => {
+            newMap.set(a.member_id, a.scanned_at);
+            // Save to our dictionary for DELETE lookups later
+            attendanceIdMap.current.set(a.id, a.member_id); 
+        });
         setPresentMap(newMap);
 
     } catch (err) {
@@ -217,7 +177,55 @@ export default function Attendance({
     }
   };
 
-  // --- 3. HELPERS ---
+  // --- 3. REALTIME SYNC (WITH DICTIONARY LOOKUP) ---
+  useEffect(() => {
+    if (!eventId) return;
+
+    const attendanceChannel = supabase
+      .channel(`attendance-sync-${eventId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance' },
+        (payload) => {
+          
+          if (payload.eventType === 'INSERT' && payload.new.event_id === eventId) {
+             // 1. Save the new ID to our dictionary
+             attendanceIdMap.current.set(payload.new.id, payload.new.member_id);
+             
+             // 2. Mark them as present in the UI
+             setPresentMap((prevMap) => {
+                const nextMap = new Map(prevMap);
+                nextMap.set(payload.new.member_id, payload.new.scanned_at || new Date().toISOString());
+                return nextMap;
+             });
+          } 
+          else if (payload.eventType === 'DELETE') {
+             // 1. Grab the deleted row's ID
+             const deletedRowId = payload.old?.id;
+             
+             // 2. Look up who that ID belonged to in our dictionary!
+             const memberIdToUnmark = attendanceIdMap.current.get(deletedRowId);
+
+             if (memberIdToUnmark) {
+                // 3. Remove them from dictionary and UI
+                attendanceIdMap.current.delete(deletedRowId);
+                setPresentMap((prevMap) => {
+                   const nextMap = new Map(prevMap);
+                   nextMap.delete(memberIdToUnmark);
+                   return nextMap;
+                });
+             }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(attendanceChannel);
+    };
+  }, [eventId]);
+
+  // --- 4. HELPERS ---
   const handleMandalClick = (mandalId, mandalName) => {
     setMandalFilter(mandalId);
     setMandalFilterName(mandalName);
@@ -225,7 +233,6 @@ export default function Attendance({
     setShowSummary(false);
   };
 
-  // Construct scope object for Summary using the PRE-FETCHED permissions
   const userScope = useMemo(() => ({
     role: (profile?.role || '').toLowerCase(),
     gender: profile?.gender,
@@ -238,7 +245,7 @@ export default function Attendance({
     return members.filter(m => presentMap.has(m.id)).length;
   }, [members, presentMap]);
 
-  // --- 4. ACTIONS ---
+  // --- 5. ACTIONS ---
   const markAttendance = async (memberId) => {
     if (!canMark) return;
 
@@ -278,7 +285,7 @@ export default function Attendance({
     return { success: true, message: `${member.name} In!` };
   };
 
-  // --- 5. RENDER ---
+  // --- 6. RENDER ---
   if (initLoading) return <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-indigo-600"/></div>;
   if (!event) return <div className="p-8 text-center text-red-500">Event not found.</div>;
 

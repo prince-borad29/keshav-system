@@ -7,38 +7,108 @@ import Attendance from '../attendance/Attendance';
 export default function HomeDashboard() {
   const { profile } = useAuth();
   const [loading, setLoading] = useState(true);
+  
+  // These need to be single objects, not arrays!
   const [primaryEvent, setPrimaryEvent] = useState(null);
   const [primaryProject, setPrimaryProject] = useState(null);
 
-  useEffect(() => {    
-    fetchPrimaryEvent();
-  }, []);
+  useEffect(() => {
+    if (profile?.id) {
+      fetchDashboardData();
+    }
+  }, [profile]);
 
-  const fetchPrimaryEvent = async () => {
+const fetchDashboardData = async () => {
+    setLoading(true);
     try {
-      // Find the nearest upcoming or active primary event
-      const { data: events } = await supabase
-        .from('events')
-        .select('*, projects(*)')
-        .eq('is_primary', true)
-        .gte('date', new Date(new Date().setDate(new Date().getDate() - 1)).toISOString()) // Show today's or future events
-        .order('date', { ascending: true })
-        .limit(1);
 
-      if (events && events.length > 0) {
-        setPrimaryEvent(events[0]);
-        setPrimaryProject(events[0].projects);
+      let allowedProjectIds = [];
+
+      // 1. DETERMINE ALLOWED PROJECTS FOR NON-ADMINS
+      if (profile.role !== 'admin') {
+          // A. Fetch explicitly assigned projects (This covers Restricted ones)
+          const { data: assignments } = await supabase
+              .from('project_assignments')
+              .select('project_id')
+              .eq('user_id', profile.id);
+          const assignedIds = assignments?.map(a => a.project_id) || [];
+
+          // B. Fetch Standard (Public) projects (Unless they are a restricted project_admin)
+          let standardIds = [];
+          if (profile.role !== 'project_admin') {
+              // We also ensure we only grab Active projects
+              const { data: standardProjects } = await supabase
+                  .from('projects')
+                  .select('id')
+                  .eq('type', 'Standard')
+                  .eq('is_active', true);
+              standardIds = standardProjects?.map(p => p.id) || [];
+          }
+
+          // C. Combine into one master list of allowed IDs
+          allowedProjectIds = [...new Set([...assignedIds, ...standardIds])];
+
+          // D. If they have no allowed projects, exit early! 
+          // (This instantly stops the Restricted event from loading)
+          if (allowedProjectIds.length === 0) {
+              setPrimaryEvent(null);
+              setPrimaryProject(null);
+              setLoading(false);
+              return;
+          }
       }
+
+      // 2. FETCH THE EVENT (Strictly filtered by the allowed IDs)
+      let query = supabase
+        .from('events')
+        .select(`
+          *,
+          projects!inner (id, name, type, is_active, allowed_gender)
+        `)
+        .eq('is_primary', true)
+        .gte('date', new Date().toISOString().split('T')[0])
+        .order('date', { ascending: true });
+
+      // Apply the strict ID filter for non-admins
+      if (profile.role !== 'admin') {
+          query = query.in('project_id', allowedProjectIds);
+      }
+
+      // We only need the very next upcoming event
+      query = query.limit(1);
+
+      const { data: eventsData, error: eventsError } = await query;
+
+      if (eventsError) throw eventsError;
+      
+      // 3. SET THE STATE
+      if (eventsData && eventsData.length > 0) {
+         const upcomingEvent = eventsData[0];
+         const projectData = Array.isArray(upcomingEvent.projects) ? upcomingEvent.projects[0] : upcomingEvent.projects;
+         
+         // Optional: Extra client-side safety check for gender
+         if (profile.role !== 'admin' && projectData.allowed_gender !== 'Both' && projectData.allowed_gender !== profile.gender) {
+            setPrimaryEvent(null);
+            setPrimaryProject(null);
+         } else {
+            setPrimaryEvent(upcomingEvent);
+            setPrimaryProject(projectData);
+         }
+      } else {
+         setPrimaryEvent(null);
+         setPrimaryProject(null);
+      }
+
     } catch (err) {
-      console.error(err);
+      console.error("Critical Dashboard Error:", err.message || err);
     } finally {
-      setLoading(false);
+      setLoading(false); 
     }
   };
 
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-indigo-600"/></div>;
 
-  if (!primaryEvent) {
+  if (!primaryEvent || !primaryProject) {
     return (
       <div className="p-8 text-center max-w-lg mx-auto mt-10 bg-slate-50 rounded-2xl border border-slate-200">
         <Calendar className="mx-auto h-12 w-12 text-slate-300 mb-4"/>
@@ -50,9 +120,8 @@ export default function HomeDashboard() {
 
   // --- ROLE BASED RENDERING ---
 
-  // 1. ADMIN: Full Control
-  // 2. TAKER: Attendance Only (No Summary)
-  if (['admin', 'taker'].includes(profile.role)) {
+  // 1. ADMIN & PROJECT STAFF: Full Control / Attendance Mode
+  if (['admin', 'taker' , 'project_admin'].includes(profile.role)) {
     return (
       <div className="h-[calc(100vh-64px)] flex flex-col">
         <div className="px-4 pt-4 pb-2">
@@ -67,7 +136,7 @@ export default function HomeDashboard() {
             projectId={primaryProject.id} 
             eventId={primaryEvent.id} 
             embedded={true}
-            hideSummary={profile.role === 'taker'} // Hide summary for Taker
+            hideSummary={profile.role === 'taker'} // Hide summary for standard takers
             />
         </div>
       </div>
@@ -119,7 +188,7 @@ function SanchalakView({ event, project, mandalId, gender }) {
       // 2. Filter Client Side (Strict + Null Check Fix)
       let myMembers = (regData || [])
         .map(r => r.members)
-        .filter(m => m && m.mandal_id === mandalId && m.gender === gender); // ✅ Added 'm &&' check
+        .filter(m => m && m.mandal_id === mandalId && m.gender === gender); 
       
       myMembers.sort((a, b) => a.name.localeCompare(b.name));
 
@@ -134,8 +203,11 @@ function SanchalakView({ event, project, mandalId, gender }) {
       setMembers(myMembers.map(m => ({ ...m, isPresent: presentSet.has(m.id) })));
       setLoading(false);
     };
-    fetchMyTeam();
-  }, [event.id]);
+    
+    if (event?.id && project?.id) {
+       fetchMyTeam();
+    }
+  }, [event.id, project.id, mandalId, gender]);
 
   if (loading) return <div className="p-10 text-center text-slate-400">Loading your team...</div>;
 

@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Scanner } from '@yudiel/react-qr-scanner';
 import { X, CheckCircle, AlertTriangle, XCircle, Zap } from 'lucide-react';
 
-export default function QrScanner({ isOpen, onClose, onScan }) {
+// 1. Added eventName to the props
+export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
   const [feedback, setFeedback] = useState(null); // null | { type: 'success'|'error'|'warning', msg: '' }
   const lastScannedCode = useRef(null);
   const isProcessing = useRef(false);
@@ -12,10 +13,14 @@ export default function QrScanner({ isOpen, onClose, onScan }) {
     if (feedback) {
       const timer = setTimeout(() => {
         setFeedback(null);
+        // Auto-close scanner on success if we are mapping a badge
+        if (feedback.type === 'success' && eventName?.includes("Map Badge")) {
+            onClose();
+        }
       }, 1200);
       return () => clearTimeout(timer);
     }
-  }, [feedback]);
+  }, [feedback, eventName, onClose]);
 
   const handleScan = async (result) => {
     const rawCode = result[0]?.rawValue;
@@ -29,12 +34,12 @@ export default function QrScanner({ isOpen, onClose, onScan }) {
     lastScannedCode.current = rawCode;
 
     // 3. PROCESS (Call Parent)
-    // The parent function returns the result object { success: true, message: "..." }
     const resultData = await onScan(rawCode);    
 
     // 4. SHOW FEEDBACK (Camera keeps running in background)
     setFeedback({
-      type: resultData.type, // 'success', 'warning', 'error'
+      // 2. Automatically determine type if not explicitly provided
+      type: resultData.type || (resultData.success ? 'success' : 'error'), 
       msg: resultData.message,
       name: resultData.member?.name
     });
@@ -42,7 +47,6 @@ export default function QrScanner({ isOpen, onClose, onScan }) {
     // 5. UNLOCK (Allow next scan after small delay)
     setTimeout(() => {
       isProcessing.current = false;
-      // We keep lastScannedCode populated for 3s to prevent double-scanning same person immediately
       setTimeout(() => { lastScannedCode.current = null; }, 1200); 
     }, 1000);
   };
@@ -54,7 +58,8 @@ export default function QrScanner({ isOpen, onClose, onScan }) {
       {/* HEADER */}
       <div className="absolute top-0 w-full p-4 flex justify-between items-center z-20 bg-gradient-to-b from-black/80 to-transparent">
         <div className="text-white">
-           <h2 className="font-bold text-lg">Turbo Scanner</h2>
+           {/* 3. Display the eventName dynamically so Admin knows who they are mapping */}
+           <h2 className="font-bold text-lg">{eventName || "Turbo Scanner"}</h2>
            <div className="flex items-center gap-1 text-xs text-green-400 font-medium animate-pulse">
              <Zap size={12} fill="currentColor"/> Live Feed Active
            </div>
@@ -68,11 +73,11 @@ export default function QrScanner({ isOpen, onClose, onScan }) {
       <div className="flex-1 relative bg-black">
         <Scanner 
           onScan={handleScan}
-          paused={false} // NEVER PAUSE CAMERA
-          scanDelay={100} // Check very frequently
+          paused={false} 
+          scanDelay={100} 
           allowMultiple={true}
-          components={{ audio: false, finder: false }} // SILENT
-          styles={{ container: { height: '100%' }, video: { objectFit: 'contain' } }}
+          components={{ audio: false, finder: false }} 
+          styles={{ container: { height: '100%' }, video: { objectFit: 'cover' } }}
         />
 
         {/* FEEDBACK OVERLAY (Appears ON TOP of video) */}

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { useNavigate } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
 
 const AuthContext = createContext({});
 
@@ -11,100 +11,99 @@ export default function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   
-  // Ref helps avoid stale closure issues in event listeners
-  const isMounted = useRef(true);
-
-  const navigate = useNavigate()
-
-  // --- Helper: Fetch Profile ---
-  const fetchProfile = async (userId) => {
-    try {
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (error) {
-        console.error("Profile Fetch Error:", error.message);
-        
-        // CRITICAL: If RLS recursion happens, stop trying.
-        if (error.code === '42501' || error.message.includes('recursion')) {
-            console.warn("Security Policy Error. Falling back to safe mode.");
-            // Optional: Set a temporary "Guest" profile to prevent white screen
-            if (isMounted.current) setProfile({ role: 'guest', id: userId }); 
-        }
-      } else {
-        if (isMounted.current) setProfile(data);
-      }
-    } catch (err) {
-      console.error("Unexpected Auth Error:", err);
-    }
-  };
+  // Use a ref to track if we've completed the initial load
+  const isInitialized = useRef(false);
 
   useEffect(() => {
-    isMounted.current = true;
+    let mounted = true;
 
-    // --- 1. Initial Boot ---
-    const initAuth = async () => {
+    const initializeAuth = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data: { session }, error } = await supabase.auth.getSession();
         
+        if (error) throw error;
+
         if (session?.user) {
-          if (isMounted.current) setUser(session.user);
-          await fetchProfile(session.user.id);
+          if (mounted) setUser(session.user);
+          
+          const { data } = await supabase
+            .from('user_profiles')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+            
+          if (mounted && data) setProfile(data);
         }
       } catch (error) {
-        console.error("Session Init Error:", error);
+        console.error("Auth initialization failed:", error);
       } finally {
-        // Stop loading only after initial check is done
-        if (isMounted.current) setLoading(false);
+        if (mounted) {
+          setLoading(false);
+          isInitialized.current = true; // Mark as successfully loaded
+        }
       }
     };
 
-    initAuth();
+    // 1. Run the initial check once
+    if (!isInitialized.current) {
+       initializeAuth();
+    }
 
-    // --- 2. Event Listener ---
+    // 2. Listen for actual login/logout events (IGNORE background refreshes)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN') {
-        // Only trigger loading if we are essentially "Logged Out" locally
-        setUser(prev => {
-          if (!prev) {
-            // Fresh login
-            fetchProfile(session.user.id);
-            return session.user;
-          }
-          return prev; // Already logged in (Tab focus), do nothing
-        });
+      if (!mounted) return;
+      
+      // If the app hasn't finished its first load, let initializeAuth handle it
+      if (!isInitialized.current) return;
 
-        navigate('/');
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setProfile(null);
       } 
-      else if (event === 'SIGNED_OUT') {
-        if (isMounted.current) {
-          setUser(null);
-          setProfile(null);
-          // Do not set loading true here, just clear data
+      else if (event === 'SIGNED_IN') {
+        // Only run the DB fetch if it's a completely new login event
+        if (session?.user) {
+           setUser(session.user);
+           const { data } = await supabase
+             .from('user_profiles')
+             .select('*')
+             .eq('id', session.user.id)
+             .single();
+             
+           if (mounted && data) setProfile(data);
         }
-      } 
-      else if (event === 'TOKEN_REFRESHED') {
-        if (isMounted.current) setUser(session?.user);
       }
+      // Notice what is missing: We completely ignore TOKEN_REFRESHED and USER_UPDATED.
+      // Supabase handles the token in local storage automatically. 
+      // We don't need to poke React and cause the ProtectedRoute to redirect you!
     });
 
     return () => {
-      isMounted.current = false;
-      subscription.unsubscribe();
+      mounted = false;
+      subscription?.unsubscribe();
     };
   }, []);
 
-  const isAdmin = profile?.role === 'admin';
-  const isSanchalak = profile?.role === 'sanchalak';
-  const isNirdeshak = profile?.role === 'nirdeshak';
-  const isNirikshak = profile?.role === 'nirikshak';
-  const isProjectAdmin = profile?.role === 'project_admin';
+  if (loading) {
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-50 z-[9999]">
+         <Loader2 className="animate-spin text-indigo-600 mb-4" size={42} />
+         <p className="text-slate-500 font-bold text-sm tracking-widest uppercase animate-pulse">
+           Verifying Secure Session...
+         </p>
+      </div>
+    );
+  }
 
   return (
-    <AuthContext.Provider value={{ user, profile, isAdmin, isSanchalak, isNirdeshak, isNirikshak,isProjectAdmin, loading }}>
+    <AuthContext.Provider value={{
+      user,
+      profile,
+      loading,
+      isAdmin: profile?.role === 'admin',
+      isProjectAdmin: profile?.role === 'project_admin',
+      isSanchalak: profile?.role === 'sanchalak'
+    }}>
       {children}
     </AuthContext.Provider>
   );

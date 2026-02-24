@@ -1,12 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Loader2, User, CheckCircle, Plus, MapPin, Lock } from 'lucide-react';
+import { Search, Loader2, User, CheckCircle, Plus, MapPin, Lock, QrCode } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import QrScanner from '../attendance/QrScanner'; // Import the scanner!
 
 export default function ProjectRoster({ project, projectRole, isAdmin }) { 
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [members, setMembers] = useState([]);
   const [togglingId, setTogglingId] = useState(null);
+  
+  // External QR Mapping State
+  const [scanningMember, setScanningMember] = useState(null);
   
   const [userScope, setUserScope] = useState({ role: '', gender: '', mandalIds: [], kshetraId: null, isGlobal: false });
   const [scopeLoaded, setScopeLoaded] = useState(false);
@@ -20,7 +24,6 @@ export default function ProjectRoster({ project, projectRole, isAdmin }) {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      // FETCH KSHETRA ID FOR FILTERING
       const { data: profile } = await supabase
         .from('user_profiles')
         .select('role, gender, assigned_mandal_id, assigned_kshetra_id')
@@ -31,7 +34,7 @@ export default function ProjectRoster({ project, projectRole, isAdmin }) {
         role: profile.role,
         gender: profile.gender,
         mandalIds: [],
-        kshetraId: profile.assigned_kshetra_id, // Capture Kshetra
+        kshetraId: profile.assigned_kshetra_id,
         isGlobal: profile.role === 'admin'
       };
 
@@ -56,23 +59,20 @@ export default function ProjectRoster({ project, projectRole, isAdmin }) {
         .select(`
           id, name, surname, mobile, internal_code, gender,
           mandals!inner ( id, name, kshetra_id ),
-          project_registrations ( project_id )
+          project_registrations ( project_id, external_qr ) 
         `)
-        .limit(50);
+        .limit(50); // Added external_qr to the query
 
       if (searchTerm) {
         query = query.or(`name.ilike.%${searchTerm}%,surname.ilike.%${searchTerm}%,mobile.ilike.%${searchTerm}%`);
       }
 
-      // GLOBAL FILTER: Ensure user is only searching their own gender
       if (!userScope.isGlobal) query = query.eq('gender', userScope.gender);
       
-      // REGIONAL FILTER: Sanchalaks & Nirikshaks (Mandal level)
       if (['sanchalak', 'nirikshak'].includes(userScope.role)) {
         if (userScope.mandalIds.length > 0) query = query.in('mandal_id', userScope.mandalIds);
         else { setMembers([]); setLoading(false); return; }
       } 
-      // KSHETRA FILTER: Project Admins are locked to their own Kshetra
       else if (userScope.role === 'project_admin') {
         if (userScope.kshetraId) {
           query = query.eq('mandals.kshetra_id', userScope.kshetraId);
@@ -82,10 +82,15 @@ export default function ProjectRoster({ project, projectRole, isAdmin }) {
       const { data, error } = await query;
       if (error) throw error;
 
-      const processed = data.map(m => ({
-        ...m,
-        is_registered: m.project_registrations.some(r => r.project_id === project.id)
-      }));
+      const processed = data.map(m => {
+        // Find the specific registration row for THIS project
+        const reg = m.project_registrations.find(r => r.project_id === project.id);
+        return {
+          ...m,
+          is_registered: !!reg,
+          external_qr: reg?.external_qr || null // Extract the QR string
+        };
+      });
 
       processed.sort((a, b) => (a.is_registered === b.is_registered) ? 0 : a.is_registered ? -1 : 1);
       setMembers(processed);
@@ -112,9 +117,8 @@ export default function ProjectRoster({ project, projectRole, isAdmin }) {
 
     try {
       if (member.is_registered) {
-        if(!confirm(`Remove ${member.name}?`)) { setTogglingId(null); return; }
         await supabase.from('project_registrations').delete().match({ project_id: project.id, member_id: member.id });
-        setMembers(prev => prev.map(m => m.id === member.id ? { ...m, is_registered: false } : m));
+        setMembers(prev => prev.map(m => m.id === member.id ? { ...m, is_registered: false, external_qr: null } : m));
       } else {
         const { error } = await supabase.from('project_registrations').insert({
           project_id: project.id, member_id: member.id, registered_by: userId
@@ -124,6 +128,43 @@ export default function ProjectRoster({ project, projectRole, isAdmin }) {
       }
     } catch (err) { alert("Action failed: " + err.message); } 
     finally { setTogglingId(null); }
+  };
+
+  // --- NEW: HANDLE EXTERNAL QR SCANNING ---
+  const handleMapExternalQr = async (scannedCode) => {
+    if (!scanningMember) return { success: false, message: "No member selected" };
+
+    try {
+      // 1. Safety Check: Is this badge already mapped to someone else in this project?
+      const { data: existing } = await supabase
+        .from('project_registrations')
+        .select('member_id')
+        .eq('project_id', project.id)
+        .eq('external_qr', scannedCode)
+        .maybeSingle();
+
+      if (existing && existing.member_id !== scanningMember.id) {
+         return { success: false, type: 'error', message: "Badge is already assigned to another member!" };
+      }
+
+      // 2. Save it to the database
+      const { error } = await supabase
+        .from('project_registrations')
+        .update({ external_qr: scannedCode })
+        .match({ project_id: project.id, member_id: scanningMember.id });
+
+      if (error) throw error;
+
+      // 3. Update the UI locally so the icon turns green
+      setMembers(prev => prev.map(m => m.id === scanningMember.id ? { ...m, external_qr: scannedCode } : m));
+      
+      // Auto-close scanner after success
+      setTimeout(() => setScanningMember(null), 1200);
+      
+      return { success: true, message: `Linked to ${scanningMember.name}!` };
+    } catch (err) {
+      return { success: false, type: 'error', message: "Database Error" };
+    }
   };
 
   return (
@@ -174,8 +215,10 @@ export default function ProjectRoster({ project, projectRole, isAdmin }) {
                 {m.name[0]}{m.surname[0]}
               </div>
               <div>
-                <div className="font-bold text-slate-800">
+                <div className="font-bold text-slate-800 flex items-center gap-2">
                   {m.name} {m.surname}
+                  {/* Badge Indicator if they have an external QR */}
+                  {m.external_qr && <span className="bg-green-100 text-green-700 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">Badge Mapped</span>}
                 </div>
                 <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
                   <span className="flex items-center gap-1"><MapPin size={10}/> {m.mandals?.name}</span>
@@ -184,30 +227,54 @@ export default function ProjectRoster({ project, projectRole, isAdmin }) {
               </div>
             </div>
 
-            {canEdit ? (
-              <button
-                onClick={() => handleToggle(m)}
-                disabled={togglingId === m.id}
-                className={`
-                  px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition-all
-                  ${m.is_registered ? 'bg-white text-red-600 border border-red-200 hover:bg-red-50' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'}
-                  disabled:opacity-50
-                `}
-              >
-                {togglingId === m.id ? <Loader2 size={14} className="animate-spin"/> : m.is_registered ? "Unregister" : <><Plus size={14}/> Register</>}
-              </button>
-            ) : (
-              m.is_registered ? (
-                <span className="px-3 py-1.5 bg-green-100 text-green-700 text-xs font-bold rounded-full flex items-center gap-1">
-                  <CheckCircle size={12}/> Added
-                </span>
-              ) : (
-                <span className="text-xs text-slate-400 italic px-2">Not Registered</span>
-              )
-            )}
+            <div className="flex items-center gap-2">
+               {/* 1. External QR Button (Only shows if they are Registered) */}
+               {m.is_registered && canEdit && (
+                 <button
+                   onClick={() => setScanningMember(m)}
+                   title={m.external_qr ? "Re-Map Badge" : "Map External Badge"}
+                   className={`p-2 rounded-lg transition-colors border ${m.external_qr ? 'bg-green-50 border-green-200 text-green-600 hover:bg-green-100' : 'bg-white border-slate-200 text-slate-400 hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50'}`}
+                 >
+                   <QrCode size={16} />
+                 </button>
+               )}
+
+               {/* 2. Register/Unregister Button */}
+               {canEdit ? (
+                 <button
+                   onClick={() => handleToggle(m)}
+                   disabled={togglingId === m.id}
+                   className={`
+                     px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition-all
+                     ${m.is_registered ? 'bg-white text-red-600 border border-red-200 hover:bg-red-50' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'}
+                     disabled:opacity-50
+                   `}
+                 >
+                   {togglingId === m.id ? <Loader2 size={14} className="animate-spin"/> : m.is_registered ? "Unregister" : <><Plus size={14}/> Register</>}
+                 </button>
+               ) : (
+                 m.is_registered ? (
+                   <span className="px-3 py-1.5 bg-green-100 text-green-700 text-xs font-bold rounded-full flex items-center gap-1">
+                     <CheckCircle size={12}/> Added
+                   </span>
+                 ) : (
+                   <span className="text-xs text-slate-400 italic px-2">Not Registered</span>
+                 )
+               )}
+            </div>
           </div>
         ))}
       </div>
+
+      {/* RENDER THE SCANNER POPUP FOR EXTERNAL CARDS */}
+      {scanningMember && (
+         <QrScanner 
+            isOpen={!!scanningMember} 
+            onClose={() => setScanningMember(null)} 
+            onScan={handleMapExternalQr} 
+            eventName={`Map Badge to ${scanningMember.name}`} 
+         />
+      )}
     </div>
   );
 }

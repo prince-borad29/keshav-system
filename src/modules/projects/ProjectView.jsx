@@ -83,8 +83,7 @@ export default function ProjectView({ project, onBack }) {
   const canMarkAttendance = isAdmin || isCoordinator || isEditor || isVolunteer;
   
   // SECURE STAFF TAB: Admins can see it. Coordinators can see it ONLY IF they are not a restricted project_admin app role.
-  const canManageStaff = isAdmin || (isCoordinator && !isProjectAdminAppRole);
-
+const canManageStaff = isAdmin || (isCoordinator && !isProjectAdminAppRole);
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-20 animate-in slide-in-from-right-4 duration-300">
       

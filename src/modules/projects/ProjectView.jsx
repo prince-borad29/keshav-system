@@ -8,7 +8,6 @@ import { supabase } from '../../lib/supabase';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import EventForm from './EventForm';
-import ProjectRoster from './ProjectRoster'; 
 import ProjectStaff from './ProjectStaff';
 import { useAuth } from "../../contexts/AuthContext"; 
 
@@ -111,9 +110,6 @@ const canManageStaff = isAdmin || (isCoordinator && !isProjectAdminAppRole);
         <button onClick={() => setActiveTab('events')} className={`pb-3 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${activeTab === 'events' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
           <Calendar size={18}/> Schedule & Events
         </button>
-        <button onClick={() => setActiveTab('registrations')} className={`pb-3 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${activeTab === 'registrations' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-          <Users size={18}/> Registrations (Roster)
-        </button>
         
         {canManageStaff && (
           <button onClick={() => setActiveTab('staff')} className={`pb-3 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${activeTab === 'staff' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
@@ -178,13 +174,6 @@ const canManageStaff = isAdmin || (isCoordinator && !isProjectAdminAppRole);
               ))}
             </div>
           )}
-        </div>
-      )}
-
-      {/* TAB CONTENT: REGISTRATIONS (ROSTER) */}
-      {activeTab === 'registrations' && (
-        <div className="animate-in fade-in">
-          <ProjectRoster project={project} projectRole={projectRole} isAdmin={isAdmin} /> 
         </div>
       )}
 

@@ -1,6 +1,9 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, Calendar, FileText, Settings, LogOut, Shield, X, Layers } from 'lucide-react';
+import { 
+  LayoutDashboard, Users, Calendar, FileText, 
+  Settings, LogOut, Shield, X, Layers, ClipboardList 
+} from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 
@@ -74,10 +77,11 @@ export default function Sidebar({ isOpen, onClose }) {
             <>
               <div className="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Management</div>
               <NavItem to="/organization" icon={Shield} label="Organization" onClick={onClose} />
-              <NavItem to="/directory" icon={Users} label="Member Directory" onClick={onClose} />
+              <NavItem to="/directory" icon={Users} label="Database" onClick={onClose} />
               
               <div className="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Modules</div>
               <NavItem to="/projects" icon={Layers} label="Projects & Events" onClick={onClose} />
+              <NavItem to="/registration" icon={ClipboardList} label="Registration" onClick={onClose} />
               <NavItem to="/reports" icon={FileText} label="Reports" onClick={onClose} />
               <NavItem to="/settings" icon={Settings} label="Settings" onClick={onClose} />
             </>
@@ -89,6 +93,7 @@ export default function Sidebar({ isOpen, onClose }) {
               <div className="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Operational</div>
               <NavItem to="/directory" icon={Users} label="My Mandal" onClick={onClose} />
               <NavItem to="/projects" icon={Calendar} label="Projects & Events" onClick={onClose} />
+              <NavItem to="/registration" icon={ClipboardList} label="Registration" onClick={onClose} />
             </>
           )}
 
@@ -97,6 +102,10 @@ export default function Sidebar({ isOpen, onClose }) {
             <>
               <div className="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">My Assignments</div>
               <NavItem to="/projects" icon={Calendar} label="My Projects" onClick={onClose} />
+              {/* project_admin gets Registration, taker does NOT */}
+              {role === 'project_admin' && (
+                <NavItem to="/registration" icon={ClipboardList} label="Registration" onClick={onClose} />
+              )}
             </>
           )}
         </nav>

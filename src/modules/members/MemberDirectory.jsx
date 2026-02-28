@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Search, Plus, Eye, Edit3, Trash2, Tag, MapPin, Briefcase, Loader2, ShieldAlert, Lock } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Search, Plus, Eye, Edit3, Trash2, Tag, MapPin, Briefcase, Loader2, ShieldAlert } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
@@ -12,24 +12,28 @@ export default function MemberDirectory() {
   const { profile } = useAuth();
   const navigate = useNavigate();
   
-  // -- ROLES --
   const role = (profile?.role || '').toLowerCase();
   const isAdmin = role === 'admin';
   const isNirdeshak = role === 'nirdeshak';
   const isNirikshak = role === 'nirikshak';
   const isSanchalak = role === 'sanchalak';
 
-  // 🛑 SECURITY GATE 🛑
-  // Define exactly who is allowed to be here
   const allowedRoles = ['admin', 'nirdeshak', 'nirikshak', 'sanchalak'];
   const isAuthorized = allowedRoles.includes(role);
 
   // -- STATE --
-  const [loading, setLoading] = useState(true);
   const [members, setMembers] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
-  const [page, setPage] = useState(1);
+  
+  // Lazy Loading / Infinite Scroll State
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [refreshTrigger, setRefreshTrigger] = useState(0); // Forces re-fetch on edit
   const pageSize = 20;
+  const observerTarget = useRef(null);
+  const isFetchingRef = useRef(false); // Prevents rapid double-fetching
 
   // Permissions State
   const [allowedMandalIds, setAllowedMandalIds] = useState(null); 
@@ -37,6 +41,7 @@ export default function MemberDirectory() {
 
   // Filters & Dropdowns
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filters, setFilters] = useState({ kshetra_id: '', mandal_id: '', gender: '', designation: '', tag_id: '' });
   const [kshetras, setKshetras] = useState([]);
   const [mandals, setMandals] = useState([]);
@@ -47,131 +52,104 @@ export default function MemberDirectory() {
   const [selectedMember, setSelectedMember] = useState(null);
   const [viewMember, setViewMember] = useState(null);
 
-  // -- 1. SECURITY CHECK & PERMISSIONS --
+  // 1. SECURITY CHECK & PERMISSIONS
   useEffect(() => {
-    // If user profile isn't loaded yet, wait.
-    if (!profile) return;
-
-    // If unauthorized, stop here. The UI below handles the display.
-    if (!isAuthorized) {
-        setLoading(false); 
-        return;
+    if (!profile || !isAuthorized) {
+      if (!isAuthorized && profile) setLoading(false);
+      return;
     }
 
     const loadPermissions = async () => {
       let ids = [];
-      
       try {
         if (isSanchalak) {
           if (profile.assigned_mandal_id) ids = [profile.assigned_mandal_id];
-        } 
-        else if (isNirikshak) {
-          const { data } = await supabase
-            .from('nirikshak_assignments')
-            .select('mandal_id')
-            .eq('nirikshak_id', profile.id);
-          
+        } else if (isNirikshak) {
+          const { data } = await supabase.from('nirikshak_assignments').select('mandal_id').eq('nirikshak_id', profile.id);
           ids = data ? data.map(d => d.mandal_id) : [];
-          if (ids.length === 0 && profile.assigned_mandal_id) {
-              ids = [profile.assigned_mandal_id];
-          }
-        }
-        else if (isNirdeshak) {
-          // Smart Kshetra Derivation
+          if (ids.length === 0 && profile.assigned_mandal_id) ids = [profile.assigned_mandal_id];
+        } else if (isNirdeshak) {
           let kId = profile.assigned_kshetra_id || profile.kshetra_id;
-          
           if (!kId && profile.assigned_mandal_id) {
-               const { data: mData } = await supabase
-                 .from('mandals')
-                 .select('kshetra_id')
-                 .eq('id', profile.assigned_mandal_id)
-                 .single();
+               const { data: mData } = await supabase.from('mandals').select('kshetra_id').eq('id', profile.assigned_mandal_id).single();
                if (mData) kId = mData.kshetra_id;
           }
-
           if (kId) {
               const { data } = await supabase.from('mandals').select('id').eq('kshetra_id', kId);
               ids = data ? data.map(m => m.id) : [];
           }
         }
-      } catch (err) {
-        console.error("Permission Load Error", err);
-      }
-
+      } catch (err) { console.error("Permission Load Error", err); }
       setAllowedMandalIds(ids);
       setPermsLoaded(true);
     };
-
     loadPermissions();
-  }, [profile, isSanchalak, isNirikshak, isNirdeshak, isAuthorized]);
+  }, [profile, isAuthorized]);
 
-  // -- 2. DATA LOADING --
+  // 2. FETCH DROPDOWNS
   useEffect(() => {
-    if ((permsLoaded || isAdmin) && isAuthorized) {
-      fetchDropdowns();
-      fetchMembers();
-    }
-  }, [permsLoaded, page, filters, searchTerm, isAuthorized]);
+    if (permsLoaded && isAuthorized) {
+      const fetchDropdowns = async () => {
+        try {
+          const { data: tData } = await supabase.from('tags').select('id, name').contains('category', ['Member']).order('name');
+          if (tData) setTags(tData);
 
-  // -- 🛑 UNAUTHORIZED VIEW 🛑 --
-  if (profile && !isAuthorized) {
-    return (
-      <div className="h-[80vh] flex flex-col items-center justify-center text-center p-6">
-        <div className="bg-red-50 p-6 rounded-full mb-4">
-            <ShieldAlert size={48} className="text-red-500" />
-        </div>
-        <h2 className="text-2xl font-bold text-slate-800 mb-2">Access Denied</h2>
-        <p className="text-slate-500 max-w-md mb-6">
-          You are logged in as a <strong>{role}</strong>. You do not have permission to view the Member Directory.
-        </p>
-        <Button onClick={() => navigate('/')}>Return to Dashboard</Button>
-      </div>
-    );
-  }
-
-  // ... (Rest of fetchDropdowns, fetchMembers helpers remain exactly the same)
-  const fetchDropdowns = async () => {
-    try {
-        const { data: tData } = await supabase.from('tags').select('id, name').eq('category', 'Member').order('name');
-        if (tData) setTags(tData);
-
-        if (isAdmin) {
+          if (isAdmin) {
             const { data: kData } = await supabase.from('kshetras').select('id, name').order('name');
             if (kData) setKshetras(kData);
-        }
+          }
 
-        let mQuery = supabase.from('mandals').select('id, name, kshetra_id').order('name');
-        
-        if (allowedMandalIds !== null) {
-            if (allowedMandalIds.length > 0) {
-                mQuery = mQuery.in('id', allowedMandalIds);
-            } else {
-                setMandals([]); return;
-            }
-        }
-        const { data: mData } = await mQuery;
-        if (mData) setMandals(mData);
-    } catch (e) { console.error(e); }
-  };
+          let mQuery = supabase.from('mandals').select('id, name, kshetra_id').order('name');
+          if (!isAdmin && allowedMandalIds !== null) {
+            if (allowedMandalIds.length > 0) mQuery = mQuery.in('id', allowedMandalIds);
+            else { setMandals([]); return; }
+          }
+          const { data: mData } = await mQuery;
+          if (mData) setMandals(mData);
+        } catch (e) { console.error(e); }
+      };
+      fetchDropdowns();
+    }
+  }, [permsLoaded, isAuthorized, isAdmin, allowedMandalIds]);
 
-  const fetchMembers = async () => {
-    setLoading(true);
+  // 3. SEARCH DEBOUNCE
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchTerm), 400);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  // 4. RESET PAGE ON FILTER/SEARCH CHANGE
+  useEffect(() => {
+    setPage(0);
+    setHasMore(true);
+  }, [debouncedSearch, filters]);
+
+  // 5. FETCH MEMBERS (Optimized Lazy Load & Stable Sort)
+  const fetchMembers = useCallback(async () => {
+    if (!permsLoaded || !isAuthorized || isFetchingRef.current) return;
+    
+    isFetchingRef.current = true; // Lock fetch to prevent duplicates
+    const isLoadMore = page > 0;
+    
+    if (isLoadMore) setLoadingMore(true);
+    else setLoading(true);
+
     try {
       let query = supabase.from('members').select(`
           *,
           mandals!inner ( id, name, kshetra_id, kshetras ( id, name ) ),
           member_tags ( tag_id, tags (name, color) )
-        `, { count: 'exact' });
+      `, { count: 'exact' });
 
       // Scope
       if (!isAdmin && profile?.gender) query = query.eq('gender', profile.gender);
-      if (allowedMandalIds !== null) {
+      if (!isAdmin && allowedMandalIds !== null) {
          if (allowedMandalIds.length > 0) query = query.in('mandal_id', allowedMandalIds);
-         else { setMembers([]); setTotalCount(0); setLoading(false); return; }
+         else { setMembers([]); setTotalCount(0); setLoading(false); isFetchingRef.current = false; return; }
       }
 
       // Filters
-      if (searchTerm) query = query.or(`name.ilike.%${searchTerm}%,surname.ilike.%${searchTerm}%,internal_code.ilike.%${searchTerm}%,mobile.ilike.%${searchTerm}%`);
+      if (debouncedSearch) query = query.or(`name.ilike.%${debouncedSearch}%,surname.ilike.%${debouncedSearch}%,internal_code.ilike.%${debouncedSearch}%,mobile.ilike.%${debouncedSearch}%`);
       if (isAdmin && filters.kshetra_id) query = query.eq('mandals.kshetra_id', filters.kshetra_id);
       if (filters.mandal_id) {
          if (isAdmin || allowedMandalIds.includes(filters.mandal_id)) query = query.eq('mandal_id', filters.mandal_id);
@@ -179,40 +157,91 @@ export default function MemberDirectory() {
       if (filters.designation) query = query.eq('designation', filters.designation);
       if (isAdmin && filters.gender) query = query.eq('gender', filters.gender);
 
-      // Tag Filter
       if (filters.tag_id) {
-        query = supabase.from('members').select(`
-          *,
-          mandals!inner ( id, name, kshetra_id, kshetras ( id, name ) ),
-          member_tags!inner ( tag_id, tags (name, color) ) 
-        `, { count: 'exact' }).eq('member_tags.tag_id', filters.tag_id);
-        
+        query = supabase.from('members').select(`*, mandals!inner ( id, name, kshetra_id, kshetras ( id, name ) ), member_tags!inner ( tag_id, tags (name, color) )`, { count: 'exact' }).eq('member_tags.tag_id', filters.tag_id);
         if (!isAdmin && profile?.gender) query = query.eq('gender', profile.gender);
-        if (allowedMandalIds !== null) query = query.in('mandal_id', allowedMandalIds);
-        
-        if (searchTerm) query = query.or(`name.ilike.%${searchTerm}%,surname.ilike.%${searchTerm}%`);
+        if (!isAdmin && allowedMandalIds !== null) query = query.in('mandal_id', allowedMandalIds);
+        if (debouncedSearch) query = query.or(`name.ilike.%${debouncedSearch}%,surname.ilike.%${debouncedSearch}%`);
         if (filters.mandal_id) query = query.eq('mandal_id', filters.mandal_id);
         if (filters.designation) query = query.eq('designation', filters.designation);
       }
 
-      const from = (page - 1) * pageSize;
-      const { data, count, error } = await query.range(from, from + pageSize - 1).order('created_at', { ascending: false });
+      const from = page * pageSize;
+      const to = from + pageSize - 1;
       
+      // ✅ FIXED SORTING: Enforce strict A-Z sort by Name, then Surname, then ID (to prevent shifting)
+      const { data, count, error } = await query
+        .range(from, to)
+        .order('name', { ascending: true })
+        .order('surname', { ascending: true })
+        .order('id', { ascending: true }); 
+        
       if (error) throw error;
-      setMembers(data || []);
-      setTotalCount(count || 0);
-    } catch (err) { console.error(err); } finally { setLoading(false); }
-  };
+      
+      if (isLoadMore) {
+        // ✅ FIXED DUPLICATES: Safely merge arrays ensuring no duplicate IDs exist
+        setMembers(prev => {
+          const existingIds = new Set(prev.map(m => m.id));
+          const uniqueNewMembers = (data || []).filter(m => !existingIds.has(m.id));
+          return [...prev, ...uniqueNewMembers];
+        });
+      } else {
+        setMembers(data || []);
+        setTotalCount(count || 0);
+      }
+      
+      setHasMore((data || []).length === pageSize);
+    } catch (err) { 
+      console.error(err); 
+    } finally { 
+      setLoading(false); 
+      setLoadingMore(false);
+      isFetchingRef.current = false; // Release lock
+    }
+  }, [permsLoaded, isAuthorized, page, debouncedSearch, filters, isAdmin, profile?.gender, allowedMandalIds, refreshTrigger]);
 
+  useEffect(() => { fetchMembers(); }, [fetchMembers]);
+
+  // 6. ROBUST INFINITE SCROLL
+  const handleObserver = useCallback((entries) => {
+    const target = entries[0];
+    if (target.isIntersecting && hasMore && !loading && !loadingMore && !isFetchingRef.current) {
+      setPage(prev => prev + 1);
+    }
+  }, [hasMore, loading, loadingMore]);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(handleObserver, { threshold: 0.1 });
+    if (observerTarget.current) observer.observe(observerTarget.current);
+    return () => observer.disconnect();
+  }, [handleObserver]);
+
+  // Handlers
   const handleCreate = () => { setSelectedMember(null); setIsFormOpen(true); };
   const handleEdit = (m) => { setSelectedMember(m); setIsFormOpen(true); };
   const handleView = (m) => { setViewMember(m); };
-  const handleDelete = async (id) => { 
-    if(confirm("Delete member?")) { await supabase.from('members').delete().eq('id', id); fetchMembers(); } 
+  
+  // ✅ FIXED REFRESH ON SAVE: Instantly resets to page 0 and updates list safely
+  const handleSaveSuccess = () => {
+    setPage(0);
+    setHasMore(true);
+    setRefreshTrigger(prev => prev + 1); 
   };
 
-  // -- RENDER LOADING OR CONTENT --
-  if ((!permsLoaded && !isAdmin) || loading && !members.length) return <div className="p-10 text-center"><Loader2 className="animate-spin inline text-indigo-600"/> Loading directory...</div>;
+  const handleDelete = async (id) => { 
+    if(confirm("Delete member?")) { await supabase.from('members').delete().eq('id', id); handleSaveSuccess(); } 
+  };
+
+  if (profile && !isAuthorized) {
+    return (
+      <div className="h-[80vh] flex flex-col items-center justify-center text-center p-6">
+        <div className="bg-red-50 p-6 rounded-full mb-4"><ShieldAlert size={48} className="text-red-500" /></div>
+        <h2 className="text-2xl font-bold text-slate-800 mb-2">Access Denied</h2>
+        <p className="text-slate-500 max-w-md mb-6">You are logged in as a <strong>{role}</strong>. You do not have permission to view the Member Directory.</p>
+        <Button onClick={() => navigate('/')}>Return to Dashboard</Button>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-20 px-4">
@@ -240,7 +269,7 @@ export default function MemberDirectory() {
           {isAdmin && (
             <div className="relative">
                 <MapPin className="absolute left-2.5 top-2.5 text-slate-400" size={14}/>
-                <select className="input-filter pl-8" value={filters.kshetra_id} onChange={(e) => setFilters({...filters, kshetra_id: e.target.value, mandal_id: '', page: 1})}>
+                <select className="input-filter pl-8" value={filters.kshetra_id} onChange={(e) => setFilters({...filters, kshetra_id: e.target.value, mandal_id: ''})}>
                     <option value="">All Kshetras</option>
                     {kshetras.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
                 </select>
@@ -249,7 +278,7 @@ export default function MemberDirectory() {
           {(isAdmin || isNirdeshak || isNirikshak) && (
             <div className="relative">
                 <MapPin className="absolute left-2.5 top-2.5 text-slate-400" size={14}/>
-                <select className="input-filter pl-8" value={filters.mandal_id} onChange={(e) => setFilters({...filters, mandal_id: e.target.value, page: 1})}>
+                <select className="input-filter pl-8" value={filters.mandal_id} onChange={(e) => setFilters({...filters, mandal_id: e.target.value})}>
                     <option value="">{isNirikshak ? "My Mandals" : (isNirdeshak ? "Mandals in Region" : "All Mandals")}</option>
                     {mandals.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                 </select>
@@ -257,13 +286,13 @@ export default function MemberDirectory() {
           )}
           <div className="relative">
             <Briefcase className="absolute left-2.5 top-2.5 text-slate-400" size={14}/>
-            <select className="input-filter pl-8" value={filters.designation} onChange={(e) => setFilters({...filters, designation: e.target.value, page: 1})}>
+            <select className="input-filter pl-8" value={filters.designation} onChange={(e) => setFilters({...filters, designation: e.target.value})}>
                 <option value="">All Roles</option>
                 {['Nirdeshak', 'Nirikshak', 'Sanchalak', 'Member', 'Sah Sanchalak', 'Sampark Karyakar'].map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
           {isAdmin && (
-             <select className="input-filter" value={filters.gender} onChange={(e) => setFilters({...filters, gender: e.target.value, page: 1})}>
+             <select className="input-filter" value={filters.gender} onChange={(e) => setFilters({...filters, gender: e.target.value})}>
                 <option value="">All Genders</option>
                 <option value="Yuvak">Yuvak</option>
                 <option value="Yuvati">Yuvati</option>
@@ -271,7 +300,7 @@ export default function MemberDirectory() {
           )}
           <div className="relative">
             <Tag className="absolute left-2.5 top-2.5 text-slate-400" size={14}/>
-            <select className="input-filter pl-8" value={filters.tag_id} onChange={(e) => setFilters({...filters, tag_id: e.target.value, page: 1})}>
+            <select className="input-filter pl-8" value={filters.tag_id} onChange={(e) => setFilters({...filters, tag_id: e.target.value})}>
               <option value="">Filter by Tag</option>
               {tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
@@ -313,14 +342,17 @@ export default function MemberDirectory() {
           </tbody>
         </table>
         
-        <div className="flex justify-between items-center p-4 border-t border-slate-100">
-            <button disabled={page === 1} onClick={() => setPage(p => p - 1)} className="p-2 disabled:opacity-30 hover:bg-slate-50 rounded-lg"><div className="flex items-center gap-1">« Prev</div></button>
-            <span className="text-xs text-slate-500 font-medium">Page {page}</span>
-            <button disabled={members.length < pageSize} onClick={() => setPage(p => p + 1)} className="p-2 disabled:opacity-30 hover:bg-slate-50 rounded-lg"><div className="flex items-center gap-1">Next »</div></button>
-        </div>
+        {/* INFINITE SCROLL LOADER / TARGET */}
+        {loading && !loadingMore && <div className="p-10 text-center"><Loader2 className="animate-spin inline text-indigo-600"/> Loading directory...</div>}
+        
+        {members.length > 0 && (
+          <div ref={observerTarget} className="p-6 text-center text-slate-400 text-xs font-medium h-16 flex items-center justify-center">
+            {loadingMore ? <Loader2 className="animate-spin text-indigo-600"/> : hasMore ? 'Scroll down to load more' : 'End of directory'}
+          </div>
+        )}
       </div>
 
-      <MemberForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSuccess={fetchMembers} initialData={selectedMember} />
+      <MemberForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSuccess={handleSaveSuccess} initialData={selectedMember} />
       <MemberProfile isOpen={!!viewMember} member={viewMember} onClose={() => setViewMember(null)} onEdit={handleEdit} />
       <style>{`.input-filter { @apply w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-100 outline-none text-sm text-slate-700; }`}</style>
     </div>

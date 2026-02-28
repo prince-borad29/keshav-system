@@ -43,7 +43,12 @@ export default function ProjectForm({ isOpen, onClose, onSuccess, initialData = 
   }, [isOpen, initialData]);
 
   const fetchTags = async () => {
-    const { data } = await supabase.from("tags").select("id, name").eq("category", "Project").order("name");
+    const { data } = await supabase
+       .from("tags")
+       .select("id, name")
+       .contains("category", ["Project"]) // Check if the array contains 'Project'
+       .order("name");
+       
     if (data) setAvailableTags(data);
   };
 

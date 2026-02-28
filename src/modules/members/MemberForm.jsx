@@ -10,7 +10,6 @@ const INITIAL_FORM = {
   kshetra_id: '', mandal_id: '', internal_code: '', is_guest: false
 };
 
-// Extracted classes for standard Tailwind compilation and cleaner JSX
 const labelClasses = "block text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider";
 const inputClasses = "w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 outline-none text-sm text-slate-800 transition-all placeholder:text-slate-400";
 
@@ -34,70 +33,53 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
   const [mandals, setMandals] = useState([]); 
   const [availableTags, setAvailableTags] = useState([]);
 
-  // -- 1. INITIALIZATION --
+  // -- 1. NON-BLOCKING INITIALIZATION --
   useEffect(() => {
     if (isOpen) {
-      initializeForm();
+      // 1. Instantly populate the form text fields so UI doesn't lag
+      if (initialData) {
+        setFormData({
+          ...initialData,
+          kshetra_id: initialData.mandals?.kshetra_id || '', 
+          dob: initialData.dob || '',
+          address: initialData.address || '',           // <-- Fixes textarea warning
+          father_name: initialData.father_name || '',   // <-- Safety for input
+          mobile: initialData.mobile || '',             // <-- Safety for input
+        });
+        fetchMemberTags(initialData.id);
+      } else {
+        const defaults = { ...INITIAL_FORM, internal_code: `MEM-${Date.now().toString().slice(-6)}` };
+        if (!isAdmin && profile?.gender) defaults.gender = profile.gender;
+        if (isSanchalak) defaults.mandal_id = profile.assigned_mandal_id; 
+        else if (isNirdeshak) defaults.kshetra_id = profile.assigned_kshetra_id || profile.kshetra_id;
+        
+        setFormData(defaults);
+        setSelectedTags([]);
+      }
+      
+      // 2. Load dropdowns silently in background
+      fetchDropdowns();
     }
   }, [isOpen, initialData, profile]);
 
-  const initializeForm = async () => {
-    // 1. Fetch Options
-    await fetchDropdowns();
-
-    // 2. Set Defaults based on Role & Edit Mode
-    if (initialData) {
-      setFormData({
-        ...initialData,
-        // Ensure legacy data maps correctly
-        kshetra_id: initialData.mandals?.kshetra_id || '', 
-        dob: initialData.dob || ''
-      });
-      fetchMemberTags(initialData.id);
-    } else {
-      // NEW ENTRY: Set smart defaults based on Role
-      const defaults = { ...INITIAL_FORM, internal_code: `MEM-${Date.now().toString().slice(-6)}` };
-      
-      // -- GENDER LOCK (Auto-select for everyone except Admin) --
-      if (!isAdmin && profile?.gender) {
-        defaults.gender = profile.gender;
-      }
-
-      // -- LOCATION LOCKS --
-      if (isSanchalak) {
-         defaults.mandal_id = profile.assigned_mandal_id; 
-      }
-      else if (isNirdeshak) {
-         // Auto-select Kshetra
-         defaults.kshetra_id = profile.assigned_kshetra_id || profile.kshetra_id;
-      }
-
-      setFormData(defaults);
-      setSelectedTags([]);
-    }
-  };
-
   const fetchDropdowns = async () => {
     try {
-      // Tags
-      const { data: tData } = await supabase.from('tags').select('id, name').eq('category', 'Member').order('name');
+      // Tags (✅ FIXED: Using .contains() for Array column)
+      const { data: tData } = await supabase.from('tags').select('id, name').contains('category', ['Member']).order('name');
       if (tData) setAvailableTags(tData);
 
-      // Kshetras (Only needed for Admin to filter)
+      // Kshetras
       if (isAdmin) {
         const { data: kData } = await supabase.from('kshetras').select('id, name').order('name');
         if (kData) setKshetras(kData);
       }
 
-      // Mandals (Context Aware Fetching)
+      // Mandals
       let mQuery = supabase.from('mandals').select('id, name, kshetra_id').order('name');
 
       if (isNirdeshak) {
-         // Filter mandals by Nirdeshak's Kshetra
          const kId = profile.assigned_kshetra_id || profile.kshetra_id;
-         if (kId) {
-            mQuery = mQuery.eq('kshetra_id', kId);
-         }
+         if (kId) mQuery = mQuery.eq('kshetra_id', kId);
       } 
       else if (isNirikshak) {
          const { data: assignments } = await supabase.from('nirikshak_assignments').select('mandal_id').eq('nirikshak_id', profile.id);
@@ -181,10 +163,7 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
   if (!isOpen) return null;
 
   return (
-    // Backdrop - changes alignment on mobile (items-end) vs desktop (sm:items-center)
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 backdrop-blur-sm sm:p-4 animate-in fade-in duration-200">
-      
-      {/* Modal Container */}
       <div className="bg-white w-full max-w-3xl h-[95vh] sm:h-auto sm:max-h-[90vh] rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom-8 sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-200">
         
         {/* HEADER */}
@@ -193,10 +172,7 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
             <h2 className="text-xl font-bold text-slate-800">{initialData ? 'Edit Profile' : 'New Registration'}</h2>
             <p className="text-xs text-slate-500 mt-1">Please fill in the details carefully.</p>
           </div>
-          <button 
-            onClick={onClose} 
-            className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600"
-          >
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600">
             <X size={20} />
           </button>
         </div>
@@ -204,7 +180,6 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
         {/* SCROLLABLE BODY */}
         <div className="overflow-y-auto px-4 sm:px-8 py-6 flex-1 scroll-smooth">
           <form id="member-form" onSubmit={handleSubmit} className="space-y-8 max-w-none">
-            
             {error && (
               <div className="bg-red-50 text-red-700 p-4 rounded-xl flex items-start gap-3 text-sm border border-red-100 animate-in fade-in">
                 <AlertTriangle size={18} className="shrink-0 mt-0.5"/> 
@@ -259,7 +234,6 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
               </h3>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                
                 {isAdmin && (
                   <div>
                     <label className={labelClasses}>Kshetra (Region)</label>
@@ -303,14 +277,12 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
                     </div>
                   </div>
                 ) : (
-                   <div className="hidden">
-                      <input type="hidden" value={formData.gender} />
-                   </div>
+                   <div className="hidden"><input type="hidden" value={formData.gender} /></div>
                 )}
 
                 <div className="sm:col-span-2">
                    <label className={labelClasses}>Address</label>
-                   <textarea className={inputClasses} rows="2" placeholder="Street, Area, City..." value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} />
+                   <textarea className={inputClasses} rows="2" placeholder="Street, Area, City..." value={formData.address || ''} onChange={e => setFormData({...formData, address: e.target.value})} />
                 </div>
               </div>
             </section>
@@ -323,9 +295,9 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
                 <div className="p-1.5 bg-amber-50 text-amber-600 rounded-lg"><Tag size={14}/></div>
                 Skills & Tags
               </h3>
-              <div className="flex flex-wrap gap-2.5 p-5 bg-slate-50 rounded-2xl border border-slate-200">
+              <div className="flex flex-wrap gap-2.5 p-5 bg-slate-50 rounded-2xl border border-slate-200 min-h-[80px]">
                 {availableTags.length === 0 ? (
-                  <span className="text-sm text-slate-500 italic w-full text-center py-2">No tags available. Admins can add them in Settings.</span>
+                  <span className="text-sm text-slate-500 italic w-full text-center py-2">Loading tags...</span>
                 ) : (
                   availableTags.map(tag => (
                     <button

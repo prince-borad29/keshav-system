@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Search, Loader2, User, CheckCircle, Plus, MapPin, Lock, QrCode, ArrowLeft, Users } from 'lucide-react';
+import { Search, Loader2, User, CheckCircle, Plus, MapPin, Lock, QrCode, ArrowLeft, Users, Eye } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import QrScanner from '../attendance/QrScanner';
 
@@ -22,21 +22,65 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
   // External QR Mapping State
   const [scanningMember, setScanningMember] = useState(null);
   
-  // Instant Scope Extraction (No extra network calls!)
+  // Instant Scope Extraction
   const role = (profile?.role || '').toLowerCase();
   const isGlobal = role === 'admin';
   const [allowedMandalIds, setAllowedMandalIds] = useState(null);
+  
+  // NEW: Registration Permission State
+  const [canRegister, setCanRegister] = useState(false);
 
-  // 1. Establish Scope Safely
+  // 1. Establish Scope & Permissions Safely
   useEffect(() => {
-    const defineScope = async () => {
+    const defineScopeAndPermissions = async () => {
       let ids = [];
-      if (role === 'sanchalak') ids = [profile.assigned_mandal_id];
+      let hasRegPermission = false;
+
+      if (isGlobal) {
+        setAllowedMandalIds([]);
+        setCanRegister(true);
+        return;
+      }
+
+      if (role === 'sanchalak') {
+        ids = [profile.assigned_mandal_id];
+        hasRegPermission = true;
+      } 
       else if (role === 'nirikshak') {
         const { data } = await supabase.from('nirikshak_assignments').select('mandal_id').eq('nirikshak_id', profile.id);
         ids = data?.map(d => d.mandal_id) || [];
         if (profile.assigned_mandal_id) ids.push(profile.assigned_mandal_id);
-      } else if (role === 'nirdeshak' || role === 'project_admin') {
+        hasRegPermission = true;
+      } 
+      else if (role === 'nirdeshak') {
+        let kId = profile.assigned_kshetra_id || profile.kshetra_id;
+        if (!kId && profile.assigned_mandal_id) {
+          const { data } = await supabase.from('mandals').select('kshetra_id').eq('id', profile.assigned_mandal_id).single();
+          if (data) kId = data.kshetra_id;
+        }
+        if (kId) {
+          const { data } = await supabase.from('mandals').select('id').eq('kshetra_id', kId);
+          ids = data?.map(m => m.id) || [];
+        }
+        hasRegPermission = true;
+      } 
+      else if (role === 'project_admin') {
+        // --- SECURITY CHECK: Is this Project Admin a Coordinator or an Editor? ---
+        const { data: assignment } = await supabase
+          .from('project_assignments')
+          .select('role')
+          .eq('project_id', project.id)
+          .eq('user_id', profile.id)
+          .single();
+
+        // Only allow Coordinators to register. Editors/Viewers are View Only.
+        if (assignment && assignment.role === 'Coordinator') {
+           hasRegPermission = true;
+        } else {
+           hasRegPermission = false;
+        }
+
+        // Establish normal scope (kshetra based) for the project admin to view members
         let kId = profile.assigned_kshetra_id || profile.kshetra_id;
         if (!kId && profile.assigned_mandal_id) {
           const { data } = await supabase.from('mandals').select('kshetra_id').eq('id', profile.assigned_mandal_id).single();
@@ -47,11 +91,13 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           ids = data?.map(m => m.id) || [];
         }
       }
+
       setAllowedMandalIds(ids);
+      setCanRegister(hasRegPermission);
     };
-    if (!isGlobal) defineScope();
-    else setAllowedMandalIds([]);
-  }, [role, isGlobal, profile]);
+
+    defineScopeAndPermissions();
+  }, [role, isGlobal, profile, project.id]);
 
   // 2. Fetch Summary Statistics
   useEffect(() => {
@@ -135,10 +181,10 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
 
   // 6. INSTANT TOGGLE HANDLER
   const handleToggle = async (member) => {
+    if (!canRegister) return alert("You only have View Access for this project.");
     if (!project.registration_open) return alert("Registration is closed.");
+    
     setTogglingId(member.id);
-
-    // BLAZING FAST: Use context profile.id directly, no network auth fetching!
     const userId = profile.id; 
 
     try {
@@ -183,7 +229,12 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           <div className="flex items-center gap-3">
             <button onClick={onBack} className="p-2 -ml-2 rounded-full hover:bg-slate-100"><ArrowLeft size={20}/></button>
             <h3 className="font-bold text-slate-800 text-lg truncate">{project.name}</h3>
-            {!project.registration_open && <span className="px-2 py-1 bg-red-50 text-red-700 text-[10px] font-bold rounded-lg border border-red-100 flex items-center gap-1 uppercase"><Lock size={10}/> Closed</span>}
+            
+            {/* Show View Only badge if they don't have permission */}
+            {!canRegister && <span className="px-2 py-1 bg-blue-50 text-blue-700 text-[10px] font-bold rounded-lg border border-blue-100 flex items-center gap-1 uppercase"><Eye size={10}/> View Only</span>}
+            
+            {/* Show Closed badge if registration is off */}
+            {canRegister && !project.registration_open && <span className="px-2 py-1 bg-red-50 text-red-700 text-[10px] font-bold rounded-lg border border-red-100 flex items-center gap-1 uppercase"><Lock size={10}/> Closed</span>}
           </div>
           <div className="flex items-center gap-2 bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100 font-bold text-sm">
              <Users size={16}/> {registeredCount} Registered
@@ -194,7 +245,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           <Search className="absolute left-3 top-3 text-slate-400" size={18} />
           <input 
             className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-100 outline-none text-sm"
-            placeholder="Search by name, surname, or ID to register..." 
+            placeholder="Search by name, surname, or ID..." 
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
           />
@@ -230,13 +281,15 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
             </div>
 
             <div className="flex items-center gap-2">
+               {/* QR Mapping is Admin only */}
                {m.is_registered && isAdmin && (
                  <button onClick={() => setScanningMember(m)} className={`p-2 rounded-lg transition-colors border ${m.external_qr ? 'bg-green-50 border-green-200 text-green-600 hover:bg-green-100' : 'bg-white border-slate-200 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'}`}>
                    <QrCode size={16} />
                  </button>
                )}
 
-               {project.registration_open ? (
+               {/* Toggle Button logic: Only show button if they have permission AND it's open */}
+               {canRegister && project.registration_open ? (
                  <button
                    onClick={() => handleToggle(m)}
                    disabled={togglingId === m.id}
@@ -245,7 +298,10 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
                    {togglingId === m.id ? <Loader2 size={14} className="animate-spin"/> : m.is_registered ? "Unregister" : <><Plus size={14}/> Register</>}
                  </button>
                ) : (
-                 m.is_registered ? <span className="px-3 py-1.5 bg-green-100 text-green-700 text-xs font-bold rounded-full flex items-center gap-1"><CheckCircle size={12}/> Added</span> : <span className="text-xs text-slate-400 italic px-2">Closed</span>
+                 // If closed OR user is Editor/Viewer, just show static status
+                 m.is_registered 
+                   ? <span className="px-3 py-1.5 bg-green-100 text-green-700 text-xs font-bold rounded-full flex items-center gap-1"><CheckCircle size={12}/> Added</span> 
+                   : <span className="text-xs text-slate-400 italic px-2">Not Registered</span>
                )}
             </div>
           </div>

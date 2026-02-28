@@ -57,33 +57,40 @@ const canManageStaff = isAdmin || isCoordinator;
   }, [project.id]);
 
   useEffect(() => {
-    const delayDebounce = setTimeout(() => {
-      if (searchTerm.length >= 2) searchDirectory();
-      else setMemberResults([]);
-    }, 400);
-    return () => clearTimeout(delayDebounce);
-  }, [searchTerm]);
+    let isMounted = true;
+    
+    const searchMembers = async () => {
+      if (!searchTerm) {
+         setSearchResults([]);
+         return;
+      }
+      setSearching(true); // Your loading state
+      
+      try {
+         // CRITICAL: Ensure you are using the standard `supabase` client for searching, NOT ghostClient!
+         const { data, error } = await supabase
+            .from('members')
+            .select('id, name, surname, internal_code')
+            .or(`name.ilike.%${searchTerm}%,surname.ilike.%${searchTerm}%`)
+            .limit(10);
+            
+         if (error) throw error;
+         
+         if (isMounted) setSearchResults(data);
+      } catch (err) {
+         console.error(err);
+      } finally {
+         if (isMounted) setSearching(false); // Prevents infinite spinner on error
+      }
+    };
 
-  const searchDirectory = async () => {
-    if (!canManageStaff) return;
-    setSearching(true);
-    try {
-      const { data } = await supabase
-        .from("members")
-        .select(
-          `id, name, surname, internal_code, designation, mobile, mandal_id, mandals(name, kshetra_id)`,
-        )
-        .or(
-          `name.ilike.%${searchTerm}%,surname.ilike.%${searchTerm}%,internal_code.ilike.%${searchTerm}%`,
-        )
-        .limit(10);
-      setMemberResults(data || []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSearching(false);
-    }
-  };
+    const timer = setTimeout(() => { searchMembers(); }, 400); // Debounce
+    
+    return () => { 
+      clearTimeout(timer); 
+      isMounted = false; // Cancels state update if user keeps typing
+    };
+  }, [searchTerm]);
 
   const fetchAssignments = async () => {
     setLoading(true);

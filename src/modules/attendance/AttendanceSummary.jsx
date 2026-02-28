@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Loader2, ChevronRight, BarChart3, X, Download, FileText, FileSpreadsheet, UserX, Layers, MapPin } from 'lucide-react';
+import { Loader2, ChevronRight, BarChart3, X, Download, FileText, FileSpreadsheet, UserX, Layers, MapPin, Shield } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -24,9 +24,9 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
   // Reverse Lookup Dictionary for Realtime DELETEs
   const attendanceIdMap = useRef(new Map());
 
-  // --- 1. FETCH INITIAL DATA (Protected against Infinite Loops) ---
+  // --- 1. FETCH INITIAL DATA ---
   useEffect(() => {
-    let isMounted = true; // Protects against state leaks
+    let isMounted = true; 
 
     const loadInitialData = async () => {
       setLoading(true);
@@ -73,20 +73,18 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
       } catch (err) {
         console.error("Summary Load Error:", err);
       } finally {
-        if (isMounted) setLoading(false); // ONLY turn off loading if modal is still open
+        if (isMounted) setLoading(false);
       }
     };
 
     if (isVisible && event?.id) {
       loadInitialData();
     } else {
-      // INSTANT RESET when modal closes so it doesn't freeze next time
       setRawRegs([]);
       setData([]);
       setLoading(true);
     }
 
-    // Cleanup function runs if component unmounts mid-fetch
     return () => { isMounted = false; };
   }, [event?.id, isVisible, project.id, userScope]);
 
@@ -141,7 +139,6 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
     rawRegs.forEach(r => {
       const m = r.members;
       
-      // Dynamic Grouping Logic
       let groupName = 'Unknown';
       let groupId = null;
 
@@ -184,6 +181,73 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
   const getPct = (curr, total) => total > 0 ? Math.round((curr / total) * 100) : 0;
 
   // --- EXPORT FUNCTIONS ---
+
+  // 1. ADMIN MASTER REPORT (Kshetra Summary + Absent List)
+  const exportAdminMasterReport = () => {
+    const doc = new jsPDF();
+    
+    // Calculate Kshetra data instantly (ignores current UI grouping state)
+    const kGroups = {};
+    const kAbsents = [];
+    let tReg = 0, tPres = 0;
+
+    rawRegs.forEach(r => {
+      const m = r.members;
+      const kName = m.mandals?.kshetras?.name || 'Unknown Kshetra';
+
+      if (!kGroups[kName]) kGroups[kName] = { name: kName, registered: 0, present: 0 };
+      kGroups[kName].registered++;
+      tReg++;
+
+      if (presentSet.has(r.member_id)) {
+        kGroups[kName].present++;
+        tPres++;
+      } else {
+        kAbsents.push({
+          name: `${m.name} ${m.surname}`, mobile: m.mobile || 'N/A',
+          mandal: m.mandals?.name || 'Unknown', kshetra: kName
+        });
+      }
+    });
+
+    const summaryData = Object.values(kGroups)
+      .sort((a, b) => b.present - a.present)
+      .map(row => [row.name, `${row.present} / ${row.registered}`, `${getPct(row.present, row.registered)}%`]);
+
+    kAbsents.sort((a, b) => a.kshetra.localeCompare(b.kshetra) || a.mandal.localeCompare(b.mandal));
+    const absentData = kAbsents.map(row => [row.name, row.mobile, row.kshetra, row.mandal]);
+
+    // SECTION 1: HEADER & SUMMARY TABLE
+    doc.setFontSize(14);
+    doc.text(`${event.name} - Master Report`, 14, 15);
+    doc.setFontSize(10);
+    doc.text(`Total Present: ${tPres} / ${tReg} (${getPct(tPres, tReg)}%)`, 14, 22);
+
+    autoTable(doc, { 
+      head: [['Kshetra', 'Count', '%']], 
+      body: summaryData, 
+      startY: 28,
+      headStyles: { fillColor: [79, 70, 229] } // Indigo Color
+    });
+
+    // SECTION 2: ABSENT LIST TABLE (Positioned directly below the summary)
+    let finalY = doc.lastAutoTable.finalY || 28;
+    
+    doc.setFontSize(12);
+    doc.text("Absent Members List", 14, finalY + 12);
+
+    autoTable(doc, { 
+      head: [['Name', 'Mobile', 'Kshetra', 'Mandal']], 
+      body: absentData, 
+      startY: finalY + 16,
+      headStyles: { fillColor: [249, 115, 22] } // Orange Color
+    });
+
+    doc.save(`Admin_Master_Report_${event.name}.pdf`);
+    setShowExportMenu(false);
+  };
+
+  // 2. Standard Exports
   const exportPDFSummary = () => {
     const doc = new jsPDF();
     const groupLabel = groupBy === 'mandal' ? 'Mandal' : 'Kshetra';
@@ -205,9 +269,7 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
     const doc = new jsPDF();
     doc.text(`${event.name} - Absent Members List`, 14, 15);
     
-    // Sort absent list by whichever grouping is currently active
     absentList.sort((a,b) => groupBy === 'mandal' ? a.mandal.localeCompare(b.mandal) : a.kshetra.localeCompare(b.kshetra));
-    
     const tableData = absentList.map(row => [row.name, row.mobile, row.mandal, row.kshetra]);
 
     autoTable(doc, { head: [['Name', 'Mobile', 'Mandal', 'Kshetra']], body: tableData, startY: 25 });
@@ -256,15 +318,25 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
                  </button>
 
                  {showExportMenu && (
-                   <div className="absolute right-0 top-10 w-48 bg-white rounded-xl shadow-xl border border-slate-100 p-2 z-50 animate-in zoom-in-95">
+                   <div className="absolute right-0 top-10 w-56 bg-white rounded-xl shadow-xl border border-slate-100 p-2 z-50 animate-in zoom-in-95">
+                     
+                     {/* ADMIN ONLY MASTER REPORT */}
+                     {userScope.isGlobal && (
+                       <div className="mb-1 pb-1 border-b border-slate-100">
+                         <button onClick={exportAdminMasterReport} className="cursor-pointer w-full text-left px-3 py-2 bg-indigo-50 hover:bg-indigo-100 rounded-lg text-sm flex items-center gap-2 text-indigo-700 font-bold transition-colors">
+                            <Shield size={14} className="text-indigo-600"/> Master Report (PDF)
+                         </button>
+                       </div>
+                     )}
+
                      <button onClick={exportPDFSummary} className="cursor-pointer w-full text-left px-3 py-2 hover:bg-slate-50 rounded-lg text-sm flex items-center gap-2 text-slate-700 transition-colors">
-                        <FileText size={14} className="text-red-500"/> PDF Summary
+                        <FileText size={14} className="text-slate-500"/> Current Summary (PDF)
                      </button>
                      <button onClick={exportPDFAbsent} className="cursor-pointer w-full text-left px-3 py-2 hover:bg-slate-50 rounded-lg text-sm flex items-center gap-2 text-slate-700 transition-colors">
-                        <UserX size={14} className="text-orange-500"/> PDF Absent List
+                        <UserX size={14} className="text-slate-500"/> Current Absent List (PDF)
                      </button>
                      <button onClick={exportExcel} className="cursor-pointer w-full text-left px-3 py-2 hover:bg-slate-50 rounded-lg text-sm flex items-center gap-2 text-slate-700 transition-colors">
-                        <FileSpreadsheet size={14} className="text-green-600"/> Excel Report
+                        <FileSpreadsheet size={14} className="text-slate-500"/> Excel Report
                      </button>
                    </div>
                  )}
@@ -327,7 +399,6 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
                             {data.map(row => (
                             <tr 
                               key={row.name} 
-                              // Only allow click-to-filter if grouped by Mandal, since parent component currently only handles Mandal filters
                               onClick={() => { 
                                 if(groupBy === 'mandal') { onMandalClick(row.id, row.name); onClose(); }
                               }} 

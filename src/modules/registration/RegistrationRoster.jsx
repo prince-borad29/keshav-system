@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Search, Loader2, User, CheckCircle, Plus, MapPin, Lock, QrCode, ArrowLeft, Users, Eye } from 'lucide-react';
+import { Search, Loader2, User, CheckCircle, Plus, MapPin, Lock, QrCode, ArrowLeft, Users, Eye, Database } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import QrScanner from '../attendance/QrScanner';
 
@@ -27,8 +27,9 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
   const isGlobal = role === 'admin';
   const [allowedMandalIds, setAllowedMandalIds] = useState(null);
   
-  // NEW: Registration Permission State
+  // Permission States
   const [canRegister, setCanRegister] = useState(false);
+  const [permissionsLoaded, setPermissionsLoaded] = useState(false);
 
   // 1. Establish Scope & Permissions Safely
   useEffect(() => {
@@ -39,6 +40,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       if (isGlobal) {
         setAllowedMandalIds([]);
         setCanRegister(true);
+        setPermissionsLoaded(true);
         return;
       }
 
@@ -65,7 +67,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         hasRegPermission = true;
       } 
       else if (role === 'project_admin') {
-        // --- SECURITY CHECK: Is this Project Admin a Coordinator or an Editor? ---
         const { data: assignment } = await supabase
           .from('project_assignments')
           .select('role')
@@ -73,14 +74,13 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           .eq('user_id', profile.id)
           .single();
 
-        // Only allow Coordinators to register. Editors/Viewers are View Only.
+        // Only Coordinators can register. Editors are forced into View/Database mode.
         if (assignment && assignment.role === 'Coordinator') {
            hasRegPermission = true;
         } else {
            hasRegPermission = false;
         }
 
-        // Establish normal scope (kshetra based) for the project admin to view members
         let kId = profile.assigned_kshetra_id || profile.kshetra_id;
         if (!kId && profile.assigned_mandal_id) {
           const { data } = await supabase.from('mandals').select('kshetra_id').eq('id', profile.assigned_mandal_id).single();
@@ -94,6 +94,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
 
       setAllowedMandalIds(ids);
       setCanRegister(hasRegPermission);
+      setPermissionsLoaded(true); // Unlock fetching
     };
 
     defineScopeAndPermissions();
@@ -101,7 +102,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
 
   // 2. Fetch Summary Statistics
   useEffect(() => {
-    if (!isGlobal && allowedMandalIds === null) return;
+    if (!permissionsLoaded || (!isGlobal && allowedMandalIds === null)) return;
     
     const fetchSummary = async () => {
       let query = supabase.from('project_registrations')
@@ -115,7 +116,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       setRegisteredCount(count || 0);
     };
     fetchSummary();
-  }, [project.id, allowedMandalIds, isGlobal, profile?.gender]);
+  }, [project.id, allowedMandalIds, isGlobal, profile?.gender, permissionsLoaded]);
 
   // 3. Search Debounce & Page Reset
   useEffect(() => {
@@ -127,18 +128,30 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
 
   // 4. Lazy Load Members
   const fetchMembers = useCallback(async () => {
-    if ((!isGlobal && allowedMandalIds === null) || isFetchingRef.current) return;
+    if (!permissionsLoaded || (!isGlobal && allowedMandalIds === null) || isFetchingRef.current) return;
     
     isFetchingRef.current = true;
     const isLoadMore = page > 0;
     if (isLoadMore) setLoadingMore(true); else setLoading(true);
 
     try {
+      // 💡 THE MAGIC TRICK: 
+      // If they CAN register, load all members (Left Join). 
+      // If they CANNOT (Editor), force an Inner Join to ONLY load registered members.
+      const regJoin = canRegister 
+         ? `project_registrations ( project_id, external_qr )`
+         : `project_registrations!inner ( project_id, external_qr )`;
+
       let query = supabase.from('members').select(`
         id, name, surname, mobile, internal_code, gender,
         mandals!inner ( id, name, kshetra_id ),
-        project_registrations ( project_id, external_qr ) 
+        ${regJoin} 
       `);
+
+      // If Editor, specifically filter the inner join for this exact project
+      if (!canRegister) {
+        query = query.eq('project_registrations.project_id', project.id);
+      }
 
       // Apply Scope Constraints
       if (!isGlobal && profile?.gender) query = query.eq('gender', profile.gender);
@@ -153,7 +166,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       const from = page * pageSize;
       const { data, error } = await query
         .range(from, from + pageSize - 1)
-        .order('name', { ascending: true }); // Stable Alphabetical Sorting
+        .order('name', { ascending: true }); 
 
       if (error) throw error;
 
@@ -166,7 +179,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       setHasMore(data.length === pageSize);
     } catch (err) { console.error(err); } 
     finally { setLoading(false); setLoadingMore(false); isFetchingRef.current = false; }
-  }, [project.id, page, debouncedSearch, allowedMandalIds, isGlobal, profile?.gender]);
+  }, [project.id, page, debouncedSearch, allowedMandalIds, isGlobal, profile?.gender, permissionsLoaded, canRegister]);
 
   useEffect(() => { fetchMembers(); }, [fetchMembers]);
 
@@ -179,7 +192,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     return () => observer.disconnect();
   }, [hasMore, loading, loadingMore]);
 
-  // 6. INSTANT TOGGLE HANDLER
+  // 6. INSTANT TOGGLE HANDLER (Only accessible if canRegister is true)
   const handleToggle = async (member) => {
     if (!canRegister) return alert("You only have View Access for this project.");
     if (!project.registration_open) return alert("Registration is closed.");
@@ -228,7 +241,10 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-3">
             <button onClick={onBack} className="p-2 -ml-2 rounded-full hover:bg-slate-100"><ArrowLeft size={20}/></button>
-            <h3 className="font-bold text-slate-800 text-lg truncate">{project.name}</h3>
+            <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+               {canRegister ? <User size={20} className="text-indigo-600"/> : <Database size={20} className="text-blue-600"/>}
+               {canRegister ? "Registration Roster" : "Registered Database"}
+            </h3>
             
             {/* Show View Only badge if they don't have permission */}
             {!canRegister && <span className="px-2 py-1 bg-blue-50 text-blue-700 text-[10px] font-bold rounded-lg border border-blue-100 flex items-center gap-1 uppercase"><Eye size={10}/> View Only</span>}
@@ -245,7 +261,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           <Search className="absolute left-3 top-3 text-slate-400" size={18} />
           <input 
             className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-100 outline-none text-sm"
-            placeholder="Search by name, surname, or ID..." 
+            placeholder={canRegister ? "Search by name, surname, or ID..." : "Search registered members..."}
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
           />
@@ -254,11 +270,15 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
 
       {/* MEMBER LIST */}
       <div className="space-y-2">
-        {loading && !loadingMore && <div className="py-12 text-center text-slate-400"><Loader2 className="animate-spin inline text-indigo-600"/> Loading roster...</div>}
+        {loading && !loadingMore && <div className="py-12 text-center text-slate-400"><Loader2 className="animate-spin inline text-indigo-600"/> Loading records...</div>}
         
         {!loading && members.length === 0 && (
           <div className="text-center py-12 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-            {searchTerm ? "No members found matching your search." : "Search to find members to register."}
+            {searchTerm 
+              ? "No matching records found." 
+              : canRegister 
+                 ? "Search to find members to register." 
+                 : "No members have been registered for this project yet."}
           </div>
         )}
 
@@ -309,7 +329,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         
         {members.length > 0 && (
           <div ref={observerTarget} className="py-4 text-center text-xs text-slate-400 font-medium">
-             {loadingMore ? <Loader2 className="animate-spin inline text-indigo-600"/> : hasMore ? 'Scroll for more' : 'End of roster'}
+             {loadingMore ? <Loader2 className="animate-spin inline text-indigo-600"/> : hasMore ? 'Scroll for more' : 'End of records'}
           </div>
         )}
       </div>

@@ -18,6 +18,7 @@ import {
   Lock,
   RefreshCw,
   AlertTriangle,
+  Phone // 1. Imported Phone icon
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import QrScanner from "./QrScanner";
@@ -44,7 +45,7 @@ export default function Attendance({
     return ["admin", "taker", "project_admin"].includes(
       (profile?.role || "").toLowerCase(),
     );
-  }, [profile?.role, propReadOnly]); // Optimized dependency array
+  }, [profile?.role, propReadOnly]);
 
   // --- STATE ---
   const [initLoading, setInitLoading] = useState(true);
@@ -73,7 +74,6 @@ export default function Attendance({
   const [mandalFilter, setMandalFilter] = useState(null);
   const [mandalFilterName, setMandalFilterName] = useState(null);
 
-  // Use a ref to prevent double-fetching on tab refocus
   const hasLoadedInitial = useRef(false);
 
   // --- 1. LOAD METADATA ---
@@ -81,10 +81,10 @@ export default function Attendance({
     if (projectId && eventId && profile?.id && !hasLoadedInitial.current) {
       loadMetadata();
     }
-  }, [projectId, eventId, profile?.id]); // Deeply specific dependencies to prevent refocus bugs
+  }, [projectId, eventId, profile?.id]);
 
   const loadMetadata = async () => {
-    hasLoadedInitial.current = true; // Lock it down
+    hasLoadedInitial.current = true;
     try {
       setInitLoading(true);
       const [evtRes, projRes] = await Promise.all([
@@ -96,7 +96,7 @@ export default function Attendance({
       setEvent(evtRes.data);
       setProject(projRes.data);
 
-      await loadRosterData(); // Wait for roster to load
+      await loadRosterData(); 
     } catch (err) {
       console.error("Meta Load Error:", err);
       setError("Failed to load event details.");
@@ -106,7 +106,6 @@ export default function Attendance({
   };
 
   // --- 2. LOAD ROSTER ---
-  // Wrapped in useCallback so it doesn't get recreated constantly
   const loadRosterData = useCallback(async () => {
     if (!projectId) return;
 
@@ -174,7 +173,7 @@ export default function Attendance({
             mandal: m.mandals?.name || "Unknown",
             seat_number: r.seat_number,
             exam_level: r.exam_level,
-            external_qr: r.external_qr, // ADD THIS LINE
+            external_qr: r.external_qr, 
           };
         })
         .filter(Boolean);
@@ -260,7 +259,6 @@ export default function Attendance({
         },
       )
       .subscribe((status) => {
-        // Silently handle reconnections on tab switch without crashing
         if (status === "SUBSCRIBED") {
           console.log("Realtime Connected");
         }
@@ -333,17 +331,16 @@ export default function Attendance({
     }
   };
 
- const handleScan = async (code) => {
+  const handleScan = async (code) => {
     if (!canMark) return { success: false, message: "Read Only" };
 
-    // We must ensure the code is trimmed of whitespace before comparing!
     const cleanCode = code.trim();
 
     const member = members.find(
       (m) => 
         m.internal_code === cleanCode || 
         m.id === cleanCode || 
-        m.external_qr === cleanCode // <-- THIS WAS MISSING IN YOUR PASTED CODE!
+        m.external_qr === cleanCode
     );
     
     if (!member)
@@ -540,11 +537,28 @@ export default function Attendance({
                   </div>
                 </div>
               </div>
-              {isPresent && (
-                <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full">
-                  IN
-                </span>
-              )}
+              
+              {/* 2. Added grouping div for right-side items */}
+              <div className="flex items-center gap-3 shrink-0">
+                {/* 3. Render Call Button only if they have a phone number */}
+                {m.mobile_number && (
+                  <a
+                    href={`tel:${m.mobile_number}`}
+                    // CRITICAL: Prevent clicking the button from accidentally marking attendance
+                    onClick={(e) => e.stopPropagation()} 
+                    title={`Call ${m.mobile_number}`}
+                    className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 rounded-full transition-colors active:scale-95"
+                  >
+                    <Phone size={16} />
+                  </a>
+                )}
+
+                {isPresent && (
+                  <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full">
+                    IN
+                  </span>
+                )}
+              </div>
             </div>
           );
         })}

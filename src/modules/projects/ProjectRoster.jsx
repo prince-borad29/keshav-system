@@ -134,13 +134,15 @@ export default function ProjectRoster({ project, projectRole, isAdmin }) {
   const handleMapExternalQr = async (scannedCode) => {
     if (!scanningMember) return { success: false, message: "No member selected" };
 
+    const cleanCode = scannedCode.trim();
+
     try {
       // 1. Safety Check: Is this badge already mapped to someone else in this project?
       const { data: existing } = await supabase
         .from('project_registrations')
         .select('member_id')
         .eq('project_id', project.id)
-        .eq('external_qr', scannedCode)
+        .eq('external_qr', cleanCode)
         .maybeSingle();
 
       if (existing && existing.member_id !== scanningMember.id) {
@@ -150,18 +152,18 @@ export default function ProjectRoster({ project, projectRole, isAdmin }) {
       // 2. Save it to the database
       const { error } = await supabase
         .from('project_registrations')
-        .update({ external_qr: scannedCode })
+        .update({ external_qr: cleanCode })
         .match({ project_id: project.id, member_id: scanningMember.id });
 
       if (error) throw error;
 
       // 3. Update the UI locally so the icon turns green
-      setMembers(prev => prev.map(m => m.id === scanningMember.id ? { ...m, external_qr: scannedCode } : m));
+      setMembers(prev => prev.map(m => m.id === scanningMember.id ? { ...m, external_qr: cleanCode } : m));
       
       // Auto-close scanner after success
       setTimeout(() => setScanningMember(null), 1200);
       
-      return { success: true, message: `Linked to ${scanningMember.name}!` };
+      return { success: true, message: `Badge linked to ${scanningMember.name}!` };
     } catch (err) {
       return { success: false, type: 'error', message: "Database Error" };
     }
@@ -229,7 +231,7 @@ export default function ProjectRoster({ project, projectRole, isAdmin }) {
 
             <div className="flex items-center gap-2">
                {/* 1. External QR Button (Only shows if they are Registered) */}
-               {m.is_registered && canEdit && (
+               {m.is_registered && isAdmin && (
                  <button
                    onClick={() => setScanningMember(m)}
                    title={m.external_qr ? "Re-Map Badge" : "Map External Badge"}

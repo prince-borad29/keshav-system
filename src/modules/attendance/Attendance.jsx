@@ -333,12 +333,19 @@ export default function Attendance({
     }
   };
 
-  const handleScan = async (code) => {
+ const handleScan = async (code) => {
     if (!canMark) return { success: false, message: "Read Only" };
 
+    // We must ensure the code is trimmed of whitespace before comparing!
+    const cleanCode = code.trim();
+
     const member = members.find(
-      (m) => m.internal_code === code || m.id === code,
+      (m) => 
+        m.internal_code === cleanCode || 
+        m.id === cleanCode || 
+        m.external_qr === cleanCode // <-- THIS WAS MISSING IN YOUR PASTED CODE!
     );
+    
     if (!member)
       return { success: false, message: "Not in Roster", type: "error" };
     if (presentMap.has(member.id))

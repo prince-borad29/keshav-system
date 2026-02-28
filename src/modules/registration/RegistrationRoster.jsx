@@ -127,7 +127,8 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
   useEffect(() => { setPage(0); setHasMore(true); }, [debouncedSearch]);
 
   // 4. Lazy Load Members
-  const fetchMembers = useCallback(async () => {
+ // 4. Lazy Load Members (With AbortController)
+  const fetchMembers = useCallback(async (abortSignal) => {
     if (!permissionsLoaded || (!isGlobal && allowedMandalIds === null) || isFetchingRef.current) return;
     
     isFetchingRef.current = true;
@@ -135,9 +136,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     if (isLoadMore) setLoadingMore(true); else setLoading(true);
 
     try {
-      // 💡 THE MAGIC TRICK: 
-      // If they CAN register, load all members (Left Join). 
-      // If they CANNOT (Editor), force an Inner Join to ONLY load registered members.
       const regJoin = canRegister 
          ? `project_registrations ( project_id, external_qr )`
          : `project_registrations!inner ( project_id, external_qr )`;
@@ -148,17 +146,17 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         ${regJoin} 
       `);
 
-      // If Editor, specifically filter the inner join for this exact project
       if (!canRegister) {
         query = query.eq('project_registrations.project_id', project.id);
       }
 
-      // Apply Scope Constraints
       if (!isGlobal && profile?.gender) query = query.eq('gender', profile.gender);
       if (!isGlobal && allowedMandalIds.length > 0) query = query.in('mandal_id', allowedMandalIds);
-      else if (!isGlobal && allowedMandalIds.length === 0) { setMembers([]); return; }
+      else if (!isGlobal && allowedMandalIds.length === 0) { 
+          if (!abortSignal.aborted) { setMembers([]); setLoading(false); isFetchingRef.current = false; }
+          return; 
+      }
 
-      // Apply Search
       if (debouncedSearch) {
         query = query.or(`name.ilike.%${debouncedSearch}%,surname.ilike.%${debouncedSearch}%,mobile.ilike.%${debouncedSearch}%,internal_code.ilike.%${debouncedSearch}%`);
       }
@@ -166,22 +164,37 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       const from = page * pageSize;
       const { data, error } = await query
         .range(from, from + pageSize - 1)
-        .order('name', { ascending: true }); 
+        .order('name', { ascending: true })
+        .abortSignal(abortSignal); // 👈 ABORT SIGNAL ADDED HERE
 
       if (error) throw error;
 
-      const processed = data.map(m => {
-        const reg = m.project_registrations.find(r => r.project_id === project.id);
-        return { ...m, is_registered: !!reg, external_qr: reg?.external_qr || null };
-      });
+      if (!abortSignal.aborted) {
+        const processed = data.map(m => {
+          const reg = m.project_registrations.find(r => r.project_id === project.id);
+          return { ...m, is_registered: !!reg, external_qr: reg?.external_qr || null };
+        });
 
-      setMembers(prev => isLoadMore ? [...prev, ...processed] : processed);
-      setHasMore(data.length === pageSize);
-    } catch (err) { console.error(err); } 
-    finally { setLoading(false); setLoadingMore(false); isFetchingRef.current = false; }
+        setMembers(prev => isLoadMore ? [...prev, ...processed] : processed);
+        setHasMore(data.length === pageSize);
+      }
+    } catch (err) { 
+        if (err.name !== 'AbortError') console.error(err); 
+    } finally { 
+        if (!abortSignal.aborted) {
+            setLoading(false); 
+            setLoadingMore(false); 
+        }
+        isFetchingRef.current = false; 
+    }
   }, [project.id, page, debouncedSearch, allowedMandalIds, isGlobal, profile?.gender, permissionsLoaded, canRegister]);
 
-  useEffect(() => { fetchMembers(); }, [fetchMembers]);
+  // UseEffect that handles the AbortController for fetchMembers
+  useEffect(() => { 
+      const controller = new AbortController();
+      fetchMembers(controller.signal); 
+      return () => controller.abort(); // 👈 KILLS NETWORK REQUEST ON UNMOUNT
+  }, [fetchMembers]);
 
   // 5. Infinite Scroll Observer
   useEffect(() => {

@@ -26,18 +26,20 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
 
   // --- 1. FETCH INITIAL DATA ---
   useEffect(() => {
-    let isMounted = true; 
+    // 1. Create the controller
+    const controller = new AbortController();
 
     const loadInitialData = async () => {
       setLoading(true);
       try {
-        let regQuery = supabase
+       let regQuery = supabase
           .from('project_registrations')
           .select(`
             member_id,
             members!inner ( id, name, surname, mobile, internal_code, mandal_id, mandals ( id, name, kshetra_id, kshetras ( id, name ) ), gender )
           `)
-          .eq('project_id', project.id);
+          .eq('project_id', project.id)
+          .abortSignal(controller.signal);
 
         // 🛑 THE FIX IS HERE: Apply strict frontend scope filtering
         if (!userScope.isGlobal) {
@@ -64,13 +66,18 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
 
         const [regRes, attRes] = await Promise.all([
            regQuery,
-           supabase.from('attendance').select('id, member_id').eq('event_id', event.id)
+           supabase
+             .from('attendance')
+             .select('id, member_id')
+             .eq('event_id', event.id)
+             .abortSignal(controller.signal) // 3. Attach signal to query 2
         ]);
 
         if (regRes.error) throw regRes.error;
         if (attRes.error) throw attRes.error;
 
-        if (isMounted) {
+        // 4. Check if aborted before updating state
+        if (!controller.signal.aborted) {
           setRawRegs(regRes.data || []);
           const newSet = new Set();
           attendanceIdMap.current.clear();
@@ -82,9 +89,10 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
         }
 
       } catch (err) {
+        if (err.name === 'AbortError') return; // Ignore abort errors quietly
         console.error("Summary Load Error:", err);
       } finally {
-        if (isMounted) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
 
@@ -96,7 +104,10 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
       setLoading(true);
     }
 
-    return () => { isMounted = false; };
+    // 5. Cleanup function physically kills the network request
+    return () => { 
+      controller.abort(); 
+    };
   }, [event?.id, isVisible, project.id, userScope]);
 
   // --- 2. REALTIME SYNC ---
@@ -377,20 +388,22 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
               </div>
 
               {/* DYNAMIC GROUPING TOGGLE */}
-              <div className="flex bg-slate-100 p-1 rounded-lg">
-                 <button 
-                   onClick={() => setGroupBy('mandal')}
-                   className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-1.5 ${groupBy === 'mandal' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                 >
-                   <MapPin size={14}/> Mandal
-                 </button>
-                 <button 
-                   onClick={() => setGroupBy('kshetra')}
-                   className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-1.5 ${groupBy === 'kshetra' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                 >
-                   <Layers size={14}/> Kshetra
-                 </button>
-              </div>
+             {userScope.isGlobal && (
+                <div className="flex bg-slate-100 p-1 rounded-lg">
+                   <button 
+                     onClick={() => setGroupBy('mandal')}
+                     className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-1.5 ${groupBy === 'mandal' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                   >
+                     <MapPin size={14}/> Mandal
+                   </button>
+                   <button 
+                     onClick={() => setGroupBy('kshetra')}
+                     className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-1.5 ${groupBy === 'kshetra' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                   >
+                     <Layers size={14}/> Kshetra
+                   </button>
+                </div>
+              )}
 
               {/* TABLE */}
               {data.length === 0 ? (

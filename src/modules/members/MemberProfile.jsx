@@ -1,9 +1,9 @@
 import React from "react";
-import { X, MapPin, Calendar, Phone, Hash, User, Briefcase, Flag, Edit3, Printer, Shield, Globe, Tag } from "lucide-react";
+import { X, MapPin, Calendar, Phone, Hash, User, Briefcase, Flag, Printer, Shield, Globe, Tag } from "lucide-react";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
 
-export default function MemberProfile({ member, isOpen, onClose, onEdit }) {
+export default function MemberProfile({ member, isOpen, onClose }) {
   if (!isOpen || !member) return null;
 
   // Formatting Helpers
@@ -133,7 +133,6 @@ export default function MemberProfile({ member, isOpen, onClose, onEdit }) {
         <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
           <div className="flex gap-3">
             <Button variant="secondary" onClick={onClose}>Close</Button>
-            <Button onClick={() => { onEdit(member); onClose(); }} icon={Edit3}>Edit Profile</Button>
           </div>
         </div>
       </div>

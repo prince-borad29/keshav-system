@@ -134,8 +134,8 @@ export default function MemberDirectory() {
     setHasMore(true);
   }, [debouncedSearch, filters]);
 
-  // 5. FETCH MEMBERS
-  const fetchMembers = useCallback(async () => {
+  // 5. FETCH MEMBERS (With AbortController)
+  const fetchMembers = useCallback(async (abortSignal) => {
     if (!permsLoaded || !isAuthorized || isFetchingRef.current) return;
     
     isFetchingRef.current = true;
@@ -145,14 +145,12 @@ export default function MemberDirectory() {
     else setLoading(true);
 
     try {
-      // Clean query string builder to dynamically include/exclude tags and registrations
       let selectString = `
         *,
         mandals!inner ( id, name, kshetra_id, kshetras ( id, name ) ),
         ${filters.tag_id ? 'member_tags!inner' : 'member_tags'} ( tag_id, tags (name, color) )
       `;
 
-      // 💡 THE TRICK: If Project Admin, force an Inner Join on Registrations!
       if (isProjectAdmin) {
         selectString += `, project_registrations!inner ( project_id )`;
       }
@@ -163,15 +161,19 @@ export default function MemberDirectory() {
       if (!isAdmin && profile?.gender) query = query.eq('gender', profile.gender);
       if (!isAdmin && allowedMandalIds !== null) {
          if (allowedMandalIds.length > 0) query = query.in('mandal_id', allowedMandalIds);
-         else { setMembers([]); setTotalCount(0); setLoading(false); isFetchingRef.current = false; return; }
+         else { 
+            if (!abortSignal.aborted) { setMembers([]); setTotalCount(0); setLoading(false); isFetchingRef.current = false; }
+            return; 
+         }
       }
 
-      // 💡 Project Admin Constraints (Only show members registered to THEIR projects)
+      // Project Admin Constraints
       if (isProjectAdmin) {
         if (assignedProjectIds.length > 0) {
            query = query.in('project_registrations.project_id', assignedProjectIds);
         } else {
-           setMembers([]); setTotalCount(0); setLoading(false); isFetchingRef.current = false; return;
+           if (!abortSignal.aborted) { setMembers([]); setTotalCount(0); setLoading(false); isFetchingRef.current = false; }
+           return;
         }
       }
 
@@ -192,32 +194,42 @@ export default function MemberDirectory() {
         .range(from, to)
         .order('name', { ascending: true })
         .order('surname', { ascending: true })
-        .order('id', { ascending: true }); 
+        .order('id', { ascending: true })
+        .abortSignal(abortSignal); // 👈 ABORT SIGNAL ADDED HERE
         
       if (error) throw error;
       
-      if (isLoadMore) {
-        setMembers(prev => {
-          const existingIds = new Set(prev.map(m => m.id));
-          const uniqueNewMembers = (data || []).filter(m => !existingIds.has(m.id));
-          return [...prev, ...uniqueNewMembers];
-        });
-      } else {
-        setMembers(data || []);
-        setTotalCount(count || 0);
+      if (!abortSignal.aborted) {
+        if (isLoadMore) {
+          setMembers(prev => {
+            const existingIds = new Set(prev.map(m => m.id));
+            const uniqueNewMembers = (data || []).filter(m => !existingIds.has(m.id));
+            return [...prev, ...uniqueNewMembers];
+          });
+        } else {
+          setMembers(data || []);
+          setTotalCount(count || 0);
+        }
+        setHasMore((data || []).length === pageSize);
       }
-      
-      setHasMore((data || []).length === pageSize);
+
     } catch (err) { 
-      console.error(err); 
+      if (err.name !== 'AbortError') console.error(err); 
     } finally { 
-      setLoading(false); 
-      setLoadingMore(false);
+      if (!abortSignal.aborted) {
+        setLoading(false); 
+        setLoadingMore(false);
+      }
       isFetchingRef.current = false; 
     }
   }, [permsLoaded, isAuthorized, page, debouncedSearch, filters, isAdmin, profile?.gender, allowedMandalIds, refreshTrigger, isProjectAdmin, assignedProjectIds]);
 
-  useEffect(() => { fetchMembers(); }, [fetchMembers]);
+  // UseEffect that handles the AbortController for fetchMembers
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchMembers(controller.signal);
+    return () => controller.abort(); // 👈 KILLS NETWORK REQUEST ON UNMOUNT
+  }, [fetchMembers]);
 
   // 6. ROBUST INFINITE SCROLL
   const handleObserver = useCallback((entries) => {
@@ -373,7 +385,7 @@ export default function MemberDirectory() {
       </div>
 
       <MemberForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSuccess={handleSaveSuccess} initialData={selectedMember} />
-      <MemberProfile isOpen={!!viewMember} member={viewMember} onClose={() => setViewMember(null)} onEdit={handleEdit} />
+      <MemberProfile isOpen={!!viewMember} member={viewMember} onClose={() => setViewMember(null)} />
       <style>{`.input-filter { @apply w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-100 outline-none text-sm text-slate-700; }`}</style>
     </div>
   );

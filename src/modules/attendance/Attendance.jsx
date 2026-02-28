@@ -78,10 +78,154 @@ export default function Attendance({
 
   // --- 1. LOAD METADATA ---
   useEffect(() => {
+    const controller = new AbortController();
+
+    const loadMetadata = async (abortSignal) => {
+      hasLoadedInitial.current = true;
+      try {
+        setInitLoading(true);
+        const [evtRes, projRes] = await Promise.all([
+          supabase.from("events").select("*").eq("id", eventId).single().abortSignal(abortSignal),
+          supabase.from("projects").select("*").eq("id", projectId).single().abortSignal(abortSignal),
+        ]);
+
+        if (evtRes.error || projRes.error) throw new Error("Event not found");
+        
+        if (!abortSignal.aborted) {
+            setEvent(evtRes.data);
+            setProject(projRes.data);
+        }
+
+        await loadRosterData(abortSignal); 
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+            console.error("Meta Load Error:", err);
+            if (!abortSignal.aborted) setError("Failed to load event details.");
+        }
+      } finally {
+        if (!abortSignal.aborted) setInitLoading(false);
+      }
+    };
+
     if (projectId && eventId && profile?.id && !hasLoadedInitial.current) {
-      loadMetadata();
+      loadMetadata(controller.signal);
     }
-  }, [projectId, eventId, profile?.id]);
+
+    return () => controller.abort(); // 👈 KILLS METADATA & ROSTER REQUESTS
+  }, [projectId, eventId, profile?.id]); 
+
+  // --- 2. LOAD ROSTER ---
+  const loadRosterData = useCallback(async (abortSignal) => {
+    if (!projectId) return;
+
+    try {
+      if (!abortSignal?.aborted) setDataLoading(true);
+      if (!abortSignal?.aborted) setError(null);
+
+      const cleanRole = (profile?.role || "").toLowerCase().trim();
+      let allowedMandalIds = [];
+      let allowedKshetraId = null;
+
+      // ... [Keep your role checking logic exactly the same] ...
+      if (cleanRole === "sanchalak") {
+        const mId = profile.assigned_mandal_id || profile.mandal_id;
+        if (mId) allowedMandalIds = [mId];
+      } else if (cleanRole === "nirikshak") {
+        const { data: assigns } = await supabase
+          .from("nirikshak_assignments")
+          .select("mandal_id")
+          .eq("nirikshak_id", profile.id)
+          .abortSignal(abortSignal); // 👈 Added signal
+        if (assigns) allowedMandalIds = assigns.map((a) => a.mandal_id);
+        const profileMandal = profile.assigned_mandal_id || profile.mandal_id;
+        if (profileMandal) allowedMandalIds.push(profileMandal);
+        allowedMandalIds = [...new Set(allowedMandalIds)];
+      } else if (cleanRole === "nirdeshak" || cleanRole === "project_admin") {
+        allowedKshetraId = profile.assigned_kshetra_id || profile.kshetra_id;
+        if (!allowedKshetraId && (profile.assigned_mandal_id || profile.mandal_id)) {
+          const mId = profile.assigned_mandal_id || profile.mandal_id;
+          const { data: mData } = await supabase
+            .from("mandals")
+            .select("kshetra_id")
+            .eq("id", mId)
+            .single()
+            .abortSignal(abortSignal); // 👈 Added signal
+          if (mData) allowedKshetraId = mData.kshetra_id;
+        }
+      }
+
+      if (!abortSignal?.aborted) {
+          setScopePermissions({
+            mandalIds: allowedMandalIds,
+            kshetraId: allowedKshetraId,
+          });
+      }
+
+      const { data: regData, error: regError } = await supabase
+        .from("project_registrations")
+        .select(`
+            member_id, seat_number, exam_level, external_qr,
+            members (id, name, surname, internal_code, mobile, designation, gender, mandal_id, mandals ( id, name, kshetra_id ))
+        `)
+        .eq("project_id", projectId)
+        .abortSignal(abortSignal); // 👈 Added signal
+
+      if (regError) throw regError;
+
+      let rawRoster = (regData || []).map((r) => {
+          const m = r.members;
+          if (!m) return null;
+          return {
+            ...m,
+            mobile_number: m.mobile,
+            kshetra_id: m.mandals?.kshetra_id,
+            mandal: m.mandals?.name || "Unknown",
+            seat_number: r.seat_number,
+            exam_level: r.exam_level,
+            external_qr: r.external_qr, 
+          };
+      }).filter(Boolean);
+
+      const userGender = profile?.gender;
+      const filteredRoster = rawRoster.filter((m) => {
+        if (cleanRole === "admin") return true;
+        if (userGender && m.gender !== userGender) return false;
+        if (cleanRole === "sanchalak" || cleanRole === "nirikshak") return allowedMandalIds.includes(m.mandal_id);
+        if (cleanRole === "nirdeshak" || cleanRole === "project_admin") return allowedKshetraId && m.kshetra_id === allowedKshetraId;
+        if (cleanRole === "taker") return true;
+        return false;
+      });
+
+      filteredRoster.sort((a, b) => a.name.localeCompare(b.name));
+      
+      if (!abortSignal?.aborted) setMembers(filteredRoster);
+
+      // --- FETCH ATTENDANCE WITH ROW IDs ---
+      const { data: attData } = await supabase
+        .from("attendance")
+        .select("id, member_id, scanned_at")
+        .eq("event_id", eventId)
+        .abortSignal(abortSignal); // 👈 Added signal
+
+      const newMap = new Map();
+      attendanceIdMap.current.clear();
+
+      (attData || []).forEach((a) => {
+        newMap.set(a.member_id, a.scanned_at);
+        attendanceIdMap.current.set(a.id, a.member_id);
+      });
+      
+      if (!abortSignal?.aborted) setPresentMap(newMap);
+
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+          console.error("Data Load Error:", err);
+          if (!abortSignal?.aborted) setError("Failed to load data.");
+      }
+    } finally {
+      if (!abortSignal?.aborted) setDataLoading(false);
+    }
+  }, [projectId, eventId, profile]);
 
   const loadMetadata = async () => {
     hasLoadedInitial.current = true;
@@ -105,116 +249,6 @@ export default function Attendance({
     }
   };
 
-  // --- 2. LOAD ROSTER ---
-  const loadRosterData = useCallback(async () => {
-    if (!projectId) return;
-
-    try {
-      setDataLoading(true);
-      setError(null);
-
-      const cleanRole = (profile?.role || "").toLowerCase().trim();
-      let allowedMandalIds = [];
-      let allowedKshetraId = null;
-
-      if (cleanRole === "sanchalak") {
-        const mId = profile.assigned_mandal_id || profile.mandal_id;
-        if (mId) allowedMandalIds = [mId];
-      } else if (cleanRole === "nirikshak") {
-        const { data: assigns } = await supabase
-          .from("nirikshak_assignments")
-          .select("mandal_id")
-          .eq("nirikshak_id", profile.id);
-        if (assigns) allowedMandalIds = assigns.map((a) => a.mandal_id);
-        const profileMandal = profile.assigned_mandal_id || profile.mandal_id;
-        if (profileMandal) allowedMandalIds.push(profileMandal);
-        allowedMandalIds = [...new Set(allowedMandalIds)];
-      } else if (cleanRole === "nirdeshak" || cleanRole === "project_admin") {
-        allowedKshetraId = profile.assigned_kshetra_id || profile.kshetra_id;
-        if (
-          !allowedKshetraId &&
-          (profile.assigned_mandal_id || profile.mandal_id)
-        ) {
-          const mId = profile.assigned_mandal_id || profile.mandal_id;
-          const { data: mData } = await supabase
-            .from("mandals")
-            .select("kshetra_id")
-            .eq("id", mId)
-            .single();
-          if (mData) allowedKshetraId = mData.kshetra_id;
-        }
-      }
-
-      setScopePermissions({
-        mandalIds: allowedMandalIds,
-        kshetraId: allowedKshetraId,
-      });
-
-      const { data: regData, error: regError } = await supabase
-        .from("project_registrations")
-        .select(
-          `
-        member_id, seat_number, exam_level, external_qr,
-        members (id, name, surname, internal_code, mobile, designation, gender, mandal_id, mandals ( id, name, kshetra_id ))
-    `,
-        )
-        .eq("project_id", projectId);
-
-      if (regError) throw regError;
-
-      let rawRoster = (regData || [])
-        .map((r) => {
-          const m = r.members;
-          if (!m) return null;
-          return {
-            ...m,
-            mobile_number: m.mobile,
-            kshetra_id: m.mandals?.kshetra_id,
-            mandal: m.mandals?.name || "Unknown",
-            seat_number: r.seat_number,
-            exam_level: r.exam_level,
-            external_qr: r.external_qr, 
-          };
-        })
-        .filter(Boolean);
-
-      const userGender = profile?.gender;
-
-      const filteredRoster = rawRoster.filter((m) => {
-        if (cleanRole === "admin") return true;
-        if (userGender && m.gender !== userGender) return false;
-        if (cleanRole === "sanchalak" || cleanRole === "nirikshak")
-          return allowedMandalIds.includes(m.mandal_id);
-        if (cleanRole === "nirdeshak" || cleanRole === "project_admin")
-          return allowedKshetraId && m.kshetra_id === allowedKshetraId;
-        if (cleanRole === "taker") return true;
-        return false;
-      });
-
-      filteredRoster.sort((a, b) => a.name.localeCompare(b.name));
-      setMembers(filteredRoster);
-
-      // --- FETCH ATTENDANCE WITH ROW IDs ---
-      const { data: attData } = await supabase
-        .from("attendance")
-        .select("id, member_id, scanned_at")
-        .eq("event_id", eventId);
-
-      const newMap = new Map();
-      attendanceIdMap.current.clear();
-
-      (attData || []).forEach((a) => {
-        newMap.set(a.member_id, a.scanned_at);
-        attendanceIdMap.current.set(a.id, a.member_id);
-      });
-      setPresentMap(newMap);
-    } catch (err) {
-      console.error("Data Load Error:", err);
-      setError("Failed to load data.");
-    } finally {
-      setDataLoading(false);
-    }
-  }, [projectId, eventId, profile]);
 
   // --- 3. REALTIME SYNC (WITH DICTIONARY LOOKUP) ---
   useEffect(() => {

@@ -4,16 +4,14 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase Environment Variables');
+  console.error("Missing Supabase Environment Variables!");
 }
 
-// Create the Ghost Client ONCE here, not inside a component
-export const ghostClient = createClient(supabaseUrl, supabaseAnonKey, {
+// Export a single, constant instance of the client
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    persistSession: false, // Stops the multiple client storage error
-    autoRefreshToken: false,
-    detectSessionInUrl: false
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true
   }
 });
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);

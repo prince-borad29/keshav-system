@@ -25,7 +25,6 @@ import {
 import { supabase } from "../../lib/supabase";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
-import { ghostClient } from "../../lib/supabase";
 
 // --- INITIAL STATES ---
 const initialSystemForm = {
@@ -257,7 +256,7 @@ export default function UserManagement() {
 
         const password =
           systemForm.password || Math.random().toString(36).slice(-8) + "Aa1@";
-        const { data: auth, error: authError } = await ghostClient.auth.signUp({
+        const { data: auth, error: authError } = await supabase.auth.signUp({
           email: systemForm.email.trim(),
           password,
           options: {
@@ -376,7 +375,7 @@ export default function UserManagement() {
           const password = Math.random().toString(36).slice(-8) + "Aa1@";
 
           const { data: auth, error: authError } =
-            await ghostClient.auth.signUp({
+            await supabase.auth.signUp({
               email,
               password,
               options: {
@@ -459,7 +458,7 @@ export default function UserManagement() {
         const email = `taker.${suffix}@keshav.app`;
         const password = `Keshav@${Math.floor(1000 + Math.random() * 9000)}`;
 
-        const { data: auth } = await ghostClient.auth.signUp({
+        const { data: auth } = await supabase.auth.signUp({
           email,
           password,
           options: { data: { full_name: `Taker ${suffix}`, role: "taker" } },

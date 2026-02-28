@@ -18,7 +18,7 @@ import {
   Lock,
   RefreshCw,
   AlertTriangle,
-  Phone // 1. Imported Phone icon
+  Phone, // 1. Imported Phone icon
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import QrScanner from "./QrScanner";
@@ -85,22 +85,33 @@ export default function Attendance({
       try {
         setInitLoading(true);
         const [evtRes, projRes] = await Promise.all([
-          supabase.from("events").select("*").eq("id", eventId).single().abortSignal(abortSignal),
-          supabase.from("projects").select("*").eq("id", projectId).single().abortSignal(abortSignal),
+          supabase.from("events").select("*").eq("id", eventId).maybeSingle(), // Use maybeSingle instead of single
+          supabase
+            .from("projects")
+            .select("*")
+            .eq("id", projectId)
+            .maybeSingle(),
         ]);
 
-        if (evtRes.error || projRes.error) throw new Error("Event not found");
-        
+        if (!evtRes.data || !projRes.data) {
+          console.error("Data missing:", {
+            event: evtRes.data,
+            project: projRes.data,
+          });
+          setError("This event or project no longer exists.");
+          setInitLoading(false);
+          return; // Stop execution here!
+        }
         if (!abortSignal.aborted) {
-            setEvent(evtRes.data);
-            setProject(projRes.data);
+          setEvent(evtRes.data);
+          setProject(projRes.data);
         }
 
-        await loadRosterData(abortSignal); 
+        await loadRosterData(abortSignal);
       } catch (err) {
-        if (err.name !== 'AbortError') {
-            console.error("Meta Load Error:", err);
-            if (!abortSignal.aborted) setError("Failed to load event details.");
+        if (err.name !== "AbortError") {
+          console.error("Meta Load Error:", err);
+          if (!abortSignal.aborted) setError("Failed to load event details.");
         }
       } finally {
         if (!abortSignal.aborted) setInitLoading(false);
@@ -112,120 +123,131 @@ export default function Attendance({
     }
 
     return () => controller.abort(); // 👈 KILLS METADATA & ROSTER REQUESTS
-  }, [projectId, eventId, profile?.id]); 
+  }, [projectId, eventId, profile?.id]);
 
   // --- 2. LOAD ROSTER ---
-  const loadRosterData = useCallback(async (abortSignal) => {
-    if (!projectId) return;
+  const loadRosterData = useCallback(
+    async (abortSignal) => {
+      if (!projectId) return;
 
-    try {
-      if (!abortSignal?.aborted) setDataLoading(true);
-      if (!abortSignal?.aborted) setError(null);
+      try {
+        if (!abortSignal?.aborted) setDataLoading(true);
+        if (!abortSignal?.aborted) setError(null);
 
-      const cleanRole = (profile?.role || "").toLowerCase().trim();
-      let allowedMandalIds = [];
-      let allowedKshetraId = null;
+        const cleanRole = (profile?.role || "").toLowerCase().trim();
+        let allowedMandalIds = [];
+        let allowedKshetraId = null;
 
-      // ... [Keep your role checking logic exactly the same] ...
-      if (cleanRole === "sanchalak") {
-        const mId = profile.assigned_mandal_id || profile.mandal_id;
-        if (mId) allowedMandalIds = [mId];
-      } else if (cleanRole === "nirikshak") {
-        const { data: assigns } = await supabase
-          .from("nirikshak_assignments")
-          .select("mandal_id")
-          .eq("nirikshak_id", profile.id)
-          .abortSignal(abortSignal); // 👈 Added signal
-        if (assigns) allowedMandalIds = assigns.map((a) => a.mandal_id);
-        const profileMandal = profile.assigned_mandal_id || profile.mandal_id;
-        if (profileMandal) allowedMandalIds.push(profileMandal);
-        allowedMandalIds = [...new Set(allowedMandalIds)];
-      } else if (cleanRole === "nirdeshak" || cleanRole === "project_admin") {
-        allowedKshetraId = profile.assigned_kshetra_id || profile.kshetra_id;
-        if (!allowedKshetraId && (profile.assigned_mandal_id || profile.mandal_id)) {
+        // ... [Keep your role checking logic exactly the same] ...
+        if (cleanRole === "sanchalak") {
           const mId = profile.assigned_mandal_id || profile.mandal_id;
-          const { data: mData } = await supabase
-            .from("mandals")
-            .select("kshetra_id")
-            .eq("id", mId)
-            .single()
+          if (mId) allowedMandalIds = [mId];
+        } else if (cleanRole === "nirikshak") {
+          const { data: assigns } = await supabase
+            .from("nirikshak_assignments")
+            .select("mandal_id")
+            .eq("nirikshak_id", profile.id)
             .abortSignal(abortSignal); // 👈 Added signal
-          if (mData) allowedKshetraId = mData.kshetra_id;
+          if (assigns) allowedMandalIds = assigns.map((a) => a.mandal_id);
+          const profileMandal = profile.assigned_mandal_id || profile.mandal_id;
+          if (profileMandal) allowedMandalIds.push(profileMandal);
+          allowedMandalIds = [...new Set(allowedMandalIds)];
+        } else if (cleanRole === "nirdeshak" || cleanRole === "project_admin") {
+          allowedKshetraId = profile.assigned_kshetra_id || profile.kshetra_id;
+          if (
+            !allowedKshetraId &&
+            (profile.assigned_mandal_id || profile.mandal_id)
+          ) {
+            const mId = profile.assigned_mandal_id || profile.mandal_id;
+            const { data: mData } = await supabase
+              .from("mandals")
+              .select("kshetra_id")
+              .eq("id", mId)
+              .single()
+              .abortSignal(abortSignal); // 👈 Added signal
+            if (mData) allowedKshetraId = mData.kshetra_id;
+          }
         }
-      }
 
-      if (!abortSignal?.aborted) {
+        if (!abortSignal?.aborted) {
           setScopePermissions({
             mandalIds: allowedMandalIds,
             kshetraId: allowedKshetraId,
           });
-      }
+        }
 
-      const { data: regData, error: regError } = await supabase
-        .from("project_registrations")
-        .select(`
+        const { data: regData, error: regError } = await supabase
+          .from("project_registrations")
+          .select(
+            `
             member_id, seat_number, exam_level, external_qr,
             members (id, name, surname, internal_code, mobile, designation, gender, mandal_id, mandals ( id, name, kshetra_id ))
-        `)
-        .eq("project_id", projectId)
-        .abortSignal(abortSignal); // 👈 Added signal
+        `,
+          )
+          .eq("project_id", projectId)
+          .abortSignal(abortSignal); // 👈 Added signal
 
-      if (regError) throw regError;
+        if (regError) throw regError;
 
-      let rawRoster = (regData || []).map((r) => {
-          const m = r.members;
-          if (!m) return null;
-          return {
-            ...m,
-            mobile_number: m.mobile,
-            kshetra_id: m.mandals?.kshetra_id,
-            mandal: m.mandals?.name || "Unknown",
-            seat_number: r.seat_number,
-            exam_level: r.exam_level,
-            external_qr: r.external_qr, 
-          };
-      }).filter(Boolean);
+        let rawRoster = (regData || [])
+          .map((r) => {
+            const m = r.members;
+            if (!m) return null;
+            return {
+              ...m,
+              mobile_number: m.mobile,
+              kshetra_id: m.mandals?.kshetra_id,
+              mandal: m.mandals?.name || "Unknown",
+              seat_number: r.seat_number,
+              exam_level: r.exam_level,
+              external_qr: r.external_qr,
+            };
+          })
+          .filter(Boolean);
 
-      const userGender = profile?.gender;
-      const filteredRoster = rawRoster.filter((m) => {
-        if (cleanRole === "admin") return true;
-        if (userGender && m.gender !== userGender) return false;
-        if (cleanRole === "sanchalak" || cleanRole === "nirikshak") return allowedMandalIds.includes(m.mandal_id);
-        if (cleanRole === "nirdeshak" || cleanRole === "project_admin") return allowedKshetraId && m.kshetra_id === allowedKshetraId;
-        if (cleanRole === "taker") return true;
-        return false;
-      });
+        const userGender = profile?.gender;
+        const filteredRoster = rawRoster.filter((m) => {
+          if (cleanRole === "admin") return true;
+          if (userGender && m.gender !== userGender) return false;
+          if (cleanRole === "sanchalak" || cleanRole === "nirikshak")
+            return allowedMandalIds.includes(m.mandal_id);
+          if (cleanRole === "nirdeshak" || cleanRole === "project_admin")
+            return allowedKshetraId && m.kshetra_id === allowedKshetraId;
+          if (cleanRole === "taker") return true;
+          return false;
+        });
 
-      filteredRoster.sort((a, b) => a.name.localeCompare(b.name));
-      
-      if (!abortSignal?.aborted) setMembers(filteredRoster);
+        filteredRoster.sort((a, b) => a.name.localeCompare(b.name));
 
-      // --- FETCH ATTENDANCE WITH ROW IDs ---
-      const { data: attData } = await supabase
-        .from("attendance")
-        .select("id, member_id, scanned_at")
-        .eq("event_id", eventId)
-        .abortSignal(abortSignal); // 👈 Added signal
+        if (!abortSignal?.aborted) setMembers(filteredRoster);
 
-      const newMap = new Map();
-      attendanceIdMap.current.clear();
+        // --- FETCH ATTENDANCE WITH ROW IDs ---
+        const { data: attData } = await supabase
+          .from("attendance")
+          .select("id, member_id, scanned_at")
+          .eq("event_id", eventId)
+          .abortSignal(abortSignal); // 👈 Added signal
 
-      (attData || []).forEach((a) => {
-        newMap.set(a.member_id, a.scanned_at);
-        attendanceIdMap.current.set(a.id, a.member_id);
-      });
-      
-      if (!abortSignal?.aborted) setPresentMap(newMap);
+        const newMap = new Map();
+        attendanceIdMap.current.clear();
 
-    } catch (err) {
-      if (err.name !== 'AbortError') {
+        (attData || []).forEach((a) => {
+          newMap.set(a.member_id, a.scanned_at);
+          attendanceIdMap.current.set(a.id, a.member_id);
+        });
+
+        if (!abortSignal?.aborted) setPresentMap(newMap);
+      } catch (err) {
+        if (err.name !== "AbortError") {
           console.error("Data Load Error:", err);
           if (!abortSignal?.aborted) setError("Failed to load data.");
+        }
+      } finally {
+        if (!abortSignal?.aborted) setDataLoading(false);
       }
-    } finally {
-      if (!abortSignal?.aborted) setDataLoading(false);
-    }
-  }, [projectId, eventId, profile]);
+    },
+    [projectId, eventId, profile],
+  );
 
   const loadMetadata = async () => {
     hasLoadedInitial.current = true;
@@ -240,7 +262,7 @@ export default function Attendance({
       setEvent(evtRes.data);
       setProject(projRes.data);
 
-      await loadRosterData(); 
+      await loadRosterData();
     } catch (err) {
       console.error("Meta Load Error:", err);
       setError("Failed to load event details.");
@@ -248,7 +270,6 @@ export default function Attendance({
       setInitLoading(false);
     }
   };
-
 
   // --- 3. REALTIME SYNC (WITH DICTIONARY LOOKUP) ---
   useEffect(() => {
@@ -371,12 +392,12 @@ export default function Attendance({
     const cleanCode = code.trim();
 
     const member = members.find(
-      (m) => 
-        m.internal_code === cleanCode || 
-        m.id === cleanCode || 
-        m.external_qr === cleanCode
+      (m) =>
+        m.internal_code === cleanCode ||
+        m.id === cleanCode ||
+        m.external_qr === cleanCode,
     );
-    
+
     if (!member)
       return { success: false, message: "Not in Roster", type: "error" };
     if (presentMap.has(member.id))
@@ -571,7 +592,7 @@ export default function Attendance({
                   </div>
                 </div>
               </div>
-              
+
               {/* 2. Added grouping div for right-side items */}
               <div className="flex items-center gap-3 shrink-0">
                 {/* 3. Render Call Button only if they have a phone number */}
@@ -579,7 +600,7 @@ export default function Attendance({
                   <a
                     href={`tel:${m.mobile_number}`}
                     // CRITICAL: Prevent clicking the button from accidentally marking attendance
-                    onClick={(e) => e.stopPropagation()} 
+                    onClick={(e) => e.stopPropagation()}
                     title={`Call ${m.mobile_number}`}
                     className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 rounded-full transition-colors active:scale-95"
                   >

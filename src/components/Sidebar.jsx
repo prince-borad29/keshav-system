@@ -35,9 +35,21 @@ export default function Sidebar({ isOpen, onClose }) {
   }, [role, profile?.id]);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    localStorage.removeItem('sb-bdtjcwvmefjieauhnmdi-auth-token');
-    window.location.href = '/login';
+    try {
+      // 1. Tell the server to invalidate the session first
+      await supabase.auth.signOut();
+      
+      // 2. Clear everything - be aggressive to ensure no "ghost" sessions remain
+      localStorage.clear(); 
+      sessionStorage.clear();
+
+      // 3. Force a hard reload to the login page
+      // This kills all running JavaScript processes and AbortControllers
+      window.location.replace('/login'); 
+    } catch (error) {
+      console.error("Logout failed, forcing redirect:", error);
+      window.location.replace('/login');
+    }
   };
 
   const NavItem = ({ to, icon: Icon, label, onClick }) => (
@@ -136,7 +148,7 @@ export default function Sidebar({ isOpen, onClose }) {
           </div>
           <button 
             onClick={handleLogout}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all text-xs font-bold shadow-sm cursor-pointer"
+            className="w-full cursor-pointer flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all text-xs font-bold shadow-sm cursor-pointer"
           >
             <LogOut size={16} /> Logout
           </button>

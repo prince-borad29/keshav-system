@@ -39,12 +39,23 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
           `)
           .eq('project_id', project.id);
 
+        // 🛑 THE FIX IS HERE: Apply strict frontend scope filtering
         if (!userScope.isGlobal) {
-            if (userScope.gender) regQuery = regQuery.eq('members.gender', userScope.gender);
-            if (userScope.role === 'nirdeshak' && userScope.kshetraId) regQuery = regQuery.eq('members.mandals.kshetra_id', userScope.kshetraId);
-            else if (['sanchalak', 'nirikshak'].includes(userScope.role)) {
-              if (userScope.mandalIds && userScope.mandalIds.length > 0) regQuery = regQuery.in('members.mandal_id', userScope.mandalIds);
-              else {
+            // Filter by Gender if applicable
+            if (userScope.gender) {
+              regQuery = regQuery.eq('members.gender', userScope.gender);
+            }
+            
+            // 1. Kshetra Level Scope (Nirdeshak AND Project Admin)
+            if (['nirdeshak', 'project_admin'].includes(userScope.role) && userScope.kshetraId) {
+              regQuery = regQuery.eq('members.mandals.kshetra_id', userScope.kshetraId);
+            }
+            
+            // 2. Mandal Level Scope (Sanchalak, Nirikshak, Taker)
+            else if (['sanchalak', 'nirikshak', 'taker'].includes(userScope.role)) {
+              if (userScope.mandalIds && userScope.mandalIds.length > 0) {
+                 regQuery = regQuery.in('members.mandal_id', userScope.mandalIds);
+              } else {
                   if (isMounted) { setRawRegs([]); setPresentSet(new Set()); setLoading(false); }
                   return; 
               }

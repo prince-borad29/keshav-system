@@ -17,8 +17,10 @@ export default function MemberDirectory() {
   const isNirdeshak = role === 'nirdeshak';
   const isNirikshak = role === 'nirikshak';
   const isSanchalak = role === 'sanchalak';
+  const isProjectAdmin = role === 'project_admin';
 
-  const allowedRoles = ['admin', 'nirdeshak', 'nirikshak', 'sanchalak'];
+  // Include project_admin in allowed roles now
+  const allowedRoles = ['admin', 'nirdeshak', 'nirikshak', 'sanchalak', 'project_admin'];
   const isAuthorized = allowedRoles.includes(role);
 
   // -- STATE --
@@ -30,13 +32,14 @@ export default function MemberDirectory() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
-  const [refreshTrigger, setRefreshTrigger] = useState(0); // Forces re-fetch on edit
+  const [refreshTrigger, setRefreshTrigger] = useState(0); 
   const pageSize = 20;
   const observerTarget = useRef(null);
-  const isFetchingRef = useRef(false); // Prevents rapid double-fetching
+  const isFetchingRef = useRef(false); 
 
   // Permissions State
   const [allowedMandalIds, setAllowedMandalIds] = useState(null); 
+  const [assignedProjectIds, setAssignedProjectIds] = useState([]); // Specifically for Project Admins
   const [permsLoaded, setPermsLoaded] = useState(false);
 
   // Filters & Dropdowns
@@ -68,7 +71,7 @@ export default function MemberDirectory() {
           const { data } = await supabase.from('nirikshak_assignments').select('mandal_id').eq('nirikshak_id', profile.id);
           ids = data ? data.map(d => d.mandal_id) : [];
           if (ids.length === 0 && profile.assigned_mandal_id) ids = [profile.assigned_mandal_id];
-        } else if (isNirdeshak) {
+        } else if (isNirdeshak || isProjectAdmin) {
           let kId = profile.assigned_kshetra_id || profile.kshetra_id;
           if (!kId && profile.assigned_mandal_id) {
                const { data: mData } = await supabase.from('mandals').select('kshetra_id').eq('id', profile.assigned_mandal_id).single();
@@ -78,13 +81,20 @@ export default function MemberDirectory() {
               const { data } = await supabase.from('mandals').select('id').eq('kshetra_id', kId);
               ids = data ? data.map(m => m.id) : [];
           }
+          
+          // If they are a Project Admin, fetch their assigned projects to filter the directory!
+          if (isProjectAdmin) {
+             const { data: pData } = await supabase.from('project_assignments').select('project_id').eq('user_id', profile.id);
+             setAssignedProjectIds(pData ? pData.map(p => p.project_id) : []);
+          }
         }
       } catch (err) { console.error("Permission Load Error", err); }
+      
       setAllowedMandalIds(ids);
       setPermsLoaded(true);
     };
     loadPermissions();
-  }, [profile, isAuthorized]);
+  }, [profile, isAuthorized, isSanchalak, isNirikshak, isNirdeshak, isProjectAdmin]);
 
   // 2. FETCH DROPDOWNS
   useEffect(() => {
@@ -124,31 +134,48 @@ export default function MemberDirectory() {
     setHasMore(true);
   }, [debouncedSearch, filters]);
 
-  // 5. FETCH MEMBERS (Optimized Lazy Load & Stable Sort)
+  // 5. FETCH MEMBERS
   const fetchMembers = useCallback(async () => {
     if (!permsLoaded || !isAuthorized || isFetchingRef.current) return;
     
-    isFetchingRef.current = true; // Lock fetch to prevent duplicates
+    isFetchingRef.current = true;
     const isLoadMore = page > 0;
     
     if (isLoadMore) setLoadingMore(true);
     else setLoading(true);
 
     try {
-      let query = supabase.from('members').select(`
-          *,
-          mandals!inner ( id, name, kshetra_id, kshetras ( id, name ) ),
-          member_tags ( tag_id, tags (name, color) )
-      `, { count: 'exact' });
+      // Clean query string builder to dynamically include/exclude tags and registrations
+      let selectString = `
+        *,
+        mandals!inner ( id, name, kshetra_id, kshetras ( id, name ) ),
+        ${filters.tag_id ? 'member_tags!inner' : 'member_tags'} ( tag_id, tags (name, color) )
+      `;
 
-      // Scope
+      // 💡 THE TRICK: If Project Admin, force an Inner Join on Registrations!
+      if (isProjectAdmin) {
+        selectString += `, project_registrations!inner ( project_id )`;
+      }
+
+      let query = supabase.from('members').select(selectString, { count: 'exact' });
+
+      // Scope Constraints
       if (!isAdmin && profile?.gender) query = query.eq('gender', profile.gender);
       if (!isAdmin && allowedMandalIds !== null) {
          if (allowedMandalIds.length > 0) query = query.in('mandal_id', allowedMandalIds);
          else { setMembers([]); setTotalCount(0); setLoading(false); isFetchingRef.current = false; return; }
       }
 
-      // Filters
+      // 💡 Project Admin Constraints (Only show members registered to THEIR projects)
+      if (isProjectAdmin) {
+        if (assignedProjectIds.length > 0) {
+           query = query.in('project_registrations.project_id', assignedProjectIds);
+        } else {
+           setMembers([]); setTotalCount(0); setLoading(false); isFetchingRef.current = false; return;
+        }
+      }
+
+      // Form Filters
       if (debouncedSearch) query = query.or(`name.ilike.%${debouncedSearch}%,surname.ilike.%${debouncedSearch}%,internal_code.ilike.%${debouncedSearch}%,mobile.ilike.%${debouncedSearch}%`);
       if (isAdmin && filters.kshetra_id) query = query.eq('mandals.kshetra_id', filters.kshetra_id);
       if (filters.mandal_id) {
@@ -156,20 +183,11 @@ export default function MemberDirectory() {
       }
       if (filters.designation) query = query.eq('designation', filters.designation);
       if (isAdmin && filters.gender) query = query.eq('gender', filters.gender);
-
-      if (filters.tag_id) {
-        query = supabase.from('members').select(`*, mandals!inner ( id, name, kshetra_id, kshetras ( id, name ) ), member_tags!inner ( tag_id, tags (name, color) )`, { count: 'exact' }).eq('member_tags.tag_id', filters.tag_id);
-        if (!isAdmin && profile?.gender) query = query.eq('gender', profile.gender);
-        if (!isAdmin && allowedMandalIds !== null) query = query.in('mandal_id', allowedMandalIds);
-        if (debouncedSearch) query = query.or(`name.ilike.%${debouncedSearch}%,surname.ilike.%${debouncedSearch}%`);
-        if (filters.mandal_id) query = query.eq('mandal_id', filters.mandal_id);
-        if (filters.designation) query = query.eq('designation', filters.designation);
-      }
+      if (filters.tag_id) query = query.eq('member_tags.tag_id', filters.tag_id);
 
       const from = page * pageSize;
       const to = from + pageSize - 1;
       
-      // ✅ FIXED SORTING: Enforce strict A-Z sort by Name, then Surname, then ID (to prevent shifting)
       const { data, count, error } = await query
         .range(from, to)
         .order('name', { ascending: true })
@@ -179,7 +197,6 @@ export default function MemberDirectory() {
       if (error) throw error;
       
       if (isLoadMore) {
-        // ✅ FIXED DUPLICATES: Safely merge arrays ensuring no duplicate IDs exist
         setMembers(prev => {
           const existingIds = new Set(prev.map(m => m.id));
           const uniqueNewMembers = (data || []).filter(m => !existingIds.has(m.id));
@@ -196,9 +213,9 @@ export default function MemberDirectory() {
     } finally { 
       setLoading(false); 
       setLoadingMore(false);
-      isFetchingRef.current = false; // Release lock
+      isFetchingRef.current = false; 
     }
-  }, [permsLoaded, isAuthorized, page, debouncedSearch, filters, isAdmin, profile?.gender, allowedMandalIds, refreshTrigger]);
+  }, [permsLoaded, isAuthorized, page, debouncedSearch, filters, isAdmin, profile?.gender, allowedMandalIds, refreshTrigger, isProjectAdmin, assignedProjectIds]);
 
   useEffect(() => { fetchMembers(); }, [fetchMembers]);
 
@@ -221,7 +238,6 @@ export default function MemberDirectory() {
   const handleEdit = (m) => { setSelectedMember(m); setIsFormOpen(true); };
   const handleView = (m) => { setViewMember(m); };
   
-  // ✅ FIXED REFRESH ON SAVE: Instantly resets to page 0 and updates list safely
   const handleSaveSuccess = () => {
     setPage(0);
     setHasMore(true);
@@ -248,12 +264,16 @@ export default function MemberDirectory() {
       {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-            <h1 className="text-2xl font-bold text-slate-800">Member Directory</h1>
+            <h1 className="text-2xl font-bold text-slate-800">
+              {isProjectAdmin ? "Registered Database" : "Member Directory"}
+            </h1>
             <p className="text-slate-500 text-sm">
-                Total Members: {totalCount}
-                {!isAdmin && <span className="ml-2 text-xs bg-slate-100 px-2 py-0.5 rounded text-slate-500 font-medium capitalize">View: {role}</span>}
+                Total Members: {totalCount} {isProjectAdmin && <span className="text-xs text-indigo-500 font-bold ml-1">(Project Scope)</span>}
+                {!isAdmin && !isProjectAdmin && <span className="ml-2 text-xs bg-slate-100 px-2 py-0.5 rounded text-slate-500 font-medium capitalize">View: {role}</span>}
             </p>
         </div>
+        
+        {/* Project Admins cannot register/create new members from here */}
         {(isAdmin || isSanchalak || isNirikshak) && (
             <Button icon={Plus} onClick={handleCreate}>Register Member</Button>
         )}
@@ -275,11 +295,11 @@ export default function MemberDirectory() {
                 </select>
             </div>
           )}
-          {(isAdmin || isNirdeshak || isNirikshak) && (
+          {(isAdmin || isNirdeshak || isNirikshak || isProjectAdmin) && (
             <div className="relative">
                 <MapPin className="absolute left-2.5 top-2.5 text-slate-400" size={14}/>
                 <select className="input-filter pl-8" value={filters.mandal_id} onChange={(e) => setFilters({...filters, mandal_id: e.target.value})}>
-                    <option value="">{isNirikshak ? "My Mandals" : (isNirdeshak ? "Mandals in Region" : "All Mandals")}</option>
+                    <option value="">{isNirikshak ? "My Mandals" : (isNirdeshak || isProjectAdmin ? "Mandals in Region" : "All Mandals")}</option>
                     {mandals.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                 </select>
             </div>
@@ -325,7 +345,7 @@ export default function MemberDirectory() {
                 </td>
                 <td className="p-4">
                     <div className="font-medium text-slate-700">{m.mandals?.name}</div>
-                    {(isAdmin || isNirdeshak) && <div className="text-[10px] text-slate-400">{m.mandals?.kshetras?.name}</div>}
+                    {(isAdmin || isNirdeshak || isProjectAdmin) && <div className="text-[10px] text-slate-400">{m.mandals?.kshetras?.name}</div>}
                 </td>
                 <td className="p-4"><Badge variant="outline">{m.designation}</Badge></td>
                 <td className="p-4 text-right flex justify-end gap-2">

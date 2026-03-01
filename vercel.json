@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/supabase-api/:match*",
+      "destination": "https://YOUR_SUPABASE_URL.supabase.co/:match*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

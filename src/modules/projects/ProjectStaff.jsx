@@ -7,11 +7,14 @@ import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
 import Modal from "../../components/Modal";
 
-// Background Auth Creation
-const GHOST_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+// --- GHOST CLIENT FOR BACKGROUND AUTH CREATION ---
+const isProduction = import.meta.env.PROD;
+const GHOST_SUPABASE_URL = isProduction 
+  ? `${window.location.origin}/supabase-api` 
+  : import.meta.env.VITE_SUPABASE_URL;
+
 const GHOST_SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const ghostClient = createClient(GHOST_SUPABASE_URL, GHOST_SUPABASE_KEY, { auth: { persistSession: false, autoRefreshToken: false }});
-
 export default function ProjectStaff({ project, isAdmin, isCoordinator }) {
   const queryClient = useQueryClient();
   const canManageStaff = isAdmin || isCoordinator;

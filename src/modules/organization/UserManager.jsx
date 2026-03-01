@@ -7,10 +7,13 @@ import Badge from "../../components/ui/Badge";
 import Modal from "../../components/Modal";
 
 // --- GHOST CLIENT FOR BACKGROUND AUTH CREATION ---
-const GHOST_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const isProduction = import.meta.env.PROD;
+const GHOST_SUPABASE_URL = isProduction 
+  ? `${window.location.origin}/supabase-api` 
+  : import.meta.env.VITE_SUPABASE_URL;
+
 const GHOST_SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const ghostClient = createClient(GHOST_SUPABASE_URL, GHOST_SUPABASE_KEY, { auth: { persistSession: false, autoRefreshToken: false }});
-
 const initialSystemForm = { role: "sanchalak", email: "", password: "", full_name: "", member_id: null, gender: "Yuvak", assigned_mandal_id: "", assigned_mandals: [] };
 const initialProjectForm = { user_id: null, member_id: null, member_data: null, project_id: "", role: "volunteer", scope_type: "Mandal", selected_kshetra: "", scope_mandal_ids: [] };
 

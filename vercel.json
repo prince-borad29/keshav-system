@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/supabase-api/:match*",
-      "destination": "https://YOUR_SUPABASE_URL.supabase.co/:match*"
+      "destination": "https://bdtjcwvmefjieauhnmdi.supabase.co/:match*"
     },
     {
       "source": "/(.*)",

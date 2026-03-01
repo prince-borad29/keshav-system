@@ -21,11 +21,13 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
     return ["admin", "taker", "project_admin"].includes((profile?.role || "").toLowerCase());
   }, [profile?.role, propReadOnly]);
 
-  // --- STATE ---
+// --- STATE ---
   const [initLoading, setInitLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
+  const [pendingRequests, setPendingRequests] = useState(0); // 👈 Changed to number
   const [error, setError] = useState(null);
+  
+  const isSyncing = pendingRequests > 0; // 👈 Derived boolean for the UI dot
 
   const [event, setEvent] = useState(null);
   const [project, setProject] = useState(null);
@@ -164,6 +166,7 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
         if (payload.eventType === "INSERT" && payload.new.event_id === eventId) {
           attendanceIdMap.current.set(payload.new.id, payload.new.member_id);
           setPresentMap((prevMap) => {
+            if (prevMap.has(payload.new.member_id)) return prevMap; // 👈 Ignore if optimistic update already handled it
             const nextMap = new Map(prevMap);
             nextMap.set(payload.new.member_id, payload.new.scanned_at || new Date().toISOString());
             return nextMap;
@@ -174,6 +177,7 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
           if (memberIdToUnmark) {
             attendanceIdMap.current.delete(deletedRowId);
             setPresentMap((prevMap) => {
+              if (!prevMap.has(memberIdToUnmark)) return prevMap; // 👈 Ignore if optimistic update already handled it
               const nextMap = new Map(prevMap);
               nextMap.delete(memberIdToUnmark);
               return nextMap;
@@ -185,12 +189,14 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
     return () => { supabase.removeChannel(attendanceChannel); };
   }, [eventId, profile?.id]);
 
-  // --- 4. ACTIONS & FILTERING ---
+// --- 4. ACTIONS & FILTERING ---
   const markAttendance = async (memberId) => {
     if (!canMark) return;
+
     const now = new Date().toISOString();
     const isPresent = presentMap.has(memberId);
 
+    // 1. OPTIMISTIC UI: Update instantly so the user never waits
     setPresentMap((prev) => {
       const next = new Map(prev);
       if (isPresent) next.delete(memberId);
@@ -198,20 +204,37 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
       return next;
     });
 
-    setSyncing(true);
+    // 2. Add to background queue (turns dot yellow)
+    setPendingRequests((prev) => prev + 1);
+
     try {
-      if (isPresent) await supabase.from("attendance").delete().eq("event_id", eventId).eq("member_id", memberId);
-      else await supabase.from("attendance").insert({ event_id: eventId, member_id: memberId });
+      // 3. Create a strict 5-second stopwatch (Prevents infinite hanging)
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Network Timeout")), 5000)
+      );
+
+      // 4. Create the database request (Using ultra-fast .eq chaining)
+      const dbPromise = isPresent
+        ? supabase.from("attendance").delete().eq("event_id", eventId).eq("member_id", memberId)
+        : supabase.from("attendance").insert({ event_id: eventId, member_id: memberId });
+
+      // 5. RACE: Whichever finishes first wins. No more hanging forever!
+      const { error } = await Promise.race([dbPromise, timeoutPromise]);
+
+      if (error) throw error;
+
     } catch (err) {
+      // 6. If it fails or times out, silently revert the checkmark
       setPresentMap((prev) => {
         const next = new Map(prev);
         if (isPresent) next.set(memberId, now);
         else next.delete(memberId);
         return next;
       });
-      alert("Sync failed. Check connection.");
+      console.warn("Sync failed, reverted UI:", err.message);
     } finally {
-      setSyncing(false);
+      // 7. GUARANTEED to remove from queue and turn dot green
+      setPendingRequests((prev) => Math.max(0, prev - 1));
     }
   };
 
@@ -262,7 +285,7 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
           <div className="flex-1 min-w-0">
             <h1 className="font-semibold text-gray-900 text-base truncate">{event.name}</h1>
             <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
-              <span className={`w-2 h-2 rounded-full ${syncing ? "bg-amber-400 animate-pulse" : "bg-emerald-500"}`}></span>
+              <span className={`w-2 h-2 rounded-full ${isSyncing ? "bg-amber-400 animate-pulse" : "bg-emerald-500"}`}></span>
               <span className="font-inter font-semibold text-gray-700">{presentCount}</span> / {members.length} Present
               {!canMark && <Badge className="ml-1"><Lock size={10} className="inline mr-1" strokeWidth={2}/> View Only</Badge>}
             </div>

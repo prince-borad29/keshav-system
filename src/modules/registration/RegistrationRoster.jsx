@@ -133,7 +133,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     if (inView && hasNextPage && !isFetchingNextPage) fetchNextPage();
   }, [inView, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  // 4. Safe Mutation (No 400 Bad Request API Bug)
+  // 4. Safe Mutation
   const toggleRegistration = useMutation({
     mutationFn: async (member) => {
       if (member.is_registered) {
@@ -194,29 +194,36 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
   return (
     <div className="space-y-4 pb-10">
       
-      {/* Sticky Header */}
-      <div className="bg-white p-4 rounded-md border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)] sticky top-0 z-10 space-y-3">
-        <div className="flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <button onClick={onBack} className="p-1.5 -ml-1.5 rounded-md hover:bg-gray-100 text-gray-500 transition-colors"><ArrowLeft size={18} strokeWidth={2}/></button>
-            <h3 className="font-bold text-gray-900 text-base flex items-center gap-2">
-               {canRegister ? <User size={16} strokeWidth={2} className="text-[#5C3030]"/> : <Database size={16} strokeWidth={2} className="text-gray-500"/>}
-               {canRegister ? "Registration Roster" : "Database View"}
+      {/* Sticky Header - Made Mobile Responsive */}
+      <div className="bg-white p-3 sm:p-4 rounded-md border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)] sticky top-0 z-10 space-y-3">
+        
+        {/* Top Row: Wraps gracefully on small screens */}
+        <div className="flex flex-wrap items-center justify-between gap-y-2 gap-x-4">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button onClick={onBack} className="p-1.5 -ml-1.5 rounded-md hover:bg-gray-100 text-gray-500 transition-colors shrink-0">
+              <ArrowLeft size={18} strokeWidth={2}/>
+            </button>
+            <h3 className="font-bold text-gray-900 text-sm sm:text-base flex items-center gap-1.5 truncate">
+               {canRegister ? <User size={16} strokeWidth={2} className="text-[#5C3030] hidden sm:block"/> : <Database size={16} strokeWidth={2} className="text-gray-500 hidden sm:block"/>}
+               <span className="truncate">{canRegister ? "Registration Roster" : "Database View"}</span>
             </h3>
             
-            {!canRegister && <Badge>View Only</Badge>}
-            {canRegister && !project.registration_open && <Badge variant="danger"><Lock size={10} className="inline mr-1"/> Closed</Badge>}
+            {/* Badges hide on very small screens to save space, visible on sm+ */}
+            {!canRegister && <Badge className="shrink-0 hidden sm:inline-flex">View Only</Badge>}
+            {canRegister && !project.registration_open && <Badge variant="danger" className="shrink-0 hidden sm:inline-flex"><Lock size={10} className="inline mr-1"/> Closed</Badge>}
           </div>
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-50 px-2.5 py-1 rounded-md border border-gray-200">
-             <Users size={14} strokeWidth={1.5}/> <span className="font-inter">{registeredCount || 0}</span> Registered
+          
+          <div className="flex items-center justify-end gap-1.5 text-[10px] sm:text-xs font-semibold text-gray-600 bg-gray-50 px-2 sm:px-2.5 py-1 rounded-md border border-gray-200 shrink-0">
+             <Users size={14} strokeWidth={1.5}/> <span className="font-inter">{registeredCount || 0}</span> <span className="hidden sm:inline">Registered</span>
           </div>
         </div>
         
+        {/* Search Bar */}
         <div className="relative">
           <Search className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
           <input 
             className={`${inputClass} pl-9`}
-            placeholder={canRegister ? "Search by name or ID to register..." : "Search registered members..."}
+            placeholder={canRegister ? "Search name or ID..." : "Search registered..."}
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
           />
@@ -237,27 +244,33 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
               const isProcessing = (toggleRegistration.isPending || toggleRegistration.isLoading) && toggleRegistration.variables?.id === m.id;
 
               return (
-                <div key={m.id} className="flex items-center justify-between p-3 hover:bg-gray-50 transition-colors">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className={`w-9 h-9 rounded-md flex items-center justify-center font-inter font-bold text-xs shrink-0 border ${m.is_registered ? 'bg-gray-100 text-gray-900 border-gray-200' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>
+                <div key={m.id} className="flex items-center justify-between p-3 sm:p-4 gap-2 hover:bg-gray-50 transition-colors">
+                  
+                  {/* Left Side: Avatar and Info */}
+                  <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                    <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-md flex items-center justify-center font-inter font-bold text-[10px] sm:text-xs shrink-0 border ${m.is_registered ? 'bg-gray-100 text-gray-900 border-gray-200' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>
                       {m.name[0]}{m.surname[0]}
                     </div>
-                    <div className="min-w-0">
-                      <div className="font-semibold text-gray-900 text-sm flex items-center gap-2 truncate">
-                        {m.name} {m.surname}
-                        {m.external_qr && <Badge variant="success">Badge Linked</Badge>}
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-gray-900 text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 truncate">
+                        <span className="truncate">{m.name} {m.surname}</span>
+                        {m.external_qr && <Badge variant="success" className="shrink-0 hidden sm:inline-flex">Linked</Badge>}
                       </div>
-                      <div className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold flex items-center gap-1.5 mt-0.5 truncate">
-                        <MapPin size={10} strokeWidth={2}/> {m.mandals?.name} <span className="font-inter lowercase tracking-normal mx-1 text-gray-300">•</span> <span className="font-inter">{m.internal_code}</span>
+                      <div className="text-[9px] sm:text-[10px] text-gray-500 uppercase tracking-widest font-semibold flex items-center gap-1 sm:gap-1.5 mt-0.5 truncate">
+                        <MapPin size={10} strokeWidth={2} className="shrink-0 hidden sm:block"/> 
+                        <span className="truncate">{m.mandals?.name}</span> 
+                        <span className="font-inter lowercase tracking-normal mx-0.5 sm:mx-1 text-gray-300 shrink-0">•</span> 
+                        <span className="font-inter shrink-0">{m.internal_code}</span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  {/* Right Side: Actions */}
+                  <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                     {/* QR Mapping (Admin Only) */}
                     {m.is_registered && isAdmin && (
-                      <button onClick={() => setScanningMember(m)} className={`p-1.5 rounded-md border transition-colors ${m.external_qr ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-gray-200 text-gray-400 hover:text-gray-900 hover:bg-gray-50'}`}>
-                        <QrCode size={16} strokeWidth={1.5} />
+                      <button onClick={() => setScanningMember(m)} className={`p-1.5 sm:p-2 rounded-md border transition-colors ${m.external_qr ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-gray-200 text-gray-400 hover:text-gray-900 hover:bg-gray-50'}`}>
+                        <QrCode size={14} className="sm:w-4 sm:h-4" strokeWidth={1.5} />
                       </button>
                     )}
 
@@ -268,14 +281,14 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
                         variant={m.is_registered ? "secondary" : "primary"}
                         onClick={() => toggleRegistration.mutate(m)}
                         disabled={isProcessing}
-                        className="w-24 text-xs !px-0" 
+                        className="w-16 sm:w-24 text-[10px] sm:text-xs !px-0 h-7 sm:h-8" 
                       >
-                        {isProcessing ? <Loader2 size={14} className="animate-spin text-gray-400"/> : m.is_registered ? "Remove" : <span className="flex items-center gap-1"><Plus size={14}/> Add</span>}
+                        {isProcessing ? <Loader2 size={12} className="animate-spin text-gray-400"/> : m.is_registered ? "Remove" : <span className="flex items-center gap-1"><Plus size={12} className="hidden sm:block"/> Add</span>}
                       </Button>
                     ) : (
                       m.is_registered 
-                        ? <Badge variant="primary" className="flex items-center gap-1"><Check size={10}/> Added</Badge> 
-                        : <span className="text-xs text-gray-400 font-medium px-2">Unregistered</span>
+                        ? <Badge variant="primary" className="flex items-center gap-1"><Check size={10} className="hidden sm:block"/> Added</Badge> 
+                        : <span className="text-[10px] sm:text-xs text-gray-400 font-medium px-1 sm:px-2">Unregistered</span>
                     )}
                   </div>
                 </div>

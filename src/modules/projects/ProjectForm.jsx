@@ -2,17 +2,20 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "../../lib/supabase";
 import Button from "../../components/ui/Button";
 import Modal from "../../components/Modal";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2, Tag } from "lucide-react";
 
 const INITIAL_FORM = { name: '', description: '', type: 'Standard', allowed_gender: 'Both', is_active: true, registration_open: true };
 
 export default function ProjectForm({ isOpen, onClose, onSuccess, initialData = null }) {
   const [formData, setFormData] = useState(INITIAL_FORM);
+  const [selectedTags, setSelectedTags] = useState([]);
+  const [availableTags, setAvailableTags] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (isOpen) {
+      fetchTags();
       if (initialData) {
         setFormData({
           name: initialData.name,
@@ -22,11 +25,30 @@ export default function ProjectForm({ isOpen, onClose, onSuccess, initialData = 
           is_active: initialData.is_active ?? true,
           registration_open: initialData.registration_open ?? true
         });
+        fetchProjectTags(initialData.id);
       } else {
         setFormData(INITIAL_FORM);
+        setSelectedTags([]);
       }
     }
   }, [isOpen, initialData]);
+
+  // Fetch all tags that have 'Project' in their category array
+  const fetchTags = async () => {
+    const { data } = await supabase
+       .from("tags")
+       .select("id, name")
+       .contains("category", ["Project"]) 
+       .order("name");
+       
+    if (data) setAvailableTags(data);
+  };
+
+  // Fetch currently assigned tags for this specific project
+  const fetchProjectTags = async (projectId) => {
+    const { data } = await supabase.from("project_tags").select("tag_id").eq("project_id", projectId);
+    if (data) setSelectedTags(data.map((t) => t.tag_id));
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -36,13 +58,24 @@ export default function ProjectForm({ isOpen, onClose, onSuccess, initialData = 
     try {
       if (!formData.name) throw new Error("Project Name is required.");
       const payload = { ...formData };
+      let projectId = initialData?.id;
       
-      if (initialData?.id) {
-        const { error } = await supabase.from("projects").update(payload).eq("id", initialData.id);
-        if (error) throw error;
+      if (projectId) {
+        const { error: updateError } = await supabase.from("projects").update(payload).eq("id", projectId);
+        if (updateError) throw new Error(updateError.message);
       } else {
-        const { error } = await supabase.from("projects").insert(payload);
-        if (error) throw error;
+        const { data, error: insertError } = await supabase.from("projects").insert(payload).select().single();
+        if (insertError) throw new Error(insertError.message);
+        projectId = data.id;
+      }
+
+      // Handle Tag Syncing
+      if (projectId) {
+        await supabase.from("project_tags").delete().eq("project_id", projectId);
+        if (selectedTags.length > 0) {
+          const tagInserts = selectedTags.map((tagId) => ({ project_id: projectId, tag_id: tagId }));
+          await supabase.from("project_tags").insert(tagInserts);
+        }
       }
 
       onSuccess();
@@ -94,7 +127,39 @@ export default function ProjectForm({ isOpen, onClose, onSuccess, initialData = 
           <textarea className={inputClass} rows="3" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} placeholder="Brief details..." />
         </div>
 
-        <div className="space-y-3 pt-2 border-t border-gray-100">
+        <div className="h-px bg-gray-100 w-full" />
+
+        {/* RESTORED: Project Tags UI */}
+        <div>
+          <label className={labelClass}>Project Tags</label>
+          <div className="flex flex-wrap gap-2">
+            {availableTags.length === 0 ? (
+              <span className="text-xs text-gray-400 italic">No tags available. Admins can create them in Settings.</span>
+            ) : (
+              availableTags.map((tag) => {
+                const isSelected = selectedTags.includes(tag.id);
+                return (
+                  <button 
+                    key={tag.id} 
+                    type="button" 
+                    onClick={() => setSelectedTags((prev) => isSelected ? prev.filter((id) => id !== tag.id) : [...prev, tag.id])} 
+                    className={`px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider border transition-colors ${
+                      isSelected 
+                        ? "bg-gray-800 text-white border-gray-800" 
+                        : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
+                    }`}
+                  >
+                    {tag.name}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        <div className="h-px bg-gray-100 w-full" />
+
+        <div className="space-y-3">
           <label className="flex items-center gap-3">
             <input type="checkbox" className="w-4 h-4 rounded border-gray-300 text-[#5C3030] focus:ring-[#5C3030]" checked={formData.is_active} onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })} />
             <span className="text-sm font-semibold text-gray-900">Project is Active (Visible on Dashboard)</span>

@@ -104,7 +104,7 @@ export default function ProjectDashboard() {
                   {p.type === 'Restricted' && <Badge variant="danger"><Lock size={10} className="inline mr-1"/> Restricted</Badge>}
                 </div>
                 {isAdmin && (
-                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex gap-1 transition-opacity">
                     <button onClick={(e) => { e.stopPropagation(); setSelectedProject(p); setIsFormOpen(true); }} className="p-1 text-gray-400 hover:text-[#5C3030] hover:bg-gray-50 rounded"><Edit3 size={14} strokeWidth={1.5} /></button>
                     <button onClick={(e) => { e.stopPropagation(); if(confirm("Delete project?")) deleteMutation.mutate(p.id); }} className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"><Trash2 size={14} strokeWidth={1.5} /></button>
                   </div>

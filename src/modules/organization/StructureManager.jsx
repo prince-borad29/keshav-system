@@ -75,7 +75,7 @@ export default function StructureManager() {
               <div className="flex items-center gap-2 font-bold text-gray-900 text-sm">
                 <Map size={16} className="text-[#5C3030]" strokeWidth={2}/> {kshetra.name}
               </div>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex gap-1 transition-opacity">
                 <button onClick={() => openModal('EDIT_KSHETRA', kshetra)} className="p-1.5 text-gray-400 hover:text-[#5C3030] rounded-md transition-colors"><Edit3 size={14}/></button>
                 <button onClick={() => { if(confirm('Delete Kshetra?')) deleteItem.mutate({ table: 'kshetras', id: kshetra.id }) }} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md transition-colors"><Trash2 size={14}/></button>
               </div>
@@ -88,7 +88,7 @@ export default function StructureManager() {
                   <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
                     <MapPin size={14} className="text-gray-400" strokeWidth={1.5} /> {mandal.name}
                   </div>
-                  <div className="flex gap-1 opacity-0 group-hover/mandal:opacity-100 transition-opacity">
+                  <div className="flex gap-1 transition-opacity">
                     <button onClick={() => openModal('EDIT_MANDAL', mandal)} className="p-1 text-gray-400 hover:text-[#5C3030] rounded-md"><Edit3 size={14}/></button>
                     <button onClick={() => { if(confirm('Delete Mandal?')) deleteItem.mutate({ table: 'mandals', id: mandal.id }) }} className="p-1 text-gray-400 hover:text-red-600 rounded-md"><Trash2 size={14}/></button>
                   </div>

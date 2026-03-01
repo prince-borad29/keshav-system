@@ -163,7 +163,7 @@ export default function TagManager() {
                   <div className={`px-2 py-1 rounded-md text-xs font-bold border ${colorTheme.class} truncate`}>
                     {tag.name}
                   </div>
-                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                  <div className="flex gap-1 transition-opacity shrink-0">
                     <button onClick={() => startEdit(tag)} className="p-1 text-gray-400 hover:text-[#5C3030] rounded-md transition-colors"><Edit3 size={14}/></button>
                     <button onClick={() => { if(confirm("Delete tag?")) deleteMutation.mutate(tag.id); }} className="p-1 text-gray-400 hover:text-red-600 rounded-md transition-colors">
                       {deleteMutation.isPending && deleteMutation.variables === tag.id ? <Loader2 size={14} className="animate-spin"/> : <Trash2 size={14}/>}

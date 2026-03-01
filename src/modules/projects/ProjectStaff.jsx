@@ -190,7 +190,7 @@ export default function ProjectStaff({ project, isAdmin, isCoordinator }) {
                   </td>
                   <td className="px-4 py-3 text-right">
                     {canManageStaff && (
-                      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex justify-end gap-1 transition-opacity">
                         <button onClick={() => { setProjectRole(a.role); setDataScope(a.data_scope || "Mandal"); setEditingAssignment(a); }} className="p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"><Edit3 size={16} strokeWidth={1.5} /></button>
                         <button onClick={() => handleRemove(a.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"><Trash2 size={16} strokeWidth={1.5} /></button>
                       </div>

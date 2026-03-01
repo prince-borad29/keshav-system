@@ -2,7 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import { 
   LayoutDashboard, Users, Calendar, FileText, 
-  Settings, LogOut, Shield, X, Layers, ClipboardList, Database 
+  Settings, LogOut, Shield, X, Layers, ClipboardList, Database, 
+  Folder,
+  FilePlus,
+  QrCode,
+  Tags
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -85,15 +89,14 @@ export default function Sidebar({ isOpen, onClose }) {
           
           {isAdmin && (
             <>
-              <div className="pt-5 pb-2 px-3 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Management</div>
+              {/* <div className="pt-5 pb-2 px-3 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Management</div> */}
+              <NavItem to="/projects" icon={Folder} label="Projects" />
+              <NavItem to="/registration" icon={FilePlus} label="Registration" />
+              <NavItem to="/directory" icon={Database} label="Database" />
+              <NavItem to="/reports" icon={QrCode} label="QR Code" />
               <NavItem to="/organization" icon={Shield} label="Organization" />
-              <NavItem to="/directory" icon={Users} label="Directory" />
-              
-              <div className="pt-5 pb-2 px-3 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Modules</div>
-              <NavItem to="/projects" icon={Layers} label="Projects" />
-              <NavItem to="/registration" icon={ClipboardList} label="Registration" />
-              <NavItem to="/reports" icon={FileText} label="Reports" />
-              <NavItem to="/settings" icon={Settings} label="Settings" />
+              <NavItem to="/settings" icon={Tags} label="Tags" />
+              {/* <div className="pt-5 pb-2 px-3 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Modules</div> */}
             </>
           )}
 

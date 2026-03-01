@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Loader2, User, Plus, MapPin, Lock, ArrowLeft, Users, QrCode, Database } from 'lucide-react';
+import { Search, Loader2, User, Plus, MapPin, Lock, ArrowLeft, Users, QrCode, Database, Check } from 'lucide-react';
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useInView } from 'react-intersection-observer';
 import { supabase } from '../../lib/supabase';
@@ -20,11 +20,13 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
   const role = (profile?.role || '').toLowerCase();
   const isGlobal = role === 'admin';
 
+  // Debounce search
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchTerm), 300);
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
+  // 1. Fetch Scope (Preserving your exact logic)
   const { data: scopeData } = useQuery({
     queryKey: ['registration-scope', project.id, profile?.id],
     queryFn: async () => {
@@ -43,22 +45,22 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         if (profile.assigned_mandal_id) ids.push(profile.assigned_mandal_id);
         canRegister = true;
       } 
-      else if (role === 'nirdeshak') {
+      else if (role === 'nirdeshak' || role === 'project_admin') {
         let kId = profile.assigned_kshetra_id || profile.kshetra_id;
+        if (!kId && profile.assigned_mandal_id) {
+          const { data } = await supabase.from('mandals').select('kshetra_id').eq('id', profile.assigned_mandal_id).single();
+          if (data) kId = data.kshetra_id;
+        }
         if (kId) {
           const { data } = await supabase.from('mandals').select('id').eq('kshetra_id', kId);
           ids = data?.map(m => m.id) || [];
         }
-        canRegister = true;
-      } 
-      else if (role === 'project_admin') {
-        const { data: assignment } = await supabase.from('project_assignments').select('role').eq('project_id', project.id).eq('user_id', profile.id).maybeSingle();
-        canRegister = assignment?.role === 'Coordinator';
-        
-        let kId = profile.assigned_kshetra_id || profile.kshetra_id;
-        if (kId) {
-          const { data } = await supabase.from('mandals').select('id').eq('kshetra_id', kId);
-          ids = data?.map(m => m.id) || [];
+
+        if (role === 'project_admin') {
+          const { data: assignment } = await supabase.from('project_assignments').select('role').eq('project_id', project.id).eq('user_id', profile.id).maybeSingle();
+          canRegister = assignment?.role === 'Coordinator';
+        } else {
+          canRegister = true; // Nirdeshak can register
         }
       }
       return { ids, canRegister };
@@ -66,6 +68,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     enabled: !!profile
   });
 
+  // 2. Fetch Summary Count
   const { data: registeredCount } = useQuery({
     queryKey: ['registration-count', project.id, scopeData?.ids],
     queryFn: async () => {
@@ -79,6 +82,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     refetchInterval: 5000 
   });
 
+  // 3. Infinite Query for Roster List
   const { 
     data: membersPages, 
     fetchNextPage, 
@@ -87,7 +91,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     isLoading: isMembersLoading 
   } = useInfiniteQuery({
     queryKey: ['registration-list', project.id, scopeData, debouncedSearch],
-    queryFn: async ({ pageParam = 0 }) => { // 👈 NO ABORT SIGNAL HERE
+    queryFn: async ({ pageParam = 0 }) => {
       if (!scopeData) return { data: [] };
       if (!isGlobal && scopeData.ids.length === 0) return { data: [] };
 
@@ -129,15 +133,15 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     if (inView && hasNextPage && !isFetchingNextPage) fetchNextPage();
   }, [inView, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  // Safe Mutation
+  // 4. Safe Mutation (No 400 Bad Request API Bug)
   const toggleRegistration = useMutation({
     mutationFn: async (member) => {
       if (member.is_registered) {
         const { error } = await supabase.from('project_registrations').delete().match({ project_id: project.id, member_id: member.id });
-        if (error) throw error; 
+        if (error) throw error;
       } else {
         const { error } = await supabase.from('project_registrations').insert({ project_id: project.id, member_id: member.id, registered_by: profile.id });
-        if (error) throw error; 
+        if (error) throw error;
       }
     },
     onMutate: async (member) => {
@@ -189,20 +193,22 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
 
   return (
     <div className="space-y-4 pb-10">
+      
+      {/* Sticky Header */}
       <div className="bg-white p-4 rounded-md border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)] sticky top-0 z-10 space-y-3">
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-2">
             <button onClick={onBack} className="p-1.5 -ml-1.5 rounded-md hover:bg-gray-100 text-gray-500 transition-colors"><ArrowLeft size={18} strokeWidth={2}/></button>
             <h3 className="font-bold text-gray-900 text-base flex items-center gap-2">
                {canRegister ? <User size={16} strokeWidth={2} className="text-[#5C3030]"/> : <Database size={16} strokeWidth={2} className="text-gray-500"/>}
-               {canRegister ? "Registration Roster" : "Registered Database"}
+               {canRegister ? "Registration Roster" : "Database View"}
             </h3>
             
             {!canRegister && <Badge>View Only</Badge>}
             {canRegister && !project.registration_open && <Badge variant="danger"><Lock size={10} className="inline mr-1"/> Closed</Badge>}
           </div>
           <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-50 px-2.5 py-1 rounded-md border border-gray-200">
-             <Users size={14} strokeWidth={1.5}/> {registeredCount || 0} Registered
+             <Users size={14} strokeWidth={1.5}/> <span className="font-inter">{registeredCount || 0}</span> Registered
           </div>
         </div>
         
@@ -210,13 +216,14 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           <Search className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
           <input 
             className={`${inputClass} pl-9`}
-            placeholder={canRegister ? "Search by name or ID..." : "Search registered members..."}
+            placeholder={canRegister ? "Search by name or ID to register..." : "Search registered members..."}
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
           />
         </div>
       </div>
 
+      {/* Member List */}
       <div className="space-y-2">
         {isMembersLoading && members.length === 0 ? (
           <div className="py-12 text-center text-gray-400 text-sm"><Loader2 className="animate-spin inline mr-2" size={16}/> Loading records...</div>
@@ -240,19 +247,21 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
                         {m.name} {m.surname}
                         {m.external_qr && <Badge variant="success">Badge Linked</Badge>}
                       </div>
-                      <div className="text-[10px] text-gray-500 flex items-center gap-1 mt-0.5 uppercase tracking-widest font-semibold truncate">
-                        <MapPin size={10} strokeWidth={2}/> {m.mandals?.name} <span className="font-inter lowercase tracking-normal mx-1">•</span> <span className="font-inter">{m.internal_code}</span>
+                      <div className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold flex items-center gap-1.5 mt-0.5 truncate">
+                        <MapPin size={10} strokeWidth={2}/> {m.mandals?.name} <span className="font-inter lowercase tracking-normal mx-1 text-gray-300">•</span> <span className="font-inter">{m.internal_code}</span>
                       </div>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
+                    {/* QR Mapping (Admin Only) */}
                     {m.is_registered && isAdmin && (
                       <button onClick={() => setScanningMember(m)} className={`p-1.5 rounded-md border transition-colors ${m.external_qr ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-gray-200 text-gray-400 hover:text-gray-900 hover:bg-gray-50'}`}>
                         <QrCode size={16} strokeWidth={1.5} />
                       </button>
                     )}
 
+                    {/* Action Toggle */}
                     {canRegister && project.registration_open ? (
                       <Button
                         size="sm"
@@ -261,11 +270,11 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
                         disabled={isProcessing}
                         className="w-24 text-xs !px-0" 
                       >
-                        {isProcessing ? <Loader2 size={14} className="animate-spin text-gray-400"/> : m.is_registered ? "Remove" : "Add"}
+                        {isProcessing ? <Loader2 size={14} className="animate-spin text-gray-400"/> : m.is_registered ? "Remove" : <span className="flex items-center gap-1"><Plus size={14}/> Add</span>}
                       </Button>
                     ) : (
                       m.is_registered 
-                        ? <Badge variant="primary">Registered</Badge> 
+                        ? <Badge variant="primary" className="flex items-center gap-1"><Check size={10}/> Added</Badge> 
                         : <span className="text-xs text-gray-400 font-medium px-2">Unregistered</span>
                     )}
                   </div>
@@ -275,6 +284,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           </div>
         )}
         
+        {/* Intersection Observer Trigger */}
         {members.length > 0 && (
           <div ref={loadMoreRef} className="py-4 text-center text-[10px] uppercase font-semibold tracking-widest text-gray-400">
              {isFetchingNextPage ? <Loader2 className="animate-spin inline" size={14}/> : hasNextPage ? 'Scroll for more' : 'End of records'}

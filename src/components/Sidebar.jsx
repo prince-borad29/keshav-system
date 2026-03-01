@@ -10,13 +10,11 @@ import { supabase } from '../lib/supabase';
 export default function Sidebar({ isOpen, onClose }) {
   const { profile } = useAuth();
   
-  // Clean role definitions for the new architecture
   const role = profile?.role;
   const isAdmin = role === 'admin';
   const isRegional = ['nirdeshak', 'nirikshak', 'sanchalak'].includes(role);
   const isProjectOnly = ['project_admin', 'taker'].includes(role);
 
-  // Check if Project Admin is specifically a Coordinator
   const [isCoordinator, setIsCoordinator] = useState(false);
 
   useEffect(() => {
@@ -26,7 +24,6 @@ export default function Sidebar({ isOpen, onClose }) {
         .select('role')
         .eq('user_id', profile.id)
         .then(({ data }) => {
-          // If they have AT LEAST one Coordinator assignment, they get the Registration tab
           if (data && data.some(a => a.role === 'Coordinator')) {
             setIsCoordinator(true);
           }
@@ -36,124 +33,111 @@ export default function Sidebar({ isOpen, onClose }) {
 
   const handleLogout = async () => {
     try {
-      // 1. Tell the server to invalidate the session first
       await supabase.auth.signOut();
-      
-      // 2. Clear everything - be aggressive to ensure no "ghost" sessions remain
       localStorage.clear(); 
       sessionStorage.clear();
-
-      // 3. Force a hard reload to the login page
-      // This kills all running JavaScript processes and AbortControllers
       window.location.replace('/login'); 
     } catch (error) {
-      console.error("Logout failed, forcing redirect:", error);
       window.location.replace('/login');
     }
   };
 
-  const NavItem = ({ to, icon: Icon, label, onClick }) => (
+  const NavItem = ({ to, icon: Icon, label }) => (
     <NavLink 
       to={to} 
-      onClick={onClick}
+      onClick={onClose}
       className={({ isActive }) => 
-        `flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all font-medium text-sm ${
+        `flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors font-medium text-sm ${
           isActive 
-            ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 font-bold' 
-            : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+            ? 'bg-[#5C3030] text-white' 
+            : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
         }`
       }
     >
-      {({ isActive }) => (
-        <>
-          <Icon size={20} className={isActive ? 'text-white' : 'text-slate-400'} />
-          <span>{label}</span>
-        </>
-      )}
+      <Icon size={18} strokeWidth={1.5} />
+      <span>{label}</span>
     </NavLink>
   );
 
   return (
     <>
       <div 
-        className={`fixed inset-0 bg-slate-900/50 z-40 transition-opacity duration-300 lg:hidden ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+        className={`fixed inset-0 bg-gray-900/60 z-40 transition-opacity duration-200 lg:hidden ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         onClick={onClose}
       />
 
-      <div className={`fixed top-0 left-0 h-full w-72 bg-white border-r border-slate-100 z-50 transform transition-transform duration-300 ease-in-out flex flex-col shadow-2xl lg:shadow-none lg:w-64 lg:translate-x-0 ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`fixed top-0 left-0 h-full w-64 bg-white border-r border-gray-200 z-50 flex flex-col transition-transform duration-200 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         
-        <div className="p-6 flex justify-between items-center">
+        <div className="px-5 py-6 flex justify-between items-center border-b border-gray-100">
           <div>
-            <h1 className="text-2xl font-bold text-indigo-600 tracking-tight">Project Keshav</h1>
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">
+            <h1 className="text-xl font-bold text-gray-900 tracking-tight">Keshav</h1>
+            <p className="text-[10px] text-gray-500 font-semibold uppercase tracking-widest mt-1">
               {isAdmin ? 'Global Admin' : role?.replace('_', ' ') || 'Portal'}
             </p>
           </div>
-          <button onClick={onClose} className="p-2 bg-slate-50 rounded-lg text-slate-500 lg:hidden hover:bg-red-50 hover:text-red-500">
-            <X size={20} />
+          <button onClick={onClose} className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-md lg:hidden">
+            <X size={18} strokeWidth={1.5} />
           </button>
         </div>
 
-        <nav className="flex-1 px-4 space-y-2 overflow-y-auto py-4">
-          <NavItem to="/" icon={LayoutDashboard} label="Dashboard" onClick={onClose} />
+        <nav className="flex-1 px-3 py-5 space-y-1 overflow-y-auto">
+          <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />
           
           {isAdmin && (
             <>
-              <div className="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Management</div>
-              <NavItem to="/organization" icon={Shield} label="Organization" onClick={onClose} />
-              <NavItem to="/directory" icon={Users} label="Database" onClick={onClose} />
+              <div className="pt-5 pb-2 px-3 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Management</div>
+              <NavItem to="/organization" icon={Shield} label="Organization" />
+              <NavItem to="/directory" icon={Users} label="Directory" />
               
-              <div className="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Modules</div>
-              <NavItem to="/projects" icon={Layers} label="Projects & Events" onClick={onClose} />
-              <NavItem to="/registration" icon={ClipboardList} label="Registration" onClick={onClose} />
-              <NavItem to="/reports" icon={FileText} label="Reports" onClick={onClose} />
-              <NavItem to="/settings" icon={Settings} label="Settings" onClick={onClose} />
+              <div className="pt-5 pb-2 px-3 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Modules</div>
+              <NavItem to="/projects" icon={Layers} label="Projects" />
+              <NavItem to="/registration" icon={ClipboardList} label="Registration" />
+              <NavItem to="/reports" icon={FileText} label="Reports" />
+              <NavItem to="/settings" icon={Settings} label="Settings" />
             </>
           )}
 
           {isRegional && (
             <>
-              <div className="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Operational</div>
-              <NavItem to="/directory" icon={Users} label="My Mandal" onClick={onClose} />
-              <NavItem to="/projects" icon={Calendar} label="Projects & Events" onClick={onClose} />
-              <NavItem to="/registration" icon={ClipboardList} label="Registration" onClick={onClose} />
+              <div className="pt-5 pb-2 px-3 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Workspace</div>
+              <NavItem to="/directory" icon={Users} label="My Mandal" />
+              <NavItem to="/projects" icon={Calendar} label="Projects" />
+              <NavItem to="/registration" icon={ClipboardList} label="Registration" />
             </>
           )}
 
           {isProjectOnly && (
             <>
-              <div className="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">My Assignments</div>
-              <NavItem to="/projects" icon={Calendar} label="My Projects" onClick={onClose} />
-              
+              <div className="pt-5 pb-2 px-3 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Assignments</div>
+              <NavItem to="/projects" icon={Calendar} label="My Projects" />
               {role === 'project_admin' && isCoordinator && (
-                <NavItem to="/registration" icon={ClipboardList} label="Registration" onClick={onClose} />
+                <NavItem to="/registration" icon={ClipboardList} label="Registration" />
               )}
-              
               {role === 'project_admin' && !isCoordinator && (
-                <NavItem to="/directory" icon={Database} label="Database" onClick={onClose} />
+                <NavItem to="/directory" icon={Database} label="Database" />
               )}
             </>
           )}
         </nav>
 
-        <div className="p-4 border-t border-slate-100 bg-slate-50/50">
-          <div className="flex items-center gap-3 mb-4 px-2">
-            <div className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center text-indigo-600 font-bold shadow-sm text-sm uppercase">
+        <div className="p-4 border-t border-gray-100 bg-gray-50/50">
+          <div className="flex items-center gap-3 mb-4 px-1">
+            <div className="w-9 h-9 rounded-md bg-white border border-gray-200 flex items-center justify-center text-[#5C3030] font-inter font-bold text-xs uppercase shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
               {profile?.full_name?.[0] || 'U'}
             </div>
-            <div className="overflow-hidden">
-              <p className="text-sm font-bold text-slate-800 truncate">{profile?.full_name || 'User'}</p>
-              <p className="text-xs text-slate-500 capitalize">{role?.replace('_', ' ')}</p>
+            <div className="overflow-hidden flex-1">
+              <p className="text-sm font-semibold text-gray-900 truncate">{profile?.full_name || 'User'}</p>
+              <p className="text-xs text-gray-500 capitalize truncate">{role?.replace('_', ' ')}</p>
             </div>
           </div>
           <button 
             onClick={handleLogout}
-            className="w-full cursor-pointer flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all text-xs font-bold shadow-sm cursor-pointer"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors text-sm font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.02)]"
           >
-            <LogOut size={16} /> Logout
+            <LogOut size={16} strokeWidth={1.5} /> Logout
           </button>
         </div>
-      </div>
+      </aside>
     </>
   );
 }

@@ -2,22 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { 
   Loader2, Search, Archive, Check, ChevronDown, 
-  X, Download, MapPin, Users, Filter, Briefcase 
+  Download, MapPin, Users, Filter, Briefcase 
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import QRCode from 'qrcode';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import Button from '../../components/ui/Button';
+import Badge from '../../components/ui/Badge';
 
 export default function IDCardGenerator() {
-  // --- STATE & LOGIC (Unchanged) ---
-  const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [statusText, setStatusText] = useState('');
   
-  // UI State for the Custom Role Dropdown
   const [isRolesOpen, setIsRolesOpen] = useState(false);
 
   const [kshetras, setKshetras] = useState([]);
@@ -108,7 +106,7 @@ export default function IDCardGenerator() {
 
       const { data: members, error } = await query;
       if (error) throw error;
-      if (!members || members.length === 0) throw new Error("No members found.");
+      if (!members || members.length === 0) throw new Error("No members found matching filters.");
 
       const zip = new JSZip();
       for (let i = 0; i < members.length; i++) {
@@ -141,20 +139,20 @@ export default function IDCardGenerator() {
     }));
   };
 
+  const inputClass = "w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030] transition-colors appearance-none";
+  const labelClass = "block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5";
+
   return (
-    <div className="min-h-screen bg-white">
+    <div className="space-y-6">
       
-      {/* 1. Header & Search - Full Width */}
-      <div className="bg-slate-900 text-white pt-6 pb-8 px-5 rounded-b-[2rem] shadow-2xl shadow-indigo-200/40 mb-6">
-        <h1 className="text-2xl font-bold mb-1">ID Card Studio</h1>
-        <p className="text-slate-400 text-sm mb-6">Manage and generate identity cards</p>
-        
-        {/* Search Input */}
+      {/* 1. Single Card Search */}
+      <div className="bg-white p-5 rounded-md border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+        <h2 className="text-sm font-semibold text-gray-900 mb-4">Quick Search & Generate</h2>
         <div className="relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+          <Search className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
           <input 
-            className="w-full h-14 pl-12 pr-4 bg-white/10 border border-white/10 rounded-2xl text-white placeholder:text-slate-400 focus:outline-none focus:bg-slate-800 focus:ring-2 focus:ring-indigo-500 transition-all text-base" 
-            placeholder="Search member..." 
+            className={`${inputClass} pl-9`}
+            placeholder="Search by name, ID, or mobile to generate single card..." 
             value={searchTerm} 
             onChange={e => setSearchTerm(e.target.value)} 
           />
@@ -162,162 +160,136 @@ export default function IDCardGenerator() {
 
         {/* Search Results Dropdown */}
         {searchResults.length > 0 && (
-          <div className="mt-4 bg-white rounded-xl shadow-xl overflow-hidden text-slate-800 animate-in fade-in slide-in-from-top-2">
+          <div className="mt-2 border border-gray-200 rounded-md bg-white overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.08)] absolute z-20 w-full max-w-[calc(100%-48px)] sm:max-w-[calc(1000px-48px)]">
             {searchResults.map((m, i) => (
-              <div key={m.id} className={`flex justify-between items-center p-4 ${i !== searchResults.length - 1 ? 'border-b border-slate-100' : ''}`}>
-                 <div>
-                    <div className="font-bold">{m.name} {m.surname}</div>
-                    <div className="text-xs text-slate-500">{m.designation} • {m.mandals?.name}</div>
+              <div key={m.id} className={`flex justify-between items-center p-3 hover:bg-gray-50 transition-colors ${i !== searchResults.length - 1 ? 'border-b border-gray-100' : ''}`}>
+                 <div className="min-w-0">
+                    <div className="font-semibold text-sm text-gray-900 truncate">{m.name} {m.surname}</div>
+                    <div className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold flex items-center gap-1.5 mt-0.5 truncate">
+                      <span>{m.designation}</span> <span className="font-inter lowercase tracking-normal text-gray-300">•</span> <span>{m.mandals?.name}</span>
+                    </div>
                  </div>
-                 <button onClick={async () => saveAs(await createCardBlob(m), `${m.name}_ID.pdf`)} className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
-                    <Download size={18}/>
-                 </button>
+                 <Button size="sm" variant="secondary" icon={Download} onClick={async () => saveAs(await createCardBlob(m), `${m.name}_ID.pdf`)}>
+                    Download
+                 </Button>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* 2. Bulk Filter Section - Full Width & Clean */}
-      <div className="px-1 pb-32"> {/* pb-32 for sticky button space */}
-        <div className="flex items-center gap-2 mb-6">
-          <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600">
-            <Filter size={20} />
-          </div>
-          <h2 className="text-lg font-bold text-slate-800">Bulk Generation</h2>
+      {/* 2. Bulk Generation Configuration */}
+      <div className="bg-white p-5 rounded-md border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+        <div className="flex items-center gap-2 mb-5 pb-3 border-b border-gray-100">
+          <Filter size={16} className="text-gray-400" strokeWidth={1.5} />
+          <h2 className="text-sm font-semibold text-gray-900">Bulk Generation Filters</h2>
         </div>
 
-        <div className="space-y-5">
-          
-          {/* Kshetra Dropdown (Native) */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-500 uppercase ml-1">Kshetra</label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-6">
+          {/* Kshetra */}
+          <div>
+            <label className={labelClass}>Kshetra</label>
             <div className="relative">
-              <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <select 
-                className="w-full h-14 pl-11 pr-10 bg-slate-50 border border-slate-200 rounded-xl text-base text-slate-700 font-medium appearance-none focus:ring-2 focus:ring-indigo-500 outline-none"
-                value={filters.kshetra_id} 
-                onChange={e => setFilters({...filters, kshetra_id: e.target.value, mandal_id: ''})}
-              >
+              <MapPin className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
+              <select className={`${inputClass} pl-9 pr-9`} value={filters.kshetra_id} onChange={e => setFilters({...filters, kshetra_id: e.target.value, mandal_id: ''})}>
                 <option value="">All Kshetras</option>
                 {kshetras.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
               </select>
-              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={20}/>
+              <ChevronDown className="absolute right-3 top-2.5 text-gray-400 pointer-events-none" size={16} strokeWidth={1.5}/>
             </div>
           </div>
 
-          {/* Mandal Dropdown (Native) */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-500 uppercase ml-1">Mandal</label>
+          {/* Mandal */}
+          <div>
+            <label className={labelClass}>Mandal</label>
             <div className="relative">
-              <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <select 
-                className="w-full h-14 pl-11 pr-10 bg-slate-50 border border-slate-200 rounded-xl text-base text-slate-700 font-medium appearance-none focus:ring-2 focus:ring-indigo-500 outline-none"
-                value={filters.mandal_id} 
-                onChange={e => setFilters({...filters, mandal_id: e.target.value})}
-              >
+              <MapPin className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
+              <select className={`${inputClass} pl-9 pr-9`} value={filters.mandal_id} onChange={e => setFilters({...filters, mandal_id: e.target.value})}>
                 <option value="">All Mandals</option>
                 {mandals.filter(m => !filters.kshetra_id || m.kshetra_id === filters.kshetra_id).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
               </select>
-              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={20}/>
+              <ChevronDown className="absolute right-3 top-2.5 text-gray-400 pointer-events-none" size={16} strokeWidth={1.5}/>
             </div>
           </div>
 
-          {/* Gender Dropdown (Native) */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-500 uppercase ml-1">Gender</label>
+          {/* Gender */}
+          <div>
+            <label className={labelClass}>Gender Scope</label>
             <div className="relative">
-              <Users className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <select 
-                className="w-full h-14 pl-11 pr-10 bg-slate-50 border border-slate-200 rounded-xl text-base text-slate-700 font-medium appearance-none focus:ring-2 focus:ring-indigo-500 outline-none"
-                value={filters.gender} 
-                onChange={e => setFilters({...filters, gender: e.target.value})}
-              >
+              <Users className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
+              <select className={`${inputClass} pl-9 pr-9`} value={filters.gender} onChange={e => setFilters({...filters, gender: e.target.value})}>
                 <option value="">Both (Combined)</option>
                 {genderOptions.map(g => <option key={g} value={g}>{g}</option>)}
               </select>
-              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={20}/>
+              <ChevronDown className="absolute right-3 top-2.5 text-gray-400 pointer-events-none" size={16} strokeWidth={1.5}/>
             </div>
           </div>
 
-          {/* ROLES CUSTOM ACCORDION DROPDOWN */}
-          {/* This solves the mobile clipping issue by pushing content down instead of floating over */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-500 uppercase ml-1">Designations</label>
-            <div className="border border-slate-200 rounded-xl bg-slate-50 overflow-hidden transition-all">
-              
-              {/* The "Trigger" Button - Looks like an Input */}
+          {/* Designations (Custom Accordion Styled as Native) */}
+          <div>
+            <label className={labelClass}>Designations</label>
+            <div className="border border-gray-200 rounded-md bg-white overflow-hidden transition-all">
               <button 
                 onClick={() => setIsRolesOpen(!isRolesOpen)}
-                className="w-full h-14 px-4 flex items-center justify-between bg-white"
+                className="w-full px-3 py-2 flex items-center justify-between hover:bg-gray-50 transition-colors"
               >
-                <div className="flex items-center gap-3 text-slate-700 font-medium">
-                  <Briefcase size={18} className="text-slate-400"/>
-                  {filters.designations.length === 0 
-                    ? "All Roles" 
-                    : `${filters.designations.length} Selected`}
+                <div className="flex items-center gap-2 text-gray-700 text-sm">
+                  <Briefcase size={16} className="text-gray-400" strokeWidth={1.5}/>
+                  {filters.designations.length === 0 ? "All Roles" : <span className="font-semibold text-[#5C3030]">{filters.designations.length} Selected</span>}
                 </div>
-                <ChevronDown className={`text-slate-400 transition-transform ${isRolesOpen ? 'rotate-180' : ''}`} size={20}/>
+                <ChevronDown className={`text-gray-400 transition-transform ${isRolesOpen ? 'rotate-180' : ''}`} size={16} strokeWidth={1.5}/>
               </button>
 
-              {/* The "Dropdown" Content - Accordion Style */}
               {isRolesOpen && (
-                <div className="p-2 bg-slate-50 border-t border-slate-100 space-y-1 animate-in slide-in-from-top-2">
+                <div className="p-2 bg-gray-50 border-t border-gray-200 space-y-1 animate-in slide-in-from-top-2">
                   {designationOptions.map(role => {
                     const isSelected = filters.designations.includes(role);
                     return (
                       <div 
                         key={role} 
                         onClick={() => toggleDesignation(role)}
-                        className={`flex items-center justify-between p-3 rounded-lg cursor-pointer active:scale-[0.98] transition-all ${isSelected ? 'bg-indigo-100 text-indigo-700' : 'bg-white text-slate-600'}`}
+                        className={`flex items-center justify-between p-2 rounded-md cursor-pointer transition-colors ${isSelected ? 'bg-[#5C3030]/10 text-[#5C3030]' : 'text-gray-600 hover:bg-gray-100'}`}
                       >
-                        <span className="text-sm font-semibold">{role}</span>
-                        {isSelected && <Check size={16} className="text-indigo-600"/>}
+                        <span className="text-xs font-semibold">{role}</span>
+                        {isSelected && <Check size={14} className="text-[#5C3030]" strokeWidth={2}/>}
                       </div>
                     )
                   })}
                   {filters.designations.length > 0 && (
-                     <button onClick={() => { setFilters(p => ({...p, designations: []})); setIsRolesOpen(false); }} className="w-full py-3 text-sm text-red-500 font-bold">
-                        Clear Selection
+                     <button onClick={() => { setFilters(p => ({...p, designations: []})); setIsRolesOpen(false); }} className="w-full pt-2 pb-1 text-xs text-red-600 font-semibold hover:underline">
+                       Clear Selection
                      </button>
                   )}
                 </div>
               )}
             </div>
           </div>
-
         </div>
-      </div>
 
-      {/* 3. Sticky Bottom Button */}
-      <div className="fixed bottom-0 left-0 right-0 p-5 bg-white/90 backdrop-blur-md border-t border-slate-200 z-50">
-         {processing && (
-            <div className="mb-2 flex justify-between text-xs font-bold uppercase text-slate-500">
-               <span>{statusText}</span>
-               <span>{progress}%</span>
-            </div>
-         )}
-         <Button 
-            className={`w-full h-14 rounded-xl text-lg font-bold shadow-lg ${processing ? 'bg-slate-800' : 'bg-indigo-600'}`} 
-            onClick={handleBulkZip} 
-            disabled={processing}
-         >
-            {processing ? (
-               <div className="flex items-center gap-3">
-                  <Loader2 className="animate-spin" /> Processing
+        {/* Status / Export Button */}
+        <div className="pt-5 border-t border-gray-100">
+          {processing ? (
+             <div className="space-y-2">
+               <div className="flex justify-between text-[10px] font-semibold uppercase tracking-widest text-gray-500">
+                  <span>{statusText}</span>
+                  <span className="font-inter">{progress}%</span>
                </div>
-            ) : (
-               <div className="flex items-center gap-2">
-                  <Archive size={22} /> Generate ZIP Pack
+               <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                 <div className="h-full bg-[#5C3030] transition-all duration-300" style={{ width: `${progress}%` }} />
                </div>
-            )}
-         </Button>
-         {/* Integrated Progress Bar */}
-         {processing && (
-            <div className="absolute top-0 left-0 h-1 bg-indigo-600 transition-all duration-300" style={{ width: `${progress}%` }} />
-         )}
-      </div>
+             </div>
+          ) : (
+            <Button 
+              className="w-full shadow-md" 
+              onClick={handleBulkZip} 
+              disabled={processing}
+            >
+              <Archive size={16} strokeWidth={1.5} className="mr-2" /> Generate ZIP Bundle
+            </Button>
+          )}
+        </div>
 
+      </div>
     </div>
   );
 }

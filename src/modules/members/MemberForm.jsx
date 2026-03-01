@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Loader2, AlertTriangle, Tag, User, MapPin, Calendar, Briefcase } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import Button from '../../components/ui/Button';
+import Modal from '../../components/Modal';
 import { useAuth } from '../../contexts/AuthContext';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 
 const INITIAL_FORM = {
   name: '', father_name: '', surname: '', gender: 'Yuvak',
@@ -10,13 +11,9 @@ const INITIAL_FORM = {
   kshetra_id: '', mandal_id: '', internal_code: '', is_guest: false
 };
 
-const labelClasses = "block text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider";
-const inputClasses = "w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 outline-none text-sm text-slate-800 transition-all placeholder:text-slate-400";
-
 export default function MemberForm({ isOpen, onClose, onSuccess, initialData = null }) {
   const { profile } = useAuth();
   
-  // -- ROLES --
   const role = (profile?.role || '').toLowerCase();
   const isAdmin = role === 'admin';
   const isNirdeshak = role === 'nirdeshak';
@@ -28,23 +25,20 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
-  // Dropdowns
   const [kshetras, setKshetras] = useState([]);
   const [mandals, setMandals] = useState([]); 
   const [availableTags, setAvailableTags] = useState([]);
 
-  // -- 1. NON-BLOCKING INITIALIZATION --
   useEffect(() => {
     if (isOpen) {
-      // 1. Instantly populate the form text fields so UI doesn't lag
       if (initialData) {
         setFormData({
           ...initialData,
           kshetra_id: initialData.mandals?.kshetra_id || '', 
           dob: initialData.dob || '',
-          address: initialData.address || '',           // <-- Fixes textarea warning
-          father_name: initialData.father_name || '',   // <-- Safety for input
-          mobile: initialData.mobile || '',             // <-- Safety for input
+          address: initialData.address || '',            
+          father_name: initialData.father_name || '',   
+          mobile: initialData.mobile || '',             
         });
         fetchMemberTags(initialData.id);
       } else {
@@ -56,27 +50,21 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
         setFormData(defaults);
         setSelectedTags([]);
       }
-      
-      // 2. Load dropdowns silently in background
       fetchDropdowns();
     }
   }, [isOpen, initialData, profile]);
 
   const fetchDropdowns = async () => {
     try {
-      // Tags (✅ FIXED: Using .contains() for Array column)
       const { data: tData } = await supabase.from('tags').select('id, name').contains('category', ['Member']).order('name');
       if (tData) setAvailableTags(tData);
 
-      // Kshetras
       if (isAdmin) {
         const { data: kData } = await supabase.from('kshetras').select('id, name').order('name');
         if (kData) setKshetras(kData);
       }
 
-      // Mandals
       let mQuery = supabase.from('mandals').select('id, name, kshetra_id').order('name');
-
       if (isNirdeshak) {
          const kId = profile.assigned_kshetra_id || profile.kshetra_id;
          if (kId) mQuery = mQuery.eq('kshetra_id', kId);
@@ -85,7 +73,6 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
          const { data: assignments } = await supabase.from('nirikshak_assignments').select('mandal_id').eq('nirikshak_id', profile.id);
          const ids = assignments?.map(a => a.mandal_id) || [];
          if (profile.assigned_mandal_id) ids.push(profile.assigned_mandal_id);
-         
          if (ids.length > 0) mQuery = mQuery.in('id', ids);
          else mQuery = mQuery.eq('id', '00000000-0000-0000-0000-000000000000'); 
       }
@@ -96,18 +83,13 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
       const { data: mData } = await mQuery;
       if (mData) setMandals(mData);
     } catch (err) {
-      console.error("Dropdown Error:", err);
+      console.error(err);
     }
   };
 
   const fetchMemberTags = async (memberId) => {
     const { data } = await supabase.from('member_tags').select('tag_id').eq('member_id', memberId);
     if (data) setSelectedTags(data.map(t => t.tag_id));
-  };
-
-  // -- 2. HANDLERS --
-  const toggleTag = (tagId) => {
-    setSelectedTags(prev => prev.includes(tagId) ? prev.filter(id => id !== tagId) : [...prev, tagId]);
   };
 
   const handleSubmit = async (e) => {
@@ -139,7 +121,6 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
         memberId = data.id;
       }
 
-      // Handle Tags
       if (memberId) {
         await supabase.from('member_tags').delete().eq('member_id', memberId);
         if (selectedTags.length > 0) {
@@ -153,183 +134,115 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   };
 
-  const getDisplayMandals = () => {
-    if (isAdmin && formData.kshetra_id) {
-      return mandals.filter(m => m.kshetra_id === formData.kshetra_id);
-    }
-    return mandals;
-  };
-
-  if (!isOpen) return null;
+  const labelClass = "block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5";
+  const inputClass = "w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030] transition-colors placeholder:text-gray-400";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 backdrop-blur-sm sm:p-4 animate-in fade-in duration-200">
-      <div className="bg-white w-full max-w-3xl h-[95vh] sm:h-auto sm:max-h-[90vh] rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom-8 sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-200">
-        
-        {/* HEADER */}
-        <div className="flex justify-between items-center px-6 py-5 border-b border-slate-100 bg-white shrink-0">
-          <div>
-            <h2 className="text-xl font-bold text-slate-800">{initialData ? 'Edit Profile' : 'New Registration'}</h2>
-            <p className="text-xs text-slate-500 mt-1">Please fill in the details carefully.</p>
+    <Modal isOpen={isOpen} onClose={onClose} title={initialData ? 'Edit Profile' : 'New Registration'}>
+      <form id="member-form" onSubmit={handleSubmit} className="space-y-6">
+        {error && (
+          <div className="bg-red-50 text-red-700 p-3 rounded-md flex items-start gap-2 text-xs font-semibold border border-red-100">
+            <AlertTriangle size={14} className="shrink-0 mt-0.5"/> {error}
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600">
-            <X size={20} />
-          </button>
-        </div>
+        )}
 
-        {/* SCROLLABLE BODY */}
-        <div className="overflow-y-auto px-4 sm:px-8 py-6 flex-1 scroll-smooth">
-          <form id="member-form" onSubmit={handleSubmit} className="space-y-8 max-w-none">
-            {error && (
-              <div className="bg-red-50 text-red-700 p-4 rounded-xl flex items-start gap-3 text-sm border border-red-100 animate-in fade-in">
-                <AlertTriangle size={18} className="shrink-0 mt-0.5"/> 
-                <span>{error}</span>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2 sm:col-span-1">
+              <label className={labelClass}>First Name <span className="text-red-500">*</span></label>
+              <input required className={inputClass} placeholder="First Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <label className={labelClass}>Surname <span className="text-red-500">*</span></label>
+              <input required className={inputClass} placeholder="Last Name" value={formData.surname} onChange={e => setFormData({...formData, surname: e.target.value})} />
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <label className={labelClass}>Mobile Number</label>
+              <input type="tel" className={inputClass} placeholder="10-digit number" value={formData.mobile} onChange={e => setFormData({...formData, mobile: e.target.value})} />
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <label className={labelClass}>Date of Birth</label>
+              <input type="date" className={inputClass} value={formData.dob} onChange={e => setFormData({...formData, dob: e.target.value})} />
+            </div>
+          </div>
+          
+          <div className="h-px bg-gray-100 w-full" />
+
+          <div className="grid grid-cols-2 gap-4">
+            {isAdmin && (
+              <div className="col-span-2 sm:col-span-1">
+                <label className={labelClass}>Kshetra (Region)</label>
+                <select className={`${inputClass} appearance-none`} value={formData.kshetra_id} onChange={e => setFormData({...formData, kshetra_id: e.target.value, mandal_id: ''})}>
+                  <option value="">Select Kshetra...</option>
+                  {kshetras.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
+                </select>
               </div>
             )}
-
-            {/* SECTION 1: PERSONAL */}
-            <section>
-              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-widest mb-5 flex items-center gap-2">
-                <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg"><User size={14}/></div>
-                Personal Details
-              </h3>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 mb-5">
-                <div>
-                  <label className={labelClasses}>First Name <span className="text-red-500">*</span></label>
-                  <input required className={inputClasses} placeholder="First Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-                </div>
-                <div>
-                  <label className={labelClasses}>Father's Name</label>
-                  <input className={inputClasses} placeholder="Middle Name" value={formData.father_name} onChange={e => setFormData({...formData, father_name: e.target.value})} />
-                </div>
-                <div>
-                  <label className={labelClasses}>Surname <span className="text-red-500">*</span></label>
-                  <input required className={inputClasses} placeholder="Last Name" value={formData.surname} onChange={e => setFormData({...formData, surname: e.target.value})} />
-                </div>
+            {!isSanchalak && (
+              <div className="col-span-2 sm:col-span-1">
+                <label className={labelClass}>Mandal (Local) <span className="text-red-500">*</span></label>
+                <select required className={`${inputClass} appearance-none`} value={formData.mandal_id} onChange={e => setFormData({...formData, mandal_id: e.target.value})}>
+                  <option value="">Select Mandal...</option>
+                  {(isAdmin && formData.kshetra_id ? mandals.filter(m => m.kshetra_id === formData.kshetra_id) : mandals).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
               </div>
+            )}
+            <div className="col-span-2 sm:col-span-1">
+              <label className={labelClass}>Designation</label>
+              <select className={`${inputClass} appearance-none`} value={formData.designation} onChange={e => setFormData({...formData, designation: e.target.value})}>
+                {['Member', 'Nirdeshak', 'Nirikshak', 'Sanchalak', 'Sah Sanchalak', 'Sampark Karyakar', 'Utsahi Yuvak'].map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                <div>
-                  <label className={labelClasses}>Mobile Number</label>
-                  <input type="tel" className={inputClasses} placeholder="10-digit number" value={formData.mobile} onChange={e => setFormData({...formData, mobile: e.target.value})} />
-                </div>
-                <div>
-                  <label className={labelClasses}>Date of Birth</label>
-                  <div className="relative">
-                    <Calendar size={18} className="absolute left-3.5 top-3 text-slate-400 pointer-events-none"/>
-                    <input type="date" className={`${inputClasses} pl-11`} value={formData.dob} onChange={e => setFormData({...formData, dob: e.target.value})} />
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <div className="h-px bg-slate-100 w-full" />
-
-            {/* SECTION 2: ORGANIZATION */}
-            <section>
-              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-widest mb-5 flex items-center gap-2">
-                <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg"><MapPin size={14}/></div>
-                Organization Scope
-              </h3>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                {isAdmin && (
-                  <div>
-                    <label className={labelClasses}>Kshetra (Region)</label>
-                    <select className={inputClasses} value={formData.kshetra_id} onChange={e => setFormData({...formData, kshetra_id: e.target.value, mandal_id: ''})}>
-                      <option value="">Select Kshetra...</option>
-                      {kshetras.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
-                    </select>
-                  </div>
-                )}
-
-                {!isSanchalak && (
-                  <div>
-                    <label className={labelClasses}>Mandal (Local) <span className="text-red-500">*</span></label>
-                    <select required className={inputClasses} value={formData.mandal_id} onChange={e => setFormData({...formData, mandal_id: e.target.value})}>
-                      <option value="">Select Mandal...</option>
-                      {getDisplayMandals().map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                    </select>
-                  </div>
-                )}
-
-                <div>
-                  <label className={labelClasses}>Designation</label>
-                  <div className="relative">
-                    <Briefcase size={18} className="absolute left-3.5 top-3 text-slate-400 pointer-events-none"/>
-                    <select className={`${inputClasses} pl-11`} value={formData.designation} onChange={e => setFormData({...formData, designation: e.target.value})}>
-                      {['Member', 'Nirdeshak', 'Nirikshak', 'Sanchalak', 'Sah Sanchalak', 'Sampark Karyakar', 'Utsahi Yuvak'].map(d => <option key={d} value={d}>{d}</option>)}
-                    </select>
-                  </div>
-                </div>
-
-                {isAdmin ? (
-                  <div>
-                    <label className={labelClasses}>Gender <span className="text-red-500">*</span></label>
-                    <div className="flex gap-3">
-                      {['Yuvak', 'Yuvati'].map(g => (
-                        <label key={g} className={`flex-1 text-center py-2.5 rounded-xl border cursor-pointer text-sm font-semibold transition-all ${formData.gender === g ? 'bg-indigo-50 border-indigo-500 text-indigo-700 ring-1 ring-indigo-500 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-white'}`}>
-                          <input type="radio" className="hidden" name="gender" checked={formData.gender === g} onChange={() => setFormData({...formData, gender: g})}/>
-                          {g}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                   <div className="hidden"><input type="hidden" value={formData.gender} /></div>
-                )}
-
-                <div className="sm:col-span-2">
-                   <label className={labelClasses}>Address</label>
-                   <textarea className={inputClasses} rows="2" placeholder="Street, Area, City..." value={formData.address || ''} onChange={e => setFormData({...formData, address: e.target.value})} />
-                </div>
-              </div>
-            </section>
-
-            <div className="h-px bg-slate-100 w-full" />
-
-            {/* SECTION 3: TAGS */}
-            <section>
-              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2">
-                <div className="p-1.5 bg-amber-50 text-amber-600 rounded-lg"><Tag size={14}/></div>
-                Skills & Tags
-              </h3>
-              <div className="flex flex-wrap gap-2.5 p-5 bg-slate-50 rounded-2xl border border-slate-200 min-h-[80px]">
-                {availableTags.length === 0 ? (
-                  <span className="text-sm text-slate-500 italic w-full text-center py-2">Loading tags...</span>
-                ) : (
-                  availableTags.map(tag => (
+            {isAdmin && (
+              <div className="col-span-2 sm:col-span-1">
+                <label className={labelClass}>Gender <span className="text-red-500">*</span></label>
+                <div className="flex gap-2">
+                  {['Yuvak', 'Yuvati'].map(g => (
                     <button
-                      key={tag.id}
+                      key={g}
                       type="button"
-                      onClick={() => toggleTag(tag.id)}
-                      className={`px-4 py-2 rounded-full text-xs font-bold border transition-all active:scale-95 ${
-                        selectedTags.includes(tag.id)
-                          ? 'bg-slate-800 text-white border-slate-800 shadow-md shadow-slate-300'
-                          : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400 hover:bg-slate-50'
-                      }`}
+                      onClick={() => setFormData({...formData, gender: g})}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-md border transition-colors ${formData.gender === g ? 'bg-[#5C3030] text-white border-[#5C3030]' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'}`}
                     >
-                      {selectedTags.includes(tag.id) && <span className="mr-1.5 opacity-80">✓</span>}
-                      {tag.name}
+                      {g}
                     </button>
-                  ))
-                )}
+                  ))}
+                </div>
               </div>
-            </section>
+            )}
+          </div>
 
-          </form>
+          <div className="h-px bg-gray-100 w-full" />
+
+          <div>
+            <label className={labelClass}>Tags</label>
+            <div className="flex flex-wrap gap-2">
+              {availableTags.map(tag => (
+                <button
+                  key={tag.id}
+                  type="button"
+                  onClick={() => setSelectedTags(p => p.includes(tag.id) ? p.filter(id => id !== tag.id) : [...p, tag.id])}
+                  className={`px-2.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wider border transition-colors ${
+                    selectedTags.includes(tag.id)
+                      ? 'bg-gray-800 text-white border-gray-800'
+                      : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  {tag.name}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
-        {/* FOOTER */}
-        <div className="p-4 sm:px-6 sm:py-5 bg-white border-t border-slate-100 flex justify-end gap-3 shrink-0">
-          <Button variant="secondary" onClick={onClose} type="button" className="w-full sm:w-auto">Cancel</Button>
-          <Button type="submit" form="member-form" disabled={loading} className="w-full sm:w-auto">
-            {loading ? <Loader2 className="animate-spin" /> : <><Save size={18} className="mr-2"/> Save Details</>}
+        <div className="pt-4 border-t border-gray-100 flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose} type="button">Cancel</Button>
+          <Button type="submit" disabled={loading}>
+            {loading ? <Loader2 className="animate-spin" size={16}/> : 'Save Member'}
           </Button>
         </div>
-
-      </div>
-    </div>
+      </form>
+    </Modal>
   );
 }

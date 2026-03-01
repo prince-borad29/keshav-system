@@ -1,22 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Scanner } from '@yudiel/react-qr-scanner';
-import { X, CheckCircle, AlertTriangle, XCircle, Zap } from 'lucide-react';
+import { X, CheckCircle, AlertTriangle, XCircle, Activity } from 'lucide-react';
 
-// 1. Added eventName to the props
 export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
-  const [feedback, setFeedback] = useState(null); // null | { type: 'success'|'error'|'warning', msg: '' }
+  const [feedback, setFeedback] = useState(null); 
   const lastScannedCode = useRef(null);
   const isProcessing = useRef(false);
 
-  // Auto-clear feedback after 1.2s
   useEffect(() => {
     if (feedback) {
       const timer = setTimeout(() => {
         setFeedback(null);
-        // Auto-close scanner on success if we are mapping a badge
-        if (feedback.type === 'success' && eventName?.includes("Map Badge")) {
-            onClose();
-        }
+        if (feedback.type === 'success' && eventName?.includes("Map Badge")) onClose();
       }, 1200);
       return () => clearTimeout(timer);
     }
@@ -24,27 +19,19 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
 
   const handleScan = async (result) => {
     const rawCode = result[0]?.rawValue;
-    
-    // 1. BLOCK: If no code, or currently processing, or same code scanned recently
-    if (!rawCode || isProcessing.current) return;
-    if (rawCode === lastScannedCode.current) return;
+    if (!rawCode || isProcessing.current || rawCode === lastScannedCode.current) return;
 
-    // 2. LOCK
     isProcessing.current = true;
     lastScannedCode.current = rawCode;
 
-    // 3. PROCESS (Call Parent)
     const resultData = await onScan(rawCode);    
 
-    // 4. SHOW FEEDBACK (Camera keeps running in background)
     setFeedback({
-      // 2. Automatically determine type if not explicitly provided
       type: resultData.type || (resultData.success ? 'success' : 'error'), 
       msg: resultData.message,
       name: resultData.member?.name
     });
 
-    // 5. UNLOCK (Allow next scan after small delay)
     setTimeout(() => {
       isProcessing.current = false;
       setTimeout(() => { lastScannedCode.current = null; }, 1200); 
@@ -54,23 +41,22 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black flex flex-col">
-      {/* HEADER */}
-      <div className="absolute top-0 w-full p-4 flex justify-between items-center z-20 bg-gradient-to-b from-black/80 to-transparent">
-        <div className="text-white">
-           {/* 3. Display the eventName dynamically so Admin knows who they are mapping */}
-           <h2 className="font-bold text-lg">{eventName || "Turbo Scanner"}</h2>
-           <div className="flex items-center gap-1 text-xs text-green-400 font-medium animate-pulse">
-             <Zap size={12} fill="currentColor"/> Live Feed Active
+    <div className="fixed inset-0 z-[9999] bg-gray-950 flex flex-col animate-in fade-in duration-200">
+      {/* Sleek Dark Header */}
+      <div className="absolute top-0 w-full px-5 py-4 flex justify-between items-center z-20 bg-gradient-to-b from-black/60 to-transparent">
+        <div>
+           <h2 className="font-bold text-base text-white">{eventName || "Fast Scanner"}</h2>
+           <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-semibold tracking-widest uppercase mt-0.5">
+             <Activity size={12} strokeWidth={2}/> Active
            </div>
         </div>
-        <button onClick={onClose} className="p-3 bg-white/20 backdrop-blur-md rounded-full text-white hover:bg-white/30">
-          <X size={24} />
+        <button onClick={onClose} className="p-2 bg-white/10 hover:bg-white/20 border border-white/10 backdrop-blur-md rounded-md text-white transition-colors">
+          <X size={18} strokeWidth={2} />
         </button>
       </div>
 
-      {/* CAMERA */}
-      <div className="flex-1 relative bg-black">
+      {/* Viewport */}
+      <div className="flex-1 relative">
         <Scanner 
           onScan={handleScan}
           paused={false} 
@@ -80,32 +66,32 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
           styles={{ container: { height: '100%' }, video: { objectFit: 'cover' } }}
         />
 
-        {/* FEEDBACK OVERLAY (Appears ON TOP of video) */}
+        {/* Feedback Overlay - Flat and direct */}
         {feedback && (
-           <div className={`absolute inset-0 z-30 flex flex-col items-center justify-center backdrop-blur-sm animate-in fade-in duration-200 ${
-              feedback.type === 'success' ? 'bg-green-500/80' : 
-              feedback.type === 'warning' ? 'bg-orange-500/80' : 'bg-red-500/80'
+           <div className={`absolute inset-0 z-30 flex flex-col items-center justify-center backdrop-blur-sm animate-in fade-in duration-150 ${
+              feedback.type === 'success' ? 'bg-emerald-900/90' : 
+              feedback.type === 'warning' ? 'bg-amber-900/90' : 'bg-red-900/90'
            }`}>
-              <div className="bg-white p-4 rounded-full shadow-2xl mb-4 transform scale-125">
-                 {feedback.type === 'success' && <CheckCircle size={48} className="text-green-600" />}
-                 {feedback.type === 'warning' && <AlertTriangle size={48} className="text-orange-600" />}
-                 {feedback.type === 'error' && <XCircle size={48} className="text-red-600" />}
+              <div className="bg-white/10 border border-white/20 p-5 rounded-md shadow-[0_4px_20px_rgba(0,0,0,0.5)] mb-4 backdrop-blur-md">
+                 {feedback.type === 'success' && <CheckCircle size={40} className="text-emerald-400" strokeWidth={1.5} />}
+                 {feedback.type === 'warning' && <AlertTriangle size={40} className="text-amber-400" strokeWidth={1.5} />}
+                 {feedback.type === 'error' && <XCircle size={40} className="text-red-400" strokeWidth={1.5} />}
               </div>
-              <h2 className="text-3xl font-bold text-white text-center px-4 leading-tight mb-1">
+              <h2 className="text-2xl font-bold text-white text-center px-4 leading-tight mb-1">
                 {feedback.name || (feedback.type === 'success' ? "Success" : "Error")}
               </h2>
-              <p className="text-white/90 text-lg font-medium">{feedback.msg}</p>
+              <p className="text-white/70 text-sm font-medium">{feedback.msg}</p>
            </div>
         )}
         
-        {/* FINDER BOX (Only visible when no feedback) */}
+        {/* Finder Box - Sharp borders instead of rounded-2xl */}
         {!feedback && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-             <div className="w-64 h-64 border-2 border-white/50 rounded-2xl relative">
-                <div className="absolute top-0 left-0 w-8 h-8 border-l-4 border-t-4 border-white rounded-tl-lg"></div>
-                <div className="absolute top-0 right-0 w-8 h-8 border-r-4 border-t-4 border-white rounded-tr-lg"></div>
-                <div className="absolute bottom-0 left-0 w-8 h-8 border-l-4 border-b-4 border-white rounded-bl-lg"></div>
-                <div className="absolute bottom-0 right-0 w-8 h-8 border-r-4 border-b-4 border-white rounded-br-lg"></div>
+             <div className="w-64 h-64 border border-white/20 relative">
+                <div className="absolute top-0 left-0 w-6 h-6 border-l-2 border-t-2 border-white"></div>
+                <div className="absolute top-0 right-0 w-6 h-6 border-r-2 border-t-2 border-white"></div>
+                <div className="absolute bottom-0 left-0 w-6 h-6 border-l-2 border-b-2 border-white"></div>
+                <div className="absolute bottom-0 right-0 w-6 h-6 border-r-2 border-b-2 border-white"></div>
              </div>
           </div>
         )}

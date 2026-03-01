@@ -1,350 +1,152 @@
 import React, { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../../lib/supabase";
-import {
-  Loader2,
-  Shield,
-  Search,
-  UserPlus,
-  Trash2,
-  Edit,
-  Mail,
-  CheckCircle,
-  Copy,
-  Key,
-  UserCheck,
-  MapPin,
-  X,
-} from "lucide-react";
+import { Loader2, Shield, Search, UserPlus, Trash2, Edit3, Mail, MapPin, CheckCircle, Copy } from "lucide-react";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
+import Modal from "../../components/Modal";
 
-// --- GHOST CLIENT FOR BACKGROUND AUTH CREATION ---
+// Background Auth Creation
 const GHOST_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const GHOST_SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const ghostClient = createClient(GHOST_SUPABASE_URL, GHOST_SUPABASE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
+const ghostClient = createClient(GHOST_SUPABASE_URL, GHOST_SUPABASE_KEY, { auth: { persistSession: false, autoRefreshToken: false }});
 
 export default function ProjectStaff({ project, isAdmin, isCoordinator }) {
-  const [loading, setLoading] = useState(true);
-  const [assignments, setAssignments] = useState([]);
+  const queryClient = useQueryClient();
+  const canManageStaff = isAdmin || isCoordinator;
 
-  // Member Search State
   const [searchTerm, setSearchTerm] = useState("");
   const [memberResults, setMemberResults] = useState([]);
   const [searching, setSearching] = useState(false);
 
-  // Assignment Modal State (For ADDING)
-  const [selectedMember, setSelectedMember] = useState(null);
-  const [assigning, setAssigning] = useState(false);
+  const [selectedMember, setSelectedMember] = useState(null); // For Add Modal
+  const [editingAssignment, setEditingAssignment] = useState(null); // For Edit Modal
+  const [newCredentials, setNewCredentials] = useState(null); // For Success Modal
 
-  // Editing Modal State (For EDITING)
-  const [editingAssignment, setEditingAssignment] = useState(null);
-
-  // Shared Form State
   const [projectRole, setProjectRole] = useState("volunteer");
   const [dataScope, setDataScope] = useState("Mandal");
+  const [assigning, setAssigning] = useState(false);
 
-  // Credentials State
-  const [newCredentials, setNewCredentials] = useState(null);
-  const [copied, setCopied] = useState(false);
+  // 1. Fetch Staff
+  const { data: assignments, isLoading } = useQuery({
+    queryKey: ['project-staff', project.id],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("project_assignments").select(`id, role, data_scope, user_profiles(id, full_name, email, role)`).eq("project_id", project.id);
+      if (error) throw error;
+      return data || [];
+    }
+  });
 
-  // Helper variable for authorized managers
-const canManageStaff = isAdmin || isCoordinator;
+  // 2. Member Search Debounce
   useEffect(() => {
-    fetchAssignments();
-  }, [project.id]);
-
-  useEffect(() => {
-    let isMounted = true;
-    
-    const searchMembers = async () => {
-      if (!searchTerm) {
-         setSearchResults([]);
-         return;
-      }
-      setSearching(true); // Your loading state
-      
-      try {
-         // CRITICAL: Ensure you are using the standard `supabase` client for searching, NOT ghostClient!
-         const { data, error } = await supabase
-            .from('members')
-            .select('id, name, surname, internal_code')
-            .or(`name.ilike.%${searchTerm}%,surname.ilike.%${searchTerm}%`)
-            .limit(10);
-            
-         if (error) throw error;
-         
-         if (isMounted) setSearchResults(data);
-      } catch (err) {
-         console.error(err);
-      } finally {
-         if (isMounted) setSearching(false); // Prevents infinite spinner on error
-      }
-    };
-
-    const timer = setTimeout(() => { searchMembers(); }, 400); // Debounce
-    
-    return () => { 
-      clearTimeout(timer); 
-      isMounted = false; // Cancels state update if user keeps typing
-    };
+    if (!searchTerm) { setMemberResults([]); return; }
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      const { data } = await supabase.from('members').select('id, name, surname, internal_code, mandals(name), designation, gender, mandal_id').or(`name.ilike.%${searchTerm}%,surname.ilike.%${searchTerm}%`).limit(5);
+      setMemberResults(data || []);
+      setSearching(false);
+    }, 400);
+    return () => clearTimeout(timer);
   }, [searchTerm]);
 
-  const fetchAssignments = async () => {
-    setLoading(true);
-    try {
-      const { data } = await supabase
-        .from("project_assignments")
-        .select(
-          `
-          id, role, data_scope,
-          user_profiles ( id, full_name, email, member_id, role )
-        `,
-        )
-        .eq("project_id", project.id);
-
-      setAssignments(data || []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const generatePassword = () => {
-    const chars =
-      "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$&";
-    return Array.from(
-      { length: 8 },
-      () => chars[Math.floor(Math.random() * chars.length)],
-    ).join("");
+    const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$&";
+    return Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
   };
 
+  // 3. Grant Access Logic
   const handleGrantAccess = async (e) => {
     e.preventDefault();
-    if (!canManageStaff) return;
     setAssigning(true);
-
     try {
       let targetAuthId = null;
       let generatedPassword = null;
       let generatedEmail = null;
 
-      // 1. Check if this physical member ALREADY has an App Profile
-      const { data: existingProfile } = await supabase
-        .from("user_profiles")
-        .select("id, email")
-        .eq("member_id", selectedMember.id)
-        .maybeSingle();
+      const { data: existingProfile } = await supabase.from("user_profiles").select("id, email").eq("member_id", selectedMember.id).maybeSingle();
 
       if (existingProfile) {
         targetAuthId = existingProfile.id;
-        const { data: existingAssignment } = await supabase
-          .from("project_assignments")
-          .select("id")
-          .eq("project_id", project.id)
-          .eq("user_id", targetAuthId)
-          .maybeSingle();
-
-        if (existingAssignment) {
-          throw new Error(
-            `${selectedMember.name} is already assigned to this project!`,
-          );
-        }
+        const { data: existingAssign } = await supabase.from("project_assignments").select("id").eq("project_id", project.id).eq("user_id", targetAuthId).maybeSingle();
+        if (existingAssign) throw new Error(`${selectedMember.name} is already assigned!`);
       } else {
         generatedPassword = generatePassword();
         generatedEmail = `${selectedMember.internal_code.toLowerCase()}@keshav.app`;
 
-        const { data: authData, error: authError } =
-          await ghostClient.auth.signUp({
-            email: generatedEmail,
-            password: generatedPassword,
-          });
-
-        if (authError)
-          throw new Error("Auth creation failed: " + authError.message);
+        const { data: authData, error: authError } = await ghostClient.auth.signUp({ email: generatedEmail, password: generatedPassword });
+        if (authError) throw new Error("Auth creation failed");
         targetAuthId = authData.user.id;
 
-        const { error: profileError } = await supabase
-          .from("user_profiles")
-          .insert({
-            id: targetAuthId,
-            member_id: selectedMember.id,
-            email: generatedEmail,
-            full_name: `${selectedMember.name} ${selectedMember.surname}`,
-            role: "project_admin",
-            gender: selectedMember.gender || "Yuvak",
-            assigned_mandal_id: selectedMember.mandal_id,
-            assigned_kshetra_id: selectedMember.mandals?.kshetra_id,
-          });
-
-        if (profileError) throw new Error("Profile creation failed.");
-      }
-
-      let scopeMandalIds = null;
-      if (dataScope === "Mandal") {
-        scopeMandalIds = [selectedMember.mandal_id];
-      }
-
-      const { error: assignError } = await supabase
-        .from("project_assignments")
-        .insert({
-          project_id: project.id,
-          user_id: targetAuthId,
-          role: projectRole,
-          data_scope: dataScope,
-          scope_mandal_ids: scopeMandalIds,
+        await supabase.from("user_profiles").insert({
+          id: targetAuthId, member_id: selectedMember.id, email: generatedEmail,
+          full_name: `${selectedMember.name} ${selectedMember.surname}`, role: "project_admin",
+          gender: selectedMember.gender || "Yuvak", assigned_mandal_id: selectedMember.mandal_id,
         });
+      }
 
-      if (assignError)
-        throw new Error("Assignment failed: " + assignError.message);
+      await supabase.from("project_assignments").insert({
+        project_id: project.id, user_id: targetAuthId, role: projectRole, data_scope: dataScope, scope_mandal_ids: dataScope === "Mandal" ? [selectedMember.mandal_id] : null,
+      });
 
       if (generatedPassword) {
-        setNewCredentials({
-          name: `${selectedMember.name} ${selectedMember.surname}`,
-          email: generatedEmail,
-          password: generatedPassword,
-        });
+        setNewCredentials({ name: `${selectedMember.name} ${selectedMember.surname}`, email: generatedEmail, password: generatedPassword });
       } else {
-        alert(
-          `Successfully linked! ${selectedMember.name} already had an app account and has been granted ${projectRole} access to this project.`,
-        );
+        alert(`Linked successfully. ${selectedMember.name} uses their existing login.`);
       }
 
       setSelectedMember(null);
-      fetchAssignments();
+      queryClient.invalidateQueries(['project-staff', project.id]);
       setSearchTerm("");
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setAssigning(false);
-    }
+    } catch (err) { alert(err.message); } finally { setAssigning(false); }
   };
 
-  // --- NEW: HANDLE UPDATING EXISTING STAFF ROLE ---
-  const openEditModal = (assignment) => {
-    setProjectRole(assignment.role);
-    setDataScope(assignment.data_scope || "Mandal");
-    setEditingAssignment(assignment);
-  };
-
+  // 4. Update Access Logic
   const handleUpdateAccess = async (e) => {
     e.preventDefault();
-    if (!canManageStaff) return;
     setAssigning(true);
-
     try {
-      const { error } = await supabase
-        .from("project_assignments")
-        .update({
-          role: projectRole,
-          data_scope: dataScope,
-        })
-        .eq("id", editingAssignment.id);
-
-      if (error) throw new Error("Update failed: " + error.message);
-
+      await supabase.from("project_assignments").update({ role: projectRole, data_scope: dataScope }).eq("id", editingAssignment.id);
       setEditingAssignment(null);
-      fetchAssignments();
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setAssigning(false);
-    }
+      queryClient.invalidateQueries(['project-staff', project.id]);
+    } catch (err) { alert(err.message); } finally { setAssigning(false); }
   };
 
-  const handleRemove = async (assignmentId) => {
-    if (!canManageStaff) return;
-    if (
-      !confirm(
-        "Revoke project access for this person? Note: This does not delete their app account, only their access to this project.",
-      )
-    )
-      return;
-    await supabase.from("project_assignments").delete().eq("id", assignmentId);
-    fetchAssignments();
+  // 5. Remove Access
+  const handleRemove = async (id) => {
+    if (!confirm("Revoke access for this person?")) return;
+    await supabase.from("project_assignments").delete().eq("id", id);
+    queryClient.invalidateQueries(['project-staff', project.id]);
   };
 
-  const copyToClipboard = () => {
-    const text = `App Login Details\nName: ${newCredentials.name}\nLogin ID: ${newCredentials.email}\nPassword: ${newCredentials.password}\nUrl: ${window.location.origin}/login`;
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const labelClass = "block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5";
+  const inputClass = "w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030] transition-colors appearance-none";
 
-  if (loading)
-    return (
-      <div className="p-12 text-center text-slate-400">
-        <Loader2 className="animate-spin inline mr-2" /> Loading staff...
-      </div>
-    );
+  if (isLoading) return <div className="p-12 text-center text-gray-400"><Loader2 className="animate-spin inline mr-2" size={20}/> Loading staff...</div>;
 
   return (
-    <div className="space-y-6 animate-in fade-in">
-      {/* 1. DIRECTORY SEARCH PANEL */}
+    <div className="space-y-6">
+      {/* Search Block */}
       {canManageStaff && (
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm relative z-20">
-          <label className="block text-sm font-bold text-slate-800 mb-2 flex items-center gap-2">
-            <UserPlus size={16} className="text-indigo-600" /> Add Project Staff
-            from Directory
-          </label>
-          <p className="text-xs text-slate-500 mb-4">
-            Search for a Member, Utsahi Yuvak, or Karyakar. If they don't have
-            an app login, we will generate one instantly.
-          </p>
+        <div className="bg-white p-4 rounded-md border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)] relative z-20">
+          <label className="block text-sm font-bold text-gray-900 mb-1 flex items-center gap-2"><UserPlus size={16} className="text-gray-400" /> Add Project Staff</label>
+          <p className="text-xs text-gray-500 mb-3">Search directory. App logins will be generated automatically if needed.</p>
 
           <div className="relative">
-            <Search
-              className="absolute left-3 top-3 text-slate-400"
-              size={18}
-            />
-            <input
-              className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-100 outline-none text-sm font-medium"
-              placeholder="Search by name, internal ID code, or mobile..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-            {searching && (
-              <Loader2
-                className="absolute right-3 top-3 text-slate-400 animate-spin"
-                size={18}
-              />
-            )}
+            <Search className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
+            <input className={`${inputClass} pl-9`} placeholder="Search by name, ID, or mobile..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+            {searching && <Loader2 className="absolute right-3 top-2.5 text-gray-400 animate-spin" size={16} strokeWidth={1.5} />}
           </div>
 
           {memberResults.length > 0 && (
-            <div className="absolute left-6 right-6 mt-2 border border-slate-200 rounded-xl shadow-2xl bg-white overflow-hidden max-h-72 overflow-y-auto z-50">
+            <div className="absolute left-4 right-4 mt-1 border border-gray-200 rounded-md shadow-[0_4px_20px_rgba(0,0,0,0.08)] bg-white overflow-hidden max-h-60 overflow-y-auto z-50 divide-y divide-gray-100">
               {memberResults.map((m) => (
-                <div
-                  key={m.id}
-                  className="p-4 border-b last:border-0 hover:bg-indigo-50 flex items-center justify-between cursor-pointer transition-colors"
-                  onClick={() => {
-                    setProjectRole("volunteer"); // Reset default for new additions
-                    setDataScope("Mandal");
-                    setSelectedMember(m);
-                    setMemberResults([]);
-                    setSearchTerm("");
-                  }}
-                >
+                <div key={m.id} className="p-3 hover:bg-gray-50 flex items-center justify-between cursor-pointer transition-colors" onClick={() => { setProjectRole("volunteer"); setDataScope("Mandal"); setSelectedMember(m); setMemberResults([]); setSearchTerm(""); }}>
                   <div>
-                    <div className="font-bold text-slate-800 text-sm flex items-center gap-2">
-                      {m.name} {m.surname}
-                      <Badge variant="outline">{m.designation}</Badge>
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
-                      <span className="flex items-center gap-1">
-                        <MapPin size={12} /> {m.mandals?.name}
-                      </span>
-                      <span className="font-mono text-slate-400">
-                        ID: {m.internal_code}
-                      </span>
-                    </div>
+                    <div className="font-semibold text-gray-900 text-sm">{m.name} {m.surname} <Badge variant="default" className="ml-2">{m.designation}</Badge></div>
+                    <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2"><MapPin size={12}/> {m.mandals?.name} <span className="font-inter">({m.internal_code})</span></div>
                   </div>
-                  <Button size="sm" variant="secondary">
-                    Configure Access
-                  </Button>
+                  <Button size="sm" variant="secondary">Configure</Button>
                 </div>
               ))}
             </div>
@@ -352,329 +154,130 @@ const canManageStaff = isAdmin || isCoordinator;
         </div>
       )}
 
-      {/* 2. CURRENT STAFF LIST */}
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm relative z-10">
-        <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
-          <Shield size={18} className="text-indigo-600" />
-          <h3 className="font-bold text-slate-800">
-            Authorized Project Staff ({assignments.length})
-          </h3>
-        </div>
-
-        {assignments.length === 0 ? (
-          <div className="text-center py-12 text-slate-400 bg-white">
-            <UserCheck size={40} className="mx-auto mb-3 text-slate-300" />
-            <p className="font-medium">No custom staff assigned.</p>
-            <p className="text-xs mt-1">
-              Global Admins automatically have full access.
-            </p>
-          </div>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {assignments.map((a) => (
-              <div
-                key={a.id}
-                className="p-4 flex flex-col md:flex-row md:items-center justify-between hover:bg-slate-50 transition-colors gap-4"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-indigo-100 text-indigo-700 rounded-full flex items-center justify-center font-bold text-lg shrink-0">
-                    {(a.user_profiles?.full_name?.[0] || "U").toUpperCase()}
-                  </div>
-                  <div>
-                    <div className="font-bold text-slate-800 flex items-center gap-2">
-                      {a.user_profiles?.full_name || "Unknown User"}
-                      <Badge
-                        variant={
-                          a.role === "Coordinator" ? "primary" : "secondary"
-                        }
-                      >
-                        {a.role}
-                      </Badge>
+      {/* Staff List */}
+      <div className="bg-white border border-gray-200 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)] overflow-x-auto">
+        <table className="w-full text-left text-sm whitespace-nowrap">
+          <thead className="bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">
+            <tr>
+              <th className="px-4 py-3">Staff Member</th>
+              <th className="px-4 py-3">Role & Scope</th>
+              <th className="px-4 py-3 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {assignments.length === 0 ? (
+              <tr><td colSpan={3} className="p-8 text-center text-gray-400 text-sm">No custom staff assigned. Admins have global access.</td></tr>
+            ) : (
+              assignments.map((a) => (
+                <tr key={a.id} className="hover:bg-gray-50 transition-colors group">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-md bg-gray-100 border border-gray-200 flex items-center justify-center font-inter font-bold text-gray-600 shrink-0">
+                        {a.user_profiles?.full_name?.[0] || "U"}
+                      </div>
+                      <div>
+                        <div className="font-semibold text-gray-900">{a.user_profiles?.full_name}</div>
+                        <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5"><Mail size={10} strokeWidth={2}/> {a.user_profiles?.email}</div>
+                      </div>
                     </div>
-                    <div className="text-xs text-slate-500 flex flex-wrap items-center gap-3 mt-1.5">
-                      <span className="flex items-center gap-1">
-                        <Mail size={12} /> {a.user_profiles?.email}
-                      </span>
-                      <span className="bg-slate-200 w-1 h-1 rounded-full"></span>
-                      <span className="font-medium text-slate-600 bg-white px-2 py-0.5 rounded border">
-                        Scope: {a.data_scope}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex opacity-100 items-center gap-2 justify-end border-t md:border-0 pt-3 md:pt-0">
-                  {canManageStaff && (
-                    <>
-                      <button
-                        onClick={() => openEditModal(a)}
-                        className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                        title="Edit Role"
-                      >
-                        <Edit size={18} /> {/* <-- CHANGED THIS HERE */}
-                      </button>
-                      <button
-                        onClick={() => handleRemove(a.id)}
-                        className="p-2 text-black hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Revoke Access"
-                      >
-                        <Trash2 size={18} /> 
-                        delete
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <Badge variant={a.role === "Coordinator" ? "primary" : "default"} className="mr-2">{a.role}</Badge>
+                    <span className="text-[10px] text-gray-500 font-semibold uppercase">Scope: {a.data_scope}</span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {canManageStaff && (
+                      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => { setProjectRole(a.role); setDataScope(a.data_scope || "Mandal"); setEditingAssignment(a); }} className="p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"><Edit3 size={16} strokeWidth={1.5} /></button>
+                        <button onClick={() => handleRemove(a.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"><Trash2 size={16} strokeWidth={1.5} /></button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
 
-      {/* ------------------------------------------------------------- */}
-      {/* MODAL 1A: CONFIGURE ACCESS (ADD NEW) */}
-      {/* ------------------------------------------------------------- */}
-      {selectedMember && !newCredentials && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="p-6 bg-slate-50 border-b border-slate-200">
-              <h2 className="text-xl font-bold text-slate-800 mb-1">
-                Configure Project Role
-              </h2>
-              <div className="flex items-center gap-2 mt-2">
-                <div className="w-8 h-8 bg-indigo-100 text-indigo-700 rounded-full flex items-center justify-center font-bold text-xs">
-                  {selectedMember.name[0]}
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-slate-700">
-                    {selectedMember.name} {selectedMember.surname}
-                  </p>
-                  <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">
-                    {selectedMember.mandals?.name} •{" "}
-                    {selectedMember.designation}
-                  </p>
-                </div>
-              </div>
+      {/* Modals */}
+      <Modal isOpen={!!selectedMember} onClose={() => setSelectedMember(null)} title={`Configure Role: ${selectedMember?.name}`}>
+        <form onSubmit={handleGrantAccess} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={labelClass}>Project Role</label>
+              <select className={inputClass} value={projectRole} onChange={(e) => setProjectRole(e.target.value)}>
+                <option value="Coordinator">Coordinator</option>
+                <option value="Editor">Editor</option>
+              </select>
             </div>
-
-            <form
-              onSubmit={handleGrantAccess}
-              className="p-6 space-y-6 overflow-y-auto"
-            >
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">
-                    Project Role
-                  </label>
-                  <select
-                    required
-                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-100 text-sm font-bold text-slate-700"
-                    value={projectRole}
-                    onChange={(e) => setProjectRole(e.target.value)}
-                  >
-                    <option value="Coordinator">
-                      Coordinator (manage event + Editor )
-                    </option>
-                    <option value="Editor">Editor (mark attendance and register member)</option>
-                    {/* <option value="volunteer">Volunteer (QR Only)</option>
-                    <option value="Viewer">Viewer (Read Only)</option> */}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">
-                    Data Scope
-                  </label>
-                  <select
-                    required
-                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-100 text-sm font-bold text-slate-700"
-                    value={dataScope}
-                    onChange={(e) => setDataScope(e.target.value)}
-                  >
-                    <option value="Mandal">Their Mandal Only</option>
-                    <option value="Kshetra">Their Kshetra Only</option>
-                    <option value="Global">Global (All Data)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-4 border-t border-slate-100">
-                <Button
-                  variant="secondary"
-                  onClick={() => setSelectedMember(null)}
-                  className="flex-1"
-                  type="button"
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={assigning} className="flex-1">
-                  {assigning ? (
-                    <Loader2 className="animate-spin mx-auto" />
-                  ) : (
-                    "Grant Access"
-                  )}
-                </Button>
-              </div>
-            </form>
+            <div>
+              <label className={labelClass}>Data Scope</label>
+              <select className={inputClass} value={dataScope} onChange={(e) => setDataScope(e.target.value)}>
+                <option value="Mandal">Their Mandal</option>
+                <option value="Kshetra">Their Kshetra</option>
+                <option value="Global">Global All Data</option>
+              </select>
+            </div>
           </div>
-        </div>
-      )}
+          <div className="pt-4 border-t border-gray-100 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setSelectedMember(null)} type="button">Cancel</Button>
+            <Button type="submit" disabled={assigning}>{assigning ? <Loader2 className="animate-spin" size={16}/> : "Grant Access"}</Button>
+          </div>
+        </form>
+      </Modal>
 
-      {/* ------------------------------------------------------------- */}
-      {/* MODAL 1B: MODIFY ACCESS (EDIT EXISTING) */}
-      {/* ------------------------------------------------------------- */}
-      {editingAssignment && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-start">
+      <Modal isOpen={!!editingAssignment} onClose={() => setEditingAssignment(null)} title={`Edit Role: ${editingAssignment?.user_profiles?.full_name}`}>
+        <form onSubmit={handleUpdateAccess} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={labelClass}>Project Role</label>
+              <select className={inputClass} value={projectRole} onChange={(e) => setProjectRole(e.target.value)}>
+                <option value="Coordinator">Coordinator</option>
+                <option value="Editor">Editor</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Data Scope</label>
+              <select className={inputClass} value={dataScope} onChange={(e) => setDataScope(e.target.value)}>
+                <option value="Mandal">Their Mandal</option>
+                <option value="Kshetra">Their Kshetra</option>
+                <option value="Global">Global</option>
+              </select>
+            </div>
+          </div>
+          <div className="pt-4 border-t border-gray-100 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setEditingAssignment(null)} type="button">Cancel</Button>
+            <Button type="submit" disabled={assigning}>Save Changes</Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* New Credentials Success Modal */}
+      <Modal isOpen={!!newCredentials} onClose={() => setNewCredentials(null)} title="App Login Created!">
+        {newCredentials && (
+          <div className="space-y-4 text-center">
+            <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-2">
+              <CheckCircle size={32} strokeWidth={1.5} />
+            </div>
+            <p className="text-gray-500 text-sm">A new app account was generated for this staff member.</p>
+            <div className="bg-gray-50 p-4 rounded-md border border-gray-200 text-left space-y-3">
               <div>
-                <h2 className="text-xl font-bold text-slate-800 mb-1">
-                  Edit Staff Role
-                </h2>
-                <div className="flex items-center gap-2 mt-2">
-                  <div className="w-8 h-8 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center font-bold text-xs">
-                    {editingAssignment.user_profiles?.full_name?.[0] || "U"}
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-700">
-                      {editingAssignment.user_profiles?.full_name}
-                    </p>
-                    <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">
-                      {editingAssignment.user_profiles?.email}
-                    </p>
-                  </div>
-                </div>
+                <span className={labelClass}>Login ID</span>
+                <div className="font-inter font-bold text-gray-900 bg-white border border-gray-200 p-2 rounded-md">{newCredentials.email}</div>
               </div>
-              <button
-                onClick={() => setEditingAssignment(null)}
-                className="p-2 text-slate-400 hover:bg-slate-200 rounded-full transition-colors"
-              >
-                <X size={20} />
-              </button>
+              <div>
+                <span className={labelClass}>Temporary Password</span>
+                <div className="font-inter font-bold text-[#5C3030] bg-[#5C3030]/10 border border-[#5C3030]/20 p-2 rounded-md">{newCredentials.password}</div>
+              </div>
             </div>
-
-            <form
-              onSubmit={handleUpdateAccess}
-              className="p-6 space-y-6 overflow-y-auto"
-            >
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">
-                    Project Role
-                  </label>
-                  <select
-                    required
-                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-100 focus:border-amber-400 text-sm font-bold text-slate-700"
-                    value={projectRole}
-                    onChange={(e) => setProjectRole(e.target.value)}
-                  >
-                    <option value="Coordinator">
-                      Coordinator (manage event + Editor )
-                    </option>
-                    <option value="Editor">Editor (mark attendance and register member)</option>
-                    {/* <option value="volunteer">Volunteer (QR Only)</option>
-                    <option value="Viewer">Viewer (Read Only)</option> */}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">
-                    Data Scope
-                  </label>
-                  <select
-                    required
-                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-100 focus:border-amber-400 text-sm font-bold text-slate-700"
-                    value={dataScope}
-                    onChange={(e) => setDataScope(e.target.value)}
-                  >
-                    <option value="Mandal">Their Mandal Only</option>
-                    <option value="Kshetra">Their Kshetra Only</option>
-                    <option value="Global">Global (All Data)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-4 border-t border-slate-100">
-                <Button
-                  variant="secondary"
-                  onClick={() => setEditingAssignment(null)}
-                  className="flex-1"
-                  type="button"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={assigning}
-                  className="flex-1 bg-amber-600 hover:bg-amber-700 text-white shadow-amber-200 border-transparent"
-                >
-                  {assigning ? (
-                    <Loader2 className="animate-spin mx-auto" />
-                  ) : (
-                    "Save Changes"
-                  )}
-                </Button>
-              </div>
-            </form>
+            <Button className="w-full" icon={Copy} onClick={() => {
+              navigator.clipboard.writeText(`App Login\nID: ${newCredentials.email}\nPass: ${newCredentials.password}`);
+              alert("Copied to clipboard!");
+            }}>Copy Credentials</Button>
           </div>
-        </div>
-      )}
-
-      {/* ------------------------------------------------------------- */}
-      {/* MODAL 2: NEW CREDENTIALS POPUP */}
-      {/* ------------------------------------------------------------- */}
-      {newCredentials && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in zoom-in-95 duration-300">
-          <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden border border-slate-100 text-center relative">
-            <div className="bg-green-500 p-8 text-white flex flex-col items-center">
-              <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mb-3">
-                <CheckCircle size={32} className="text-white" />
-              </div>
-              <h2 className="text-2xl font-bold">App Login Created!</h2>
-              <p className="text-green-100 text-sm mt-1 text-balance">
-                This member did not have an app account. We generated one
-                automatically.
-              </p>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-left space-y-3">
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">
-                    Login Email / ID
-                  </span>
-                  <div className="font-mono text-slate-800 font-bold text-sm bg-white border p-2 rounded-lg">
-                    {newCredentials.email}
-                  </div>
-                </div>
-                <div className="w-full h-px bg-slate-200"></div>
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5 flex items-center gap-1">
-                    <Key size={12} /> Temporary Password
-                  </span>
-                  <div className="font-mono text-xl text-indigo-600 font-bold bg-indigo-50 p-2 rounded-lg inline-block border border-indigo-100">
-                    {newCredentials.password}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <Button
-                  className={`flex-1 transition-all ${copied ? "bg-green-600 hover:bg-green-700" : ""}`}
-                  onClick={copyToClipboard}
-                  icon={copied ? CheckCircle : Copy}
-                >
-                  {copied ? "Copied!" : "Copy Info"}
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() => setNewCredentials(null)}
-                  className="flex-1"
-                >
-                  Done
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+        )}
+      </Modal>
     </div>
   );
 }

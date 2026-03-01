@@ -1,285 +1,169 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
-import { Loader2, Phone, Calendar, Users, BarChart3, QrCode } from 'lucide-react';
+import { Loader2, Calendar, Phone } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import Attendance from '../attendance/Attendance';
+import Badge from '../../components/ui/Badge';
 
 export default function HomeDashboard() {
   const { profile } = useAuth();
-  const [loading, setLoading] = useState(true);
-  
-  // These need to be single objects, not arrays!
-  const [primaryEvent, setPrimaryEvent] = useState(null);
-  const [primaryProject, setPrimaryProject] = useState(null);
+  const role = (profile?.role || '').toLowerCase();
 
-  useEffect(() => {
-    if (profile?.id) {
-      fetchDashboardData();
-    }
-  }, [profile]);
-
-const fetchDashboardData = async () => {
-    setLoading(true);
-    try {
-
+  const { data, isLoading } = useQuery({
+    queryKey: ['home-dashboard', profile?.id],
+    queryFn: async () => {
       let allowedProjectIds = [];
 
-      // 1. DETERMINE ALLOWED PROJECTS FOR NON-ADMINS
-      if (profile.role !== 'admin') {
-          // A. Fetch explicitly assigned projects (This covers Restricted ones)
-          const { data: assignments } = await supabase
-              .from('project_assignments')
-              .select('project_id')
-              .eq('user_id', profile.id);
-          const assignedIds = assignments?.map(a => a.project_id) || [];
+      if (role !== 'admin') {
+        const { data: assignments } = await supabase.from('project_assignments').select('project_id').eq('user_id', profile.id);
+        const assignedIds = assignments?.map(a => a.project_id) || [];
 
-          // B. Fetch Standard (Public) projects (Unless they are a restricted project_admin)
-          let standardIds = [];
-          if (profile.role !== 'project_admin') {
-              // We also ensure we only grab Active projects
-              const { data: standardProjects } = await supabase
-                  .from('projects')
-                  .select('id')
-                  .eq('type', 'Standard')
-                  .eq('is_active', true);
-              standardIds = standardProjects?.map(p => p.id) || [];
-          }
+        let standardIds = [];
+        if (role !== 'project_admin') {
+          const { data: standardProjects } = await supabase.from('projects').select('id').eq('type', 'Standard').eq('is_active', true);
+          standardIds = standardProjects?.map(p => p.id) || [];
+        }
 
-          // C. Combine into one master list of allowed IDs
-          allowedProjectIds = [...new Set([...assignedIds, ...standardIds])];
-
-          // D. If they have no allowed projects, exit early! 
-          // (This instantly stops the Restricted event from loading)
-          if (allowedProjectIds.length === 0) {
-              setPrimaryEvent(null);
-              setPrimaryProject(null);
-              setLoading(false);
-              return;
-          }
+        allowedProjectIds = [...new Set([...assignedIds, ...standardIds])];
+        if (allowedProjectIds.length === 0) return { event: null, project: null };
       }
 
-      // 2. FETCH THE EVENT (Strictly filtered by the allowed IDs)
-      let query = supabase
-        .from('events')
-        .select(`
-          *,
-          projects!inner (id, name, type, is_active, allowed_gender)
-        `)
+      let query = supabase.from('events').select(`*, projects!inner (id, name, type, is_active, allowed_gender)`)
         .eq('is_primary', true)
         .gte('date', new Date().toISOString().split('T')[0])
-        .order('date', { ascending: true });
+        .order('date', { ascending: true })
+        .limit(1);
 
-      // Apply the strict ID filter for non-admins
-      if (profile.role !== 'admin') {
-          query = query.in('project_id', allowedProjectIds);
-      }
+      if (role !== 'admin') query = query.in('project_id', allowedProjectIds);
 
-      // We only need the very next upcoming event
-      query = query.limit(1);
-
-      const { data: eventsData, error: eventsError } = await query;
-
-      if (eventsError) throw eventsError;
+      const { data: eventsData, error } = await query;
+      if (error) throw error;
       
-      // 3. SET THE STATE
       if (eventsData && eventsData.length > 0) {
          const upcomingEvent = eventsData[0];
          const projectData = Array.isArray(upcomingEvent.projects) ? upcomingEvent.projects[0] : upcomingEvent.projects;
          
-         // Optional: Extra client-side safety check for gender
-         if (profile.role !== 'admin' && projectData.allowed_gender !== 'Both' && projectData.allowed_gender !== profile.gender) {
-            setPrimaryEvent(null);
-            setPrimaryProject(null);
-         } else {
-            setPrimaryEvent(upcomingEvent);
-            setPrimaryProject(projectData);
+         if (role !== 'admin' && projectData.allowed_gender !== 'Both' && projectData.allowed_gender !== profile?.gender) {
+            return { event: null, project: null };
          }
-      } else {
-         setPrimaryEvent(null);
-         setPrimaryProject(null);
+         return { event: upcomingEvent, project: projectData };
       }
+      return { event: null, project: null };
+    },
+    enabled: !!profile?.id
+  });
 
-    } catch (err) {
-      console.error("Critical Dashboard Error:", err.message || err);
-    } finally {
-      setLoading(false); 
-    }
-  };
+  if (isLoading) return <div className="h-[80vh] flex items-center justify-center"><Loader2 className="animate-spin text-gray-400" size={32} strokeWidth={1.5}/></div>;
 
-  if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-indigo-600"/></div>;
+  const { event: primaryEvent, project: primaryProject } = data || {};
 
   if (!primaryEvent || !primaryProject) {
     return (
-      <div className="p-8 text-center max-w-lg mx-auto mt-10 bg-slate-50 rounded-2xl border border-slate-200">
-        <Calendar className="mx-auto h-12 w-12 text-slate-300 mb-4"/>
-        <h2 className="text-xl font-bold text-slate-800">No Active Event</h2>
-        <p className="text-slate-500 mt-2">There are no primary events scheduled for today or the future. Please check back later.</p>
+      <div className="p-10 text-center max-w-lg mx-auto mt-10 bg-white rounded-md border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+        <Calendar className="mx-auto h-10 w-10 text-gray-300 mb-3" strokeWidth={1.5}/>
+        <h2 className="text-lg font-semibold text-gray-900">No Active Event</h2>
+        <p className="text-gray-500 text-sm mt-1">There are no primary events scheduled for today. Check back later.</p>
       </div>
     );
   }
 
-  // --- ROLE BASED RENDERING ---
-
-  // 1. ADMIN & PROJECT STAFF: Full Control / Attendance Mode
-  if (['admin', 'taker' , 'project_admin'].includes(profile.role)) {
+  // 1. Full Control / Attendance Mode
+  if (['admin', 'taker' , 'project_admin'].includes(role)) {
     return (
-      <div className="h-[calc(100vh-64px)] flex flex-col">
-        <div className="px-4 pt-4 pb-2">
-          <h1 className="text-2xl font-bold text-slate-800">Jay Swaminarayan, {profile.full_name?.split(' ')[0]}</h1>
-          <p className="text-slate-500 text-sm">
-            {profile.role === 'admin' ? 'Master Control' : 'Attendance Mode'}
+      <div className="h-[calc(100vh-80px)] flex flex-col">
+        <div className="mb-4">
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Jay Swaminarayan, {profile.full_name?.split(' ')[0]}</h1>
+          <p className="text-gray-500 text-sm mt-0.5">
+            {role === 'admin' ? 'Master Control' : 'Attendance Workspace'}
           </p>
         </div>
-        
-        <div className="flex-1 min-h-0 p-4 pt-0">
-            <Attendance 
-            projectId={primaryProject.id} 
-            eventId={primaryEvent.id} 
-            embedded={true}
-            hideSummary={profile.role === 'taker'} // Hide summary for standard takers
-            />
+        <div className="flex-1 min-h-0">
+            <Attendance projectId={primaryProject.id} eventId={primaryEvent.id} embedded={true} hideSummary={role === 'taker'} />
         </div>
       </div>
     );
   }
 
-  // 3. SANCHALAK: "My Team" List (Read Only + Call)
-  if (profile.role === 'sanchalak') {
+  // 2. Sanchalak View
+  if (role === 'sanchalak') {
+    return <SanchalakView event={primaryEvent} project={primaryProject} mandalId={profile.assigned_mandal_id} gender={profile.gender} />;
+  }
+
+  // 3. Leadership View
+  if (['nirdeshak', 'nirikshak'].includes(role)) {
     return (
-      <SanchalakView 
-        event={primaryEvent} 
-        project={primaryProject} 
-        mandalId={profile.assigned_mandal_id} 
-        gender={profile.gender}
-      />
+      <div className="h-[calc(100vh-80px)] flex flex-col">
+        <div className="mb-4">
+           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Performance Summary</h1>
+           <p className="text-gray-500 text-sm mt-0.5">{role === 'nirdeshak' ? 'Kshetra Overview' : 'Mandal Overview'}</p>
+        </div>
+        <div className="flex-1 min-h-0">
+          <Attendance projectId={primaryProject.id} eventId={primaryEvent.id} embedded={true} readOnly={true} hideSummary={false} />
+        </div>
+      </div>
     );
   }
 
-  // 4. LEADERSHIP: Summary View (Read Only List + Stats)
-  if (['nirdeshak', 'nirikshak'].includes(profile.role)) {
-    return (
-      <LeadershipView 
-        event={primaryEvent} 
-        project={primaryProject} 
-        profile={profile}
-      />
-    );
-  }
-
-  return <div className="p-10 text-center">Role not recognized.</div>;
+  return <div className="p-10 text-center text-gray-500">Role configuration error.</div>;
 }
 
 // --- SUB-COMPONENT: SANCHALAK VIEW ---
 function SanchalakView({ event, project, mandalId, gender }) {
-  const [members, setMembers] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchMyTeam = async () => {
-      // 1. Get My Members
-      const { data: regData } = await supabase
-        .from('project_registrations')
-        .select(`
-          member_id,
-          members (id, name, surname, mobile, internal_code, gender, mandal_id, designation)
-        `)
-        .eq('project_id', project.id);
-
-      // 2. Filter Client Side (Strict + Null Check Fix)
-      let myMembers = (regData || [])
-        .map(r => r.members)
-        .filter(m => m && m.mandal_id === mandalId && m.gender === gender); 
+  const { data: members, isLoading } = useQuery({
+    queryKey: ['sanchalak-team', event.id, project.id, mandalId, gender],
+    queryFn: async () => {
+      const { data: regData } = await supabase.from('project_registrations').select(`member_id, members (id, name, surname, mobile, internal_code, gender, mandal_id, designation)`).eq('project_id', project.id);
       
+      let myMembers = (regData || []).map(r => r.members).filter(m => m && m.mandal_id === mandalId && m.gender === gender); 
       myMembers.sort((a, b) => a.name.localeCompare(b.name));
 
-      // 3. Get Status
-      const { data: attData } = await supabase
-        .from('attendance')
-        .select('member_id')
-        .eq('event_id', event.id);
-      
+      const { data: attData } = await supabase.from('attendance').select('member_id').eq('event_id', event.id);
       const presentSet = new Set(attData?.map(a => a.member_id));
       
-      setMembers(myMembers.map(m => ({ ...m, isPresent: presentSet.has(m.id) })));
-      setLoading(false);
-    };
-    
-    if (event?.id && project?.id) {
-       fetchMyTeam();
+      return myMembers.map(m => ({ ...m, isPresent: presentSet.has(m.id) }));
     }
-  }, [event.id, project.id, mandalId, gender]);
+  });
 
-  if (loading) return <div className="p-10 text-center text-slate-400">Loading your team...</div>;
+  if (isLoading) return <div className="p-12 text-center text-gray-400"><Loader2 className="animate-spin inline mr-2" size={16}/> Loading your team...</div>;
 
   return (
-    <div className="max-w-2xl mx-auto p-4 pb-20 space-y-4 animate-in fade-in">
-      <div className="bg-indigo-600 text-white p-6 rounded-2xl shadow-lg">
+    <div className="max-w-2xl mx-auto space-y-4 pb-20">
+      <div className="bg-[#5C3030] text-white p-5 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
         <div className="flex justify-between items-start">
             <div>
-                <h1 className="text-2xl font-bold">{event.name}</h1>
-                <p className="text-indigo-200 text-sm">{project.name}</p>
+                <h1 className="text-xl font-bold leading-tight">{event.name}</h1>
+                <p className="text-white/70 text-xs mt-1 font-semibold">{project.name}</p>
             </div>
-            <div className="bg-white/20 px-3 py-1 rounded-lg backdrop-blur-sm">
-                <span className="font-bold">{members.filter(m => m.isPresent).length}</span>
-                <span className="opacity-75"> / {members.length}</span>
+            <div className="bg-white/10 px-3 py-1.5 rounded-md border border-white/20">
+                <span className="font-bold text-lg font-inter">{members?.filter(m => m.isPresent).length}</span>
+                <span className="text-white/60 font-semibold font-inter"> / {members?.length}</span>
             </div>
-        </div>
-        <div className="mt-4 text-xs font-medium uppercase tracking-wide opacity-80">
-            Your Mandal Status
         </div>
       </div>
 
-      <div className="space-y-3">
-        {members.map(m => (
-          <div key={m.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+      <div className="bg-white border border-gray-200 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)] divide-y divide-gray-100">
+        {members?.map(m => (
+          <div key={m.id} className="p-3 flex items-center justify-between hover:bg-gray-50 transition-colors">
             <div className="flex items-center gap-3">
-               <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm ${m.isPresent ? 'bg-green-100 text-green-700' : 'bg-red-50 text-red-500'}`}>
-                 {m.isPresent ? 'P' : 'A'}
+               <div className={`w-9 h-9 rounded-md flex items-center justify-center font-bold text-xs shrink-0 border font-inter ${m.isPresent ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
+                 {m.isPresent ? 'IN' : 'A'}
                </div>
                <div>
-                 <div className="font-bold text-slate-800">{m.name} {m.surname}</div>
-                 <div className="text-xs text-slate-500 flex items-center gap-1">
-                    <span className="bg-slate-100 px-1.5 rounded text-[10px]">{m.designation}</span>
-                 </div>
+                 <div className={`font-semibold text-sm ${m.isPresent ? 'text-gray-900' : 'text-gray-600'}`}>{m.name} {m.surname}</div>
+                 <div className="mt-0.5"><Badge>{m.designation}</Badge></div>
                </div>
             </div>
-            
-            {/* CALL BUTTON */}
             {m.mobile && (
-              <a 
-                href={`tel:${m.mobile}`} 
-                className="bg-indigo-50 text-indigo-600 p-3 rounded-full hover:bg-indigo-100 transition-colors"
-              >
-                <Phone size={20} />
+              <a href={`tel:${m.mobile}`} className="p-2 text-gray-400 hover:text-[#5C3030] hover:bg-gray-100 rounded-md transition-colors border border-transparent hover:border-gray-200">
+                <Phone size={16} strokeWidth={1.5} />
               </a>
             )}
           </div>
         ))}
-        
-        {members.length === 0 && (
-            <div className="text-center py-10 text-slate-400 bg-slate-50 rounded-xl border border-dashed">No registered members found in your Mandal for this event.</div>
+        {members?.length === 0 && (
+            <div className="text-center py-10 text-gray-400 text-sm">No registered members found in your Mandal for this event.</div>
         )}
-      </div>
-    </div>
-  );
-}
-
-// --- SUB-COMPONENT: LEADERSHIP VIEW ---
-function LeadershipView({ event, project, profile }) {
-  return (
-    <div className="h-[calc(100vh-64px)] flex flex-col">
-      <div className="px-4 pt-4 pb-2">
-         <h1 className="text-xl font-bold text-slate-800">Performance Summary</h1>
-         <p className="text-slate-500 text-sm">{profile.role === 'nirdeshak' ? 'Kshetra Overview' : 'Mandal Overview'}</p>
-      </div>
-      <div className="flex-1 min-h-0 p-4 pt-0">
-        <Attendance 
-            projectId={project.id} 
-            eventId={event.id} 
-            embedded={true}
-            readOnly={true} // Cannot mark attendance
-            hideSummary={false} // Can see summary
-        />
       </div>
     </div>
   );

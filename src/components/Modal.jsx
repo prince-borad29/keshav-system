@@ -5,29 +5,24 @@ export default function Modal({ isOpen, onClose, title, children }) {
   if (!isOpen) return null;
 
   return (
-    // 1. BACKDROP: Fixed, Full Screen, High Z-Index, Dark Background
     <div 
-      className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-      onClick={onClose} // Click outside to close
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200"
+      onClick={onClose}
     >
-      {/* 2. CONTENT: White Box, Stops Click Propagation */}
       <div 
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-fade-in scale-100"
+        className="bg-white rounded-md shadow-[0_4px_20px_rgba(0,0,0,0.08)] w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200 border border-gray-200"
         onClick={(e) => e.stopPropagation()} 
       >
-        {/* Header */}
-        <div className="flex justify-between items-center px-6 py-4 border-b border-slate-100 bg-slate-50">
-          <h3 className="font-bold text-lg text-slate-800">{title}</h3>
+        <div className="flex justify-between items-center px-5 py-4 border-b border-gray-100 bg-gray-50/50">
+          <h3 className="font-semibold text-base text-gray-900">{title}</h3>
           <button 
             onClick={onClose} 
-            className="p-2 rounded-full hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors"
+            className="p-1.5 rounded-md hover:bg-gray-200 text-gray-500 hover:text-gray-900 transition-colors"
           >
-            <X size={20} />
+            <X size={16} strokeWidth={1.5} />
           </button>
         </div>
-
-        {/* Body */}
-        <div className="p-6 max-h-[80vh] overflow-y-auto">
+        <div className="p-5 max-h-[80vh] overflow-y-auto">
           {children}
         </div>
       </div>

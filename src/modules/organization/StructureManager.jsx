@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Edit2, Map, MapPin, Loader2, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, Edit3, Map, MapPin, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import Modal from '../../components/Modal';
+import Button from '../../components/ui/Button';
 
 export default function StructureManager() {
   const queryClient = useQueryClient();
@@ -11,7 +12,6 @@ export default function StructureManager() {
   const [formData, setFormData] = useState({ name: '' });
   const [error, setError] = useState('');
 
-  // 1. READ
   const { data: kshetras, isLoading } = useQuery({
     queryKey: ['structure'],
     queryFn: async () => {
@@ -20,21 +20,21 @@ export default function StructureManager() {
     }
   });
 
-  // 2. MUTATIONS
-  const handleMutation = async (action) => {
+  const handleMutation = async (e) => {
+    e.preventDefault();
     try {
       let query;
       const payload = { name: formData.name };
 
-      if (action === 'CREATE_KSHETRA') query = supabase.from('kshetras').insert(payload);
-      if (action === 'CREATE_MANDAL') query = supabase.from('mandals').insert({ ...payload, kshetra_id: selectedItem.id });
-      if (action === 'UPDATE_KSHETRA') query = supabase.from('kshetras').update(payload).eq('id', selectedItem.id);
-      if (action === 'UPDATE_MANDAL') query = supabase.from('mandals').update(payload).eq('id', selectedItem.id);
+      if (modalMode === 'ADD_KSHETRA') query = supabase.from('kshetras').insert(payload);
+      if (modalMode === 'ADD_MANDAL') query = supabase.from('mandals').insert({ ...payload, kshetra_id: selectedItem.id });
+      if (modalMode === 'EDIT_KSHETRA') query = supabase.from('kshetras').update(payload).eq('id', selectedItem.id);
+      if (modalMode === 'EDIT_MANDAL') query = supabase.from('mandals').update(payload).eq('id', selectedItem.id);
 
       const { error } = await query;
       if (error) throw error;
       
-      queryClient.invalidateQueries(['structure']);
+      queryClient.invalidateQueries({ queryKey: ['structure'] });
       closeModal();
     } catch (err) {
       setError(err.message);
@@ -46,7 +46,7 @@ export default function StructureManager() {
       const { error } = await supabase.from(table).delete().eq('id', id);
       if (error) throw error;
     },
-    onSuccess: () => queryClient.invalidateQueries(['structure']),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['structure'] }),
     onError: (err) => alert("Cannot delete: " + err.message)
   });
 
@@ -58,75 +58,71 @@ export default function StructureManager() {
   };
   const closeModal = () => { setModalMode(null); setSelectedItem(null); };
 
-  if (isLoading) return <div className="flex justify-center p-10"><Loader2 className="animate-spin text-primary" /></div>;
+  if (isLoading) return <div className="flex justify-center p-12"><Loader2 className="animate-spin text-gray-400" /></div>;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h2 className="text-lg font-bold text-slate-800">Hierarchy Structure</h2>
-          <p className="text-slate-500 text-sm">Manage Kshetras (Regions) and Mandals (Centers)</p>
-        </div>
-        <button onClick={() => openModal('ADD_KSHETRA')} className="w-full sm:w-auto btn-primary flex items-center justify-center gap-2">
-          <Plus size={16} /> Add Kshetra
-        </button>
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button size="sm" icon={Plus} onClick={() => openModal('ADD_KSHETRA')}>Add Kshetra</Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {kshetras?.map(kshetra => (
-          <div key={kshetra.id} className="card h-full flex flex-col">
-            {/* Kshetra Header - Icons Always Visible */}
-            <div className="bg-slate-50 px-4 py-3 border-b border-slate-100 flex justify-between items-center group">
-              <div className="flex items-center gap-2 font-bold text-slate-800">
-                <Map size={18} className="text-primary" /> {kshetra.name}
+          <div key={kshetra.id} className="bg-white border border-gray-200 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)] h-full flex flex-col group">
+            
+            {/* Kshetra Header */}
+            <div className="bg-gray-50 px-4 py-3 border-b border-gray-100 flex justify-between items-center">
+              <div className="flex items-center gap-2 font-bold text-gray-900 text-sm">
+                <Map size={16} className="text-[#5C3030]" strokeWidth={2}/> {kshetra.name}
               </div>
-              <div className="flex gap-1">
-                <button onClick={() => openModal('EDIT_KSHETRA', kshetra)} className="action-btn text-blue-500 bg-blue-50"><Edit2 size={14}/></button>
-                <button onClick={() => { if(confirm('Delete Kshetra?')) deleteItem.mutate({ table: 'kshetras', id: kshetra.id }) }} className="action-btn text-red-500 bg-red-50"><Trash2 size={14}/></button>
+              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onClick={() => openModal('EDIT_KSHETRA', kshetra)} className="p-1.5 text-gray-400 hover:text-[#5C3030] rounded-md transition-colors"><Edit3 size={14}/></button>
+                <button onClick={() => { if(confirm('Delete Kshetra?')) deleteItem.mutate({ table: 'kshetras', id: kshetra.id }) }} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md transition-colors"><Trash2 size={14}/></button>
               </div>
             </div>
 
-            {/* Mandals List - Icons Always Visible */}
+            {/* Mandals List */}
             <div className="p-2 flex-1 space-y-1">
               {kshetra.mandals?.map(mandal => (
-                <div key={mandal.id} className="flex justify-between items-center p-2 hover:bg-slate-50 rounded-lg transition-colors">
-                  <div className="flex items-center gap-3 text-sm font-medium text-slate-600">
-                    <MapPin size={14} className="text-slate-400" /> {mandal.name}
+                <div key={mandal.id} className="flex justify-between items-center p-2 hover:bg-gray-50 rounded-md transition-colors group/mandal">
+                  <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                    <MapPin size={14} className="text-gray-400" strokeWidth={1.5} /> {mandal.name}
                   </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => openModal('EDIT_MANDAL', mandal)} className="p-1 text-slate-400 hover:text-blue-500"><Edit2 size={14}/></button>
-                    <button onClick={() => { if(confirm('Delete Mandal?')) deleteItem.mutate({ table: 'mandals', id: mandal.id }) }} className="p-1 text-slate-400 hover:text-red-500"><Trash2 size={14}/></button>
+                  <div className="flex gap-1 opacity-0 group-hover/mandal:opacity-100 transition-opacity">
+                    <button onClick={() => openModal('EDIT_MANDAL', mandal)} className="p-1 text-gray-400 hover:text-[#5C3030] rounded-md"><Edit3 size={14}/></button>
+                    <button onClick={() => { if(confirm('Delete Mandal?')) deleteItem.mutate({ table: 'mandals', id: mandal.id }) }} className="p-1 text-gray-400 hover:text-red-600 rounded-md"><Trash2 size={14}/></button>
                   </div>
                 </div>
               ))}
-              {kshetra.mandals?.length === 0 && <div className="text-center py-4 text-xs text-slate-300 italic">No Mandals</div>}
+              {kshetra.mandals?.length === 0 && <div className="text-center py-4 text-xs text-gray-400 font-medium">No Mandals</div>}
             </div>
 
-            <button onClick={() => openModal('ADD_MANDAL', kshetra)} className="w-full py-3 border-t border-dashed border-slate-200 text-xs font-bold text-primary hover:bg-primary/5 flex items-center justify-center gap-2">
-              <Plus size={14} /> Add Mandal
+            <button onClick={() => openModal('ADD_MANDAL', kshetra)} className="w-full py-2.5 border-t border-gray-100 text-xs font-bold text-[#5C3030] hover:bg-gray-50 flex items-center justify-center gap-1.5 transition-colors">
+              <Plus size={14} strokeWidth={2}/> Add Mandal
             </button>
           </div>
         ))}
       </div>
 
       <Modal isOpen={!!modalMode} onClose={closeModal} title={modalMode?.replace('_', ' ')}>
-        <form onSubmit={(e) => { e.preventDefault(); handleMutation(modalMode.includes('ADD_KSHETRA') ? 'CREATE_KSHETRA' : modalMode.includes('ADD_MANDAL') ? 'CREATE_MANDAL' : modalMode.includes('EDIT_KSHETRA') ? 'UPDATE_KSHETRA' : 'UPDATE_MANDAL'); }} className="space-y-4">
-          {error && <div className="text-red-600 text-sm bg-red-50 p-2 rounded">{error}</div>}
+        <form onSubmit={handleMutation} className="space-y-4">
+          {error && <div className="text-red-700 text-xs font-semibold bg-red-50 border border-red-100 p-3 rounded-md">{error}</div>}
           <div>
-            <label className="label-xs">Name</label>
-            <input autoFocus className="input-field" value={formData.name} onChange={e => setFormData({ name: e.target.value })} placeholder="Enter name..." />
+            <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5">Name</label>
+            <input 
+              autoFocus 
+              className="w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030] transition-colors" 
+              value={formData.name} 
+              onChange={e => setFormData({ name: e.target.value })} 
+              placeholder="Enter name..." 
+            />
           </div>
-          <button type="submit" className="btn-primary w-full py-3">Save Changes</button>
+          <div className="pt-2 flex justify-end gap-2">
+            <Button variant="secondary" onClick={closeModal} type="button">Cancel</Button>
+            <Button type="submit">Save Changes</Button>
+          </div>
         </form>
       </Modal>
-
-      <style>{`
-        .btn-primary { @apply bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg font-bold text-sm transition-all; }
-        .card { @apply bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm; }
-        .action-btn { @apply p-1.5 rounded transition-colors; }
-        .label-xs { @apply block text-xs font-bold text-slate-500 uppercase mb-1.5; }
-        .input-field { @apply w-full p-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary/20 outline-none font-medium text-slate-800; }
-      `}</style>
     </div>
   );
 }

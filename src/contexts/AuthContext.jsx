@@ -11,7 +11,7 @@ export default function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   
-  // Use a ref to track if we've completed the initial load
+  // Ref tracking to prevent React 18 strict mode double-fetches
   const isInitialized = useRef(false);
 
   useEffect(() => {
@@ -20,7 +20,6 @@ export default function AuthProvider({ children }) {
     const initializeAuth = async () => {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
-        
         if (error) throw error;
 
         if (session?.user) {
@@ -39,43 +38,34 @@ export default function AuthProvider({ children }) {
       } finally {
         if (mounted) {
           setLoading(false);
-          isInitialized.current = true; // Mark as successfully loaded
+          isInitialized.current = true;
         }
       }
     };
 
-    // 1. Run the initial check once
     if (!isInitialized.current) {
        initializeAuth();
     }
 
-    // 2. Listen for actual login/logout events (IGNORE background refreshes)
+    // Supabase Listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return;
-      
-      // If the app hasn't finished its first load, let initializeAuth handle it
-      if (!isInitialized.current) return;
+      if (!mounted || !isInitialized.current) return;
 
       if (event === 'SIGNED_OUT') {
         setUser(null);
         setProfile(null);
       } 
-      else if (event === 'SIGNED_IN') {
-        // Only run the DB fetch if it's a completely new login event
-        if (session?.user) {
-           setUser(session.user);
-           const { data } = await supabase
-             .from('user_profiles')
-             .select('*')
-             .eq('id', session.user.id)
-             .single();
-             
-           if (mounted && data) setProfile(data);
-        }
+      else if (event === 'SIGNED_IN' && session?.user) {
+         setUser(session.user);
+         const { data } = await supabase
+           .from('user_profiles')
+           .select('*')
+           .eq('id', session.user.id)
+           .single();
+           
+         if (mounted && data) setProfile(data);
       }
-      // Notice what is missing: We completely ignore TOKEN_REFRESHED and USER_UPDATED.
-      // Supabase handles the token in local storage automatically. 
-      // We don't need to poke React and cause the ProtectedRoute to redirect you!
+      // Note: We safely ignore 'TOKEN_REFRESHED' to prevent UI thrashing
     });
 
     return () => {
@@ -86,10 +76,10 @@ export default function AuthProvider({ children }) {
 
   if (loading) {
     return (
-      <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-50 z-[9999]">
-         <Loader2 className="animate-spin text-indigo-600 mb-4" size={42} />
-         <p className="text-slate-500 font-bold text-sm tracking-widest uppercase animate-pulse">
-           Verifying Secure Session...
+      <div className="fixed inset-0 flex flex-col items-center justify-center bg-gray-50 z-[9999] font-sora">
+         <Loader2 className="animate-spin text-[#5C3030] mb-3" size={32} strokeWidth={1.5} />
+         <p className="text-gray-500 font-semibold text-[10px] tracking-widest uppercase animate-pulse">
+           Verifying Security...
          </p>
       </div>
     );

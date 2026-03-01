@@ -1,8 +1,8 @@
-    import React from 'react';
+import React from 'react';
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext'; // Adjust path to your AuthContext
+import { useAuth } from '../contexts/AuthContext';
 import { Loader2, ShieldAlert } from 'lucide-react';
-import Button from './ui/Button'; // Adjust path to your Button component
+import Button from './ui/Button';
 
 export default function ProtectedRoute({ allowedRoles = [] }) {
   const { profile, loading } = useAuth();
@@ -11,47 +11,42 @@ export default function ProtectedRoute({ allowedRoles = [] }) {
 
   if (loading) {
     return (
-      <div className="h-screen w-full flex items-center justify-center bg-slate-50">
-        <Loader2 className="animate-spin text-indigo-600" size={32} />
+      <div className="h-screen w-full flex items-center justify-center bg-gray-50">
+        <Loader2 className="animate-spin text-[#5C3030]" size={24} strokeWidth={1.5} />
       </div>
     );
   }
 
-  // 1. Check if User is Logged In
+  // 1. Guard: Not Logged In
   if (!profile) {
-    // Redirect to login, but remember where they were trying to go
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // 2. Check Role Permissions
-  // If allowedRoles is empty, it means "Any logged-in user can access"
+  // 2. Guard: Role Based Access Control
   if (allowedRoles.length > 0) {
     const userRole = (profile.role || '').toLowerCase();
-    
-    // Normalize allowed roles to lowercase to avoid case-sensitive bugs
     const normalizedAllowedRoles = allowedRoles.map(r => r.toLowerCase());
 
     if (!normalizedAllowedRoles.includes(userRole)) {
-      // 🛑 ACCESS DENIED UI
       return (
-        <div className="min-h-[80vh] flex flex-col items-center justify-center text-center p-6 bg-slate-50">
-          <div className="bg-red-100 p-6 rounded-full mb-6 shadow-sm animate-in zoom-in-50">
-            <ShieldAlert size={64} className="text-red-600" />
-          </div>
-          <h1 className="text-3xl font-bold text-slate-800 mb-3">Access Restricted</h1>
-          <p className="text-slate-500 max-w-md mb-8 text-lg">
-            You are signed in as a <strong className="capitalize text-slate-900 bg-slate-200 px-2 py-0.5 rounded">{userRole}</strong>.
-            You do not have permission to view this page.
-          </p>
-          <div className="flex gap-4">
-            <Button variant="secondary" onClick={() => navigate(-1)}>Go Back</Button>
-            <Button onClick={() => navigate('/')}>Return to Dashboard</Button>
+        <div className="min-h-[80vh] flex flex-col items-center justify-center p-6 bg-gray-50 font-sora">
+          <div className="bg-white border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)] rounded-md p-8 max-w-md w-full text-center animate-in zoom-in-95 duration-200">
+            <ShieldAlert size={40} strokeWidth={1.5} className="text-red-500 mx-auto mb-4" />
+            <h1 className="text-xl font-bold text-gray-900 mb-2">Access Restricted</h1>
+            <p className="text-gray-500 text-sm mb-6 leading-relaxed">
+              You are signed in as <span className="font-semibold text-gray-900 uppercase tracking-widest text-[10px] bg-gray-100 px-1.5 py-0.5 rounded ml-1">{userRole}</span>.<br/>
+              You do not have the required permissions to view this resource.
+            </p>
+            <div className="flex gap-3 justify-center">
+              <Button variant="secondary" onClick={() => navigate(-1)}>Go Back</Button>
+              <Button onClick={() => navigate('/')}>Dashboard</Button>
+            </div>
           </div>
         </div>
       );
     }
   }
 
-  // 3. Authorized! Render the requested page (Outlet)
+  // 3. Authorized
   return <Outlet />;
 }

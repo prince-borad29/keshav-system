@@ -1,113 +1,170 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { Search, Loader2, UserCheck, Plus, X } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
+import Button from '../../components/ui/Button';
+import Badge from '../../components/ui/Badge';
 import { useAuth } from '../../contexts/AuthContext';
-import { Loader2, ShieldAlert, FolderKey } from 'lucide-react';
-import RegistrationRoster from './RegistrationRoster'; // We will create this next!
 
 export default function RegistrationDashboard() {
   const { profile } = useAuth();
-  const [projects, setProjects] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedProject, setSelectedProject] = useState(null);
+  const queryClient = useQueryClient();
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedProject, setSelectedProject] = useState('');
 
-  const role = (profile?.role || '').toLowerCase();
-  const isAdmin = role === 'admin';
-  
-  // 🛑 Security Gate: Takers, Viewers, and Editors should NOT be here.
-  // Allowed: Global Admins, Nirdeshaks, Nirikshaks, Sanchalaks.
-  // (Note: If a project_admin is a 'Coordinator', they can be handled via specific project assignments, but generally Registration is run by local leaders).
-  const allowedRoles = ['admin', 'nirdeshak', 'nirikshak', 'sanchalak', 'project_admin'];
-  const isAuthorized = allowedRoles.includes(role);
-
-  useEffect(() => {
-    if (!isAuthorized) {
-      setLoading(false);
-      return;
-    }
-    fetchActiveProjects();
-  }, [isAuthorized]);
-
-  const fetchActiveProjects = async () => {
-    try {
-      // Only fetch active projects where registration is open
+  // 1. Fetch Active Projects
+  const { data: projects, isLoading: loadingProjects } = useQuery({
+    queryKey: ['active-projects'],
+    queryFn: async () => {
       const { data, error } = await supabase
         .from('projects')
-        .select('id, name, registration_open, type')
-        .eq('is_active', true)
+        .select('id, name, status')
+        .eq('status', 'active')
         .order('created_at', { ascending: false });
-
       if (error) throw error;
-      setProjects(data || []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
+      return data;
+    },
+  });
+
+  // 2. Fetch Roster (NO abortSignal to prevent header corruption)
+  const { data: roster, isLoading: loadingRoster, isFetching } = useQuery({
+    queryKey: ['registration-roster', selectedProject, searchTerm],
+    queryFn: async () => {
+      if (!selectedProject) return [];
+
+      let query = supabase.from('members').select(`
+        id, name, surname, internal_code, mandal_id,
+        mandals ( name ),
+        project_registrations ( project_id )
+      `);
+
+      if (searchTerm) {
+        query = query.or(`name.ilike.%${searchTerm}%,surname.ilike.%${searchTerm}%,internal_code.ilike.%${searchTerm}%`);
+      }
+
+      const { data, error } = await query.limit(50); 
+      if (error) throw error;
+
+      return data.map(m => ({
+        ...m,
+        isRegistered: m.project_registrations.some(r => r.project_id === selectedProject)
+      }));
+    },
+    enabled: !!selectedProject,
+    keepPreviousData: true,
+  });
+
+  // 3. Safe Registration Mutation
+  const registerMutation = useMutation({
+    mutationFn: async ({ memberId, isRegistering }) => {
+      if (isRegistering) {
+        const { error } = await supabase.from('project_registrations').insert({
+          project_id: selectedProject,
+          member_id: memberId,
+          registered_by: profile.id
+        });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('project_registrations').delete()
+          .match({ project_id: selectedProject, member_id: memberId });
+        if (error) throw error;
+      }
+    },
+    onMutate: async (variables) => {
+      // Safely cancel without dropping headers
+      await queryClient.cancelQueries({ queryKey: ['registration-roster', selectedProject] });
+      const previousRoster = queryClient.getQueryData(['registration-roster', selectedProject, searchTerm]);
+      
+      // Optimistic Update
+      queryClient.setQueryData(['registration-roster', selectedProject, searchTerm], old => {
+        if (!old) return old;
+        return old.map(m => m.id === variables.memberId ? { ...m, isRegistered: variables.isRegistering } : m);
+      });
+
+      return { previousRoster };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['registration-roster', selectedProject] });
+    },
+    onError: (err, variables, context) => {
+      if (context?.previousRoster) {
+        queryClient.setQueryData(['registration-roster', selectedProject, searchTerm], context.previousRoster);
+      }
+      alert(`Update failed: ${err.message}`);
     }
-  };
+  });
 
-  if (!isAuthorized) {
-    return (
-      <div className="h-[80vh] flex flex-col items-center justify-center text-center p-6">
-        <div className="bg-red-50 p-6 rounded-full mb-4"><ShieldAlert size={48} className="text-red-500" /></div>
-        <h2 className="text-2xl font-bold text-slate-800 mb-2">Access Denied</h2>
-        <p className="text-slate-500 max-w-md">You do not have the required permissions to manage Event Registrations.</p>
-      </div>
-    );
-  }
+  const inputClass = "px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030] transition-colors";
 
-  if (loading) return <div className="p-10 text-center"><Loader2 className="animate-spin inline text-indigo-600"/> Loading Registration Desk...</div>;
-
-  // If a project is selected, render the Roster
-  if (selectedProject) {
-    return (
-      <RegistrationRoster 
-        project={selectedProject} 
-        onBack={() => setSelectedProject(null)} 
-        isAdmin={isAdmin}
-        profile={profile}
-      />
-    );
-  }
-
-  // Otherwise, render the Project Selection Screen
   return (
-    <div className="max-w-4xl mx-auto space-y-6 pb-20 px-4 animate-in fade-in">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-800">Registration Desk</h1>
-        <p className="text-slate-500 text-sm mt-1">Select an active project to manage member registrations.</p>
+    <div className="space-y-5 pb-10">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+            Registration Desk
+          </h1>
+          <p className="text-xs text-gray-500 mt-1">Quickly assign members to active events.</p>
+        </div>
+        
+        <select 
+          className={`${inputClass} w-full sm:w-64 appearance-none shadow-[0_1px_3px_rgba(0,0,0,0.02)]`}
+          value={selectedProject}
+          onChange={(e) => setSelectedProject(e.target.value)}
+        >
+          <option value="">Select an Active Project...</option>
+          {projects?.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {projects.map(p => (
-          <div 
-            key={p.id} 
-            onClick={() => setSelectedProject(p)}
-            className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:border-indigo-300 hover:shadow-md cursor-pointer transition-all group"
-          >
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                  <FolderKey size={24} />
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-800 text-lg">{p.name}</h3>
-                  <div className="flex gap-2 mt-1 text-xs">
-                    {p.registration_open ? (
-                       <span className="text-green-600 font-bold bg-green-50 px-2 py-0.5 rounded">Registration Open</span>
-                    ) : (
-                       <span className="text-red-600 font-bold bg-red-50 px-2 py-0.5 rounded">Registration Closed</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
+      <div className="relative">
+        <Search className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
+        <input 
+          className={`w-full pl-9 pr-10 ${inputClass} shadow-[0_1px_3px_rgba(0,0,0,0.02)]`}
+          placeholder="Search by name or code..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+        {isFetching && <Loader2 className="absolute right-3 top-2.5 animate-spin text-gray-400" size={16} strokeWidth={1.5} />}
+      </div>
 
-        {projects.length === 0 && (
-          <div className="col-span-full py-12 text-center text-slate-500 bg-slate-50 rounded-2xl border border-dashed border-slate-300">
-            No active projects found.
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {loadingRoster ? (
+          <div className="col-span-full py-12 text-center text-gray-400 text-sm">
+            {selectedProject ? <><Loader2 className="animate-spin inline mr-2" size={16}/> Loading roster...</> : "Select a project to load the roster."}
           </div>
+        ) : (
+          roster?.map(member => {
+            const isProcessing = (registerMutation.isPending || registerMutation.isLoading) && registerMutation.variables?.memberId === member.id;
+
+            return (
+              <div 
+                key={member.id} 
+                className={`p-3 rounded-md border shadow-[0_1px_3px_rgba(0,0,0,0.02)] transition-all flex justify-between items-center ${
+                  member.isRegistered ? 'bg-gray-50 border-gray-300' : 'bg-white border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <div className="min-w-0 pr-3">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <p className="font-semibold text-sm text-gray-900 truncate">{member.name} {member.surname}</p>
+                    {member.isRegistered && <Badge variant="primary" className="shrink-0">Added</Badge>}
+                  </div>
+                  <p className="text-[10px] text-gray-500 uppercase tracking-widest font-inter truncate">
+                    {member.internal_code} • {member.mandals?.name}
+                  </p>
+                </div>
+
+                <Button
+                  size="sm"
+                  variant={member.isRegistered ? "secondary" : "primary"}
+                  onClick={() => registerMutation.mutate({ memberId: member.id, isRegistering: !member.isRegistered })}
+                  disabled={isProcessing}
+                  className="shrink-0 w-10 h-8 !px-0" 
+                >
+                  {isProcessing ? <Loader2 size={14} className="animate-spin text-gray-400" /> : member.isRegistered ? <X size={14} strokeWidth={2} /> : <Plus size={14} strokeWidth={2} />}
+                </Button>
+              </div>
+            );
+          })
         )}
       </div>
     </div>

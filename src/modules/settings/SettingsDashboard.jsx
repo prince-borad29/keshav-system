@@ -1,24 +1,24 @@
-import React, { useState } from 'react';
-import { Map, Tag, Settings, Users } from 'lucide-react';
+import React from 'react';
+import { Settings } from 'lucide-react';
 import TagManager from './TagManager';
 
 export default function SettingsDashboard() {
-
   return (
-    <div className="max-w-5xl mx-auto space-y-6 pb-20 p-4 animate-in fade-in">
+    <div className="space-y-6 pb-10">
       
       {/* HEADER */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-          <Settings className="text-indigo-600"/> Settings & Master Data
+        <h1 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+          <Settings className="text-[#5C3030]" size={20} strokeWidth={2}/> System Settings
         </h1>
-        <p className="text-slate-500 text-sm">Manage the core structure of your organization.</p>
+        <p className="text-xs text-gray-500 mt-1">Manage global master data and tags.</p>
       </div>
 
       {/* CONTENT */}
-      <div className="mt-6">
+      <div className="animate-in fade-in slide-in-from-bottom-2 duration-200">
          <TagManager />
       </div>
+      
     </div>
   );
 }

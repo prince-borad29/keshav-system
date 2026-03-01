@@ -2,20 +2,18 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, Lock, Mail, AlertCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { useAuth } from '../../contexts/AuthContext'; // Import Auth Context
+import { useAuth } from '../../contexts/AuthContext';
+import Button from '../../components/ui/Button';
 
 export default function Login() {
   const navigate = useNavigate();
-  const { user, profile, loading: authLoading } = useAuth(); // Destructure state
+  const { user, profile, loading: authLoading } = useAuth();
+  
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [formData, setFormData] = useState({
-    email: '',
-    password: ''
-  });
+  const [formData, setFormData] = useState({ email: '', password: '' });
 
-  // 🛑 SAFETY REDIRECT 🛑
-  // If the user is already fully logged in, push them to the dashboard
+  // 🛑 SAFETY REDIRECT: Push to dashboard if already logged in
   useEffect(() => {
     if (!authLoading && user && profile) {
       navigate('/');
@@ -34,55 +32,51 @@ export default function Login() {
       });
 
       if (error) throw error;
-      
-      // DO NOT navigate here. AuthContext handles it cleanly now.
-      return; 
-      
+      // Do not navigate here; AuthContext's onAuthStateChange handles it safely
     } catch (err) {
       console.error(err);
       setError(err.message === "Invalid login credentials" 
         ? "Incorrect email or password." 
         : "Login failed. Please try again.");
-        
       setLoading(false);
     } 
   };
 
+  const inputClass = "w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-md font-medium text-gray-900 focus:outline-none focus:border-[#5C3030] transition-colors placeholder:text-gray-400 text-sm";
+
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-md rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4 font-sora selection:bg-[#5C3030]/20">
+      <div className="bg-white w-full max-w-sm rounded-md shadow-[0_4px_20px_rgba(0,0,0,0.08)] border border-gray-200 overflow-hidden">
         
         {/* Brand Header */}
-        <div className="bg-primary p-8 text-center">
-          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Project Keshav</h1>
-          <p className="text-primary-light font-medium text-sm text-white/90">Yuvak Mandal Management System</p>
+        <div className="bg-[#5C3030] p-8 text-center">
+          <h1 className="text-2xl font-bold text-white mb-1 tracking-tight">Keshav Portal</h1>
+          <p className="text-[#5C3030] text-xs text-white/80 font-semibold tracking-wide uppercase">Yuvak Mandal Systems</p>
         </div>
 
-        <div className="p-8">
-          <h2 className="text-xl font-bold text-slate-800 mb-6 text-center">Welcome Back</h2>
+        <div className="p-6 sm:p-8">
+          <h2 className="text-lg font-bold text-gray-900 mb-5 text-center">Welcome Back</h2>
 
-          {/* Error Alert */}
           {error && (
-            <div className="mb-6 bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl text-sm font-bold flex items-center gap-3">
-              <AlertCircle size={18} />
+            <div className="mb-5 bg-red-50 border border-red-200 text-red-700 px-3 py-2.5 rounded-md text-xs font-semibold flex items-center gap-2">
+              <AlertCircle size={16} strokeWidth={1.5} className="shrink-0" />
               {error}
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Email Input */}
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 ml-1">
+              <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5">
                 Email Address
               </label>
               <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                  <Mail size={18} />
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                  <Mail size={16} strokeWidth={1.5} />
                 </div>
                 <input
                   type="email"
                   required
-                  className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all placeholder:text-slate-400"
+                  className={inputClass}
                   placeholder="admin@keshav.app"
                   value={formData.email}
                   onChange={(e) => setFormData({...formData, email: e.target.value})}
@@ -90,19 +84,18 @@ export default function Login() {
               </div>
             </div>
 
-            {/* Password Input */}
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 ml-1">
+              <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5">
                 Password
               </label>
               <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                  <Lock size={18} />
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                  <Lock size={16} strokeWidth={1.5} />
                 </div>
                 <input
                   type="password"
                   required
-                  className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all placeholder:text-slate-400"
+                  className={inputClass}
                   placeholder="••••••••"
                   value={formData.password}
                   onChange={(e) => setFormData({...formData, password: e.target.value})}
@@ -110,26 +103,18 @@ export default function Login() {
               </div>
             </div>
 
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={loading || authLoading} // Disable if context is loading
-              className="w-full bg-primary hover:bg-primary-dark text-white font-bold py-3.5 rounded-xl shadow-lg shadow-primary/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer"
+            <Button 
+              type="submit" 
+              className="w-full mt-2 py-2.5" 
+              disabled={loading || authLoading}
             >
-              {(loading || authLoading) ? (
-                <>
-                  <Loader2 size={20} className="animate-spin" />
-                  Verifying...
-                </>
-              ) : (
-                "Sign In"
-              )}
-            </button>
+              {(loading || authLoading) ? <><Loader2 size={16} className="animate-spin mr-2" /> Verifying...</> : "Sign In"}
+            </Button>
           </form>
 
-          <div className="mt-6 text-center">
-            <p className="text-xs text-slate-400 font-medium">
-              Don't have an account? Contact your Nirdeshak.
+          <div className="mt-6 text-center border-t border-gray-100 pt-4">
+            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-widest">
+              Authorized Personnel Only
             </p>
           </div>
         </div>

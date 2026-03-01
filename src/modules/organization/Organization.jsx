@@ -10,36 +10,36 @@ export default function Organization() {
     <div className="space-y-6 pb-20">
       {/* Page Header */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Organization Settings</h1>
-        <p className="text-slate-500 text-sm font-medium">Manage hierarchy and user access controls</p>
+        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Organization</h1>
+        <p className="text-gray-500 text-sm font-medium mt-1">Manage hierarchy and system access controls.</p>
       </div>
 
-      {/* Tabs */}
-      <div className="bg-white p-1.5 rounded-xl border border-slate-200 inline-flex shadow-sm overflow-x-auto max-w-full">
+      {/* Flat Radix Tabs */}
+      <div className="flex bg-gray-100 p-1 rounded-md border border-gray-200 w-fit">
         <button 
           onClick={() => setActiveTab('structure')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
+          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-semibold transition-all ${
             activeTab === 'structure' 
-              ? 'bg-slate-800 text-white shadow-md' 
-              : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
+              ? 'bg-white text-gray-900 shadow-[0_1px_3px_rgba(0,0,0,0.02)]' 
+              : 'text-gray-500 hover:text-gray-700'
           }`}
         >
-          <LayoutGrid size={16} /> Hierarchy
+          <LayoutGrid size={16} strokeWidth={1.5} /> Hierarchy
         </button>
         <button 
           onClick={() => setActiveTab('users')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
+          className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-semibold transition-all ${
             activeTab === 'users' 
-              ? 'bg-slate-800 text-white shadow-md' 
-              : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
+              ? 'bg-white text-gray-900 shadow-[0_1px_3px_rgba(0,0,0,0.02)]' 
+              : 'text-gray-500 hover:text-gray-700'
           }`}
         >
-          <Users size={16} /> User Roles
+          <Users size={16} strokeWidth={1.5} /> User Roles
         </button>
       </div>
 
       {/* Content Area */}
-      <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div className="animate-in fade-in slide-in-from-bottom-2 duration-200">
         {activeTab === 'structure' ? <StructureManager /> : <UserManager />}
       </div>
     </div>

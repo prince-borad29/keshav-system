@@ -1,12 +1,12 @@
 import React from "react";
-import { X, MapPin, Calendar, Phone, Hash, User, Briefcase, Flag, Printer, Shield, Globe, Tag } from "lucide-react";
+import { X, MapPin, Calendar, Phone, Hash, User, Shield, Tag } from "lucide-react";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
+import Modal from "../../components/Modal";
 
 export default function MemberProfile({ member, isOpen, onClose }) {
   if (!isOpen || !member) return null;
 
-  // Formatting Helpers
   const formatDate = (dateString) => {
     if (!dateString) return "Not Provided";
     return new Date(dateString).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
@@ -23,124 +23,88 @@ export default function MemberProfile({ member, isOpen, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+    <Modal isOpen={isOpen} onClose={onClose} title="Member Profile">
+      <div className="space-y-6">
         
-        {/* HEADER */}
-        <div className="bg-slate-50 px-8 py-6 border-b border-slate-200 flex justify-between items-start">
-          <div className="flex gap-5 items-center">
-            {/* Avatar */}
-            <div className={`w-20 h-20 rounded-2xl flex items-center justify-center text-3xl font-bold shadow-sm border-4 border-white ${member.gender === "Yuvati" ? "bg-pink-100 text-pink-600" : "bg-indigo-100 text-indigo-600"}`}>
-              {member.name[0]}{member.surname[0]}
+        {/* Header Block */}
+        <div className="flex gap-4 items-center">
+          <div className="w-16 h-16 rounded-md bg-gray-100 flex items-center justify-center text-2xl font-bold font-inter text-gray-600 border border-gray-200 shrink-0">
+            {member.name[0]}{member.surname[0]}
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 leading-tight">
+              {member.name} {member.surname}
+            </h2>
+            <div className="flex flex-wrap items-center gap-2 mt-1.5">
+              <Badge variant="primary">{member.designation}</Badge>
+              {member.is_guest && <Badge variant="warning">Guest</Badge>}
+              <span className="text-xs font-inter text-gray-500 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-200 flex items-center gap-1">
+                <Hash size={10} strokeWidth={2}/> {member.internal_code}
+              </span>
             </div>
+          </div>
+        </div>
 
-            <div>
-              <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                {member.name} {member.surname}
-                {member.is_guest && <Badge variant="warning">Guest</Badge>}
-              </h2>
-              <div className="flex items-center gap-3 text-slate-500 mt-2">
-                <Badge variant="primary">{member.designation}</Badge>
-                <span className="text-sm font-mono flex items-center gap-1 bg-white px-2 py-0.5 rounded border border-slate-200">
-                  <Hash size={12} /> {member.internal_code}
+        <div className="h-px bg-gray-100 w-full" />
+
+        {/* Info Grid */}
+        <div className="grid grid-cols-2 gap-y-4 gap-x-4">
+          <div className="col-span-2 sm:col-span-1">
+            <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1.5"><User size={12}/> Full Name</label>
+            <p className="text-sm font-semibold text-gray-900">{member.name} {member.father_name} {member.surname}</p>
+          </div>
+          <div className="col-span-2 sm:col-span-1">
+            <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1.5"><Phone size={12}/> Mobile</label>
+            <p className="text-sm font-inter font-semibold text-gray-900">{member.mobile || "N/A"}</p>
+          </div>
+          <div className="col-span-2 sm:col-span-1">
+            <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1.5"><Calendar size={12}/> Date of Birth</label>
+            <p className="text-sm font-semibold text-gray-900">{formatDate(member.dob)} <span className="text-gray-500 font-normal">{getAge(member.dob)}</span></p>
+          </div>
+          <div className="col-span-2 sm:col-span-1">
+            <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1.5"><User size={12}/> Gender</label>
+            <p className="text-sm font-semibold text-gray-900">{member.gender}</p>
+          </div>
+          <div className="col-span-2">
+            <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1.5"><MapPin size={12}/> Address</label>
+            <p className="text-sm font-medium text-gray-700">{member.address || "No address provided"}</p>
+          </div>
+        </div>
+
+        <div className="h-px bg-gray-100 w-full" />
+
+        {/* Organization */}
+        <div className="space-y-3">
+          <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5"><Shield size={12}/> Organization Scope</label>
+          <div className="bg-gray-50 p-3 rounded-md border border-gray-200 flex flex-col sm:flex-row gap-4 divide-y sm:divide-y-0 sm:divide-x divide-gray-200">
+            <div className="flex-1 pt-0 sm:pt-0">
+              <span className="text-[10px] uppercase text-gray-500 font-semibold block mb-0.5">Local Mandal</span>
+              <span className="text-sm font-bold text-gray-900">{member.mandals?.name || "Unassigned"}</span>
+            </div>
+            <div className="flex-1 pt-3 sm:pt-0 sm:pl-4">
+              <span className="text-[10px] uppercase text-gray-500 font-semibold block mb-0.5">Regional Kshetra</span>
+              <span className="text-sm font-bold text-gray-900">{member.mandals?.kshetras?.name || "Unassigned"}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Tags */}
+        <div className="space-y-2">
+          <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5"><Tag size={12}/> Assigned Tags</label>
+          <div className="flex flex-wrap gap-1.5">
+            {member.member_tags && member.member_tags.length > 0 ? (
+              member.member_tags.map((mt) => (
+                <span key={mt.tag_id} className="px-2 py-1 bg-white text-gray-700 text-xs font-semibold rounded border border-gray-200 shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-gray-400"/> {mt.tags?.name}
                 </span>
-              </div>
-            </div>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-white hover:shadow-sm rounded-full transition-all text-slate-400 hover:text-slate-700">
-            <X size={24} />
-          </button>
-        </div>
-
-        {/* BODY - SCROLLABLE */}
-        <div className="p-8 overflow-y-auto space-y-8 flex-1 bg-white">
-          
-          {/* 1. PERSONAL DETAILS */}
-          <section>
-            <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2"><User size={14} /> Personal Information</h3>
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-y-6 gap-x-12 p-6 bg-slate-50 rounded-2xl border border-slate-100">
-              <div className="info-group">
-                <label>Full Name</label>
-                <p className="text-lg">{member.name} {member.father_name} {member.surname}</p>
-              </div>
-              <div className="info-group">
-                <label>Gender</label>
-                <p>{member.gender}</p>
-              </div>
-              <div className="info-group">
-                <label>Date of Birth</label>
-                <p className="flex items-center gap-2">
-                  <Calendar size={16} className="text-slate-400" />
-                  {formatDate(member.dob)} <span className="text-slate-400 text-sm font-normal">{getAge(member.dob)}</span>
-                </p>
-              </div>
-              <div className="info-group">
-                <label>Mobile Number</label>
-                <p className="flex items-center gap-2 font-mono text-lg text-indigo-700">
-                  <Phone size={16} className="text-indigo-400" /> {member.mobile || "N/A"}
-                </p>
-              </div>
-              <div className="info-group md:col-span-2">
-                <label>Address</label>
-                <p className="flex items-start gap-2">
-                  <MapPin size={16} className="text-slate-400 mt-1 flex-shrink-0" />
-                  {member.address || "No address provided"}
-                </p>
-              </div>
-            </div>
-          </section>
-
-          {/* 2. ORGANIZATION */}
-          <section>
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><Shield size={14} /> Organization Scope</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="p-5 rounded-2xl border border-slate-200 hover:border-indigo-200 transition-colors">
-                <label className="text-xs text-slate-400 font-bold uppercase mb-1 block">Local Mandal</label>
-                <div className="font-bold text-slate-800 text-lg flex items-center gap-2">
-                  <Flag size={20} className="text-indigo-500" /> {member.mandals?.name || "Unassigned"}
-                </div>
-              </div>
-              <div className="p-5 rounded-2xl border border-slate-200 hover:border-indigo-200 transition-colors">
-                <label className="text-xs text-slate-400 font-bold uppercase mb-1 block">Regional Kshetra</label>
-                <div className="font-bold text-slate-800 text-lg flex items-center gap-2">
-                  <Globe size={20} className="text-teal-500" /> {member.mandals?.kshetras?.name || "Unassigned"}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* 3. TAGS */}
-          <section>
-             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><Tag size={14} /> Assigned Tags</h3>
-             <div className="flex flex-wrap gap-2">
-                {member.member_tags && member.member_tags.length > 0 ? (
-                  member.member_tags.map((mt) => (
-                    <span key={mt.tag_id} className="px-3 py-1.5 bg-white text-slate-700 text-sm font-medium rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-indigo-500"/> {mt.tags?.name}
-                    </span>
-                  ))
-                ) : (
-                  <span className="text-slate-400 text-sm italic">No tags assigned.</span>
-                )}
-             </div>
-          </section>
-        </div>
-
-        {/* FOOTER */}
-        <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
-          <div className="flex gap-3">
-            <Button variant="secondary" onClick={onClose}>Close</Button>
+              ))
+            ) : (
+              <span className="text-gray-400 text-xs italic font-medium">No tags assigned.</span>
+            )}
           </div>
         </div>
+
       </div>
-
-      <style>{`
-        .info-group label { @apply block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wide; }
-        .info-group p { @apply text-slate-800 font-bold; }
-      `}</style>
-    </div>
+    </Modal>
   );
 }

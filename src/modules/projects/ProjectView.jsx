@@ -1,9 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  ArrowLeft, Calendar, Plus, Clock, 
-  Edit3, Trash2, Star, Users, QrCode, Loader2, Shield 
-} from 'lucide-react';
+import { ArrowLeft, Calendar, Plus, Clock, Edit3, Trash2, Star, QrCode, Loader2, Shield } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
@@ -14,162 +12,125 @@ import { useAuth } from "../../contexts/AuthContext";
 export default function ProjectView({ project, onBack }) {
   const navigate = useNavigate();
   const { profile } = useAuth(); 
+  const queryClient = useQueryClient();
   
   const isAdmin = profile?.role === 'admin';
-  const isProjectAdminAppRole = profile?.role === 'project_admin'; // Identifies JIT users
+  const isProjectAdminAppRole = profile?.role === 'project_admin';
 
   const [activeTab, setActiveTab] = useState('events'); 
-  const [events, setEvents] = useState([]);
-  const [loadingSchedule, setLoadingSchedule] = useState(false);
-  
-  const [projectRole, setProjectRole] = useState(null);
   const [isEventFormOpen, setIsEventFormOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
 
-  useEffect(() => {
-    const fetchRole = async () => {
-      if (isAdmin) return; 
-      
-      try {
-        const { data, error } = await supabase
-          .from('project_assignments')
-          .select('role')
-          .eq('project_id', project.id)
-          .eq('user_id', profile.id)
-          .maybeSingle();
+  // 1. Fetch Role Data
+  const { data: projectRole } = useQuery({
+    queryKey: ['project-role', project.id, profile?.id],
+    queryFn: async () => {
+      if (isAdmin) return 'admin';
+      const { data } = await supabase.from('project_assignments').select('role').eq('project_id', project.id).eq('user_id', profile.id).maybeSingle();
+      return data?.role || null;
+    },
+    enabled: !!profile
+  });
 
-        if (error) throw error;
-        if (data) setProjectRole(data.role); 
-        
-      } catch (err) {
-        console.error("Error fetching project role:", err);
-      }
-    };
-
-    if (profile) fetchRole();
-  }, [project.id, profile, isAdmin]);
-
-  useEffect(() => {
-    if (activeTab === 'events') fetchEvents();
-  }, [project.id, activeTab]);
-
-  const fetchEvents = async () => {
-    setLoadingSchedule(true);
-    try {
+  // 2. Fetch Events
+  const { data: events, isLoading: loadingEvents } = useQuery({
+    queryKey: ['events', project.id],
+    queryFn: async () => {
       const { data, error } = await supabase.from('events').select('*').eq('project_id', project.id).order('date', { ascending: true });
       if (error) throw error;
-      setEvents(data || []);
-    } catch (err) { console.error(err); } finally { setLoadingSchedule(false); }
-  };
+      return data;
+    }
+  });
 
-  const handleDeleteEvent = async (id) => {
-    if(!confirm("Delete this event?")) return;
-    await supabase.from('events').delete().eq('id', id);
-    fetchEvents();
-  };
+  // 3. Delete Event Mutation
+  const deleteEventMutation = useMutation({
+    mutationFn: async (id) => await supabase.from('events').delete().eq('id', id),
+    onSuccess: () => queryClient.invalidateQueries(['events', project.id])
+  });
 
-  const handleEditEvent = (e) => { setSelectedEvent(e); setIsEventFormOpen(true); };
-  const handleCreateEvent = () => { setSelectedEvent(null); setIsEventFormOpen(true); };
-  const handleTrackAttendance = (event) => navigate(`/attendance/${project.id}/${event.id}`);
   const isPast = (date) => new Date(date) < new Date().setHours(0,0,0,0);
 
-  // --- UI CAPABILITY FLAGS ---
+  // Capabilities
   const isCoordinator = projectRole === 'Coordinator';
-  const isEditor = projectRole === 'Editor';
-  const isVolunteer = projectRole === 'volunteer';
-
   const canManageEvents = isAdmin || isCoordinator;
-  const canMarkAttendance = isAdmin || isCoordinator || isEditor || isVolunteer;
-  
-  // SECURE STAFF TAB: Admins can see it. Coordinators can see it ONLY IF they are not a restricted project_admin app role.
-const canManageStaff = isAdmin || (isCoordinator && !isProjectAdminAppRole);
+  const canMarkAttendance = isAdmin || isCoordinator || projectRole === 'Editor' || projectRole === 'volunteer';
+  const canManageStaff = isAdmin || (isCoordinator && !isProjectAdminAppRole);
+
   return (
-    <div className="max-w-6xl mx-auto space-y-6 pb-20 animate-in slide-in-from-right-4 duration-300">
-      
-      {/* NAV & HEADER */}
-      <button onClick={onBack} className="flex items-center gap-2 text-slate-500 hover:text-slate-800 font-medium transition-colors">
-        <ArrowLeft size={20} /> Back to Projects
+    <div className="space-y-6 pb-10">
+      {/* Header */}
+      <button onClick={onBack} className="flex items-center gap-2 text-gray-500 hover:text-gray-900 font-semibold text-sm transition-colors w-fit">
+        <ArrowLeft size={16} strokeWidth={2} /> Back to Projects
       </button>
 
-      <div className="bg-white rounded-2xl p-8 border border-slate-200 shadow-sm relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-bl-full -mr-16 -mt-16 z-0 pointer-events-none"/>
-        <div className="relative z-10 flex justify-between items-start">
-          <div>
-            <div className="flex gap-2 mb-3">
-              <Badge variant="primary">{project.type}</Badge>
-              <Badge variant="secondary">{project.allowed_gender}</Badge>
-            </div>
-            <h1 className="text-3xl font-bold text-slate-900 mb-2">{project.name}</h1>
-            <p className="text-slate-500 max-w-2xl text-lg">{project.description || "No description provided."}</p>
-          </div>
+      <div className="bg-white rounded-md p-6 border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+        <div className="flex gap-2 mb-2">
+          <Badge variant="default">{project.type}</Badge>
+          <Badge variant="default">{project.allowed_gender}</Badge>
         </div>
+        <h1 className="text-2xl font-bold text-gray-900 mb-1 leading-tight">{project.name}</h1>
+        <p className="text-gray-500 text-sm max-w-2xl">{project.description || "No description provided."}</p>
       </div>
 
-      {/* TABS */}
-      <div className="border-b border-slate-200 flex gap-6 overflow-x-auto whitespace-nowrap scrollbar-hide">
-        <button onClick={() => setActiveTab('events')} className={`pb-3 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${activeTab === 'events' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-          <Calendar size={18}/> Schedule & Events
+      {/* Tabs */}
+      <div className="border-b border-gray-200 flex gap-6 overflow-x-auto whitespace-nowrap">
+        <button onClick={() => setActiveTab('events')} className={`pb-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition-all ${activeTab === 'events' ? 'border-[#5C3030] text-[#5C3030]' : 'border-transparent text-gray-500 hover:text-gray-900'}`}>
+          <Calendar size={16} strokeWidth={1.5}/> Schedule & Events
         </button>
-        
         {canManageStaff && (
-          <button onClick={() => setActiveTab('staff')} className={`pb-3 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${activeTab === 'staff' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-            <Shield size={18}/> Project Staff
+          <button onClick={() => setActiveTab('staff')} className={`pb-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition-all ${activeTab === 'staff' ? 'border-[#5C3030] text-[#5C3030]' : 'border-transparent text-gray-500 hover:text-gray-900'}`}>
+            <Shield size={16} strokeWidth={1.5}/> Project Staff
           </button>
         )}
       </div>
 
-      {/* TAB CONTENT: EVENTS */}
+      {/* Content: Events */}
       {activeTab === 'events' && (
-        <div className="space-y-4 animate-in fade-in">
-          <div className="flex justify-end">
-            {canManageEvents && <Button size="sm" icon={Plus} onClick={handleCreateEvent}>Add Event</Button>}
-          </div>
-          
-          {loadingSchedule ? (
-            <div className="text-center p-12 text-slate-400">
-              <Loader2 className="animate-spin inline mr-2"/> Loading schedule...
+        <div className="space-y-4">
+          {canManageEvents && (
+            <div className="flex justify-end">
+              <Button size="sm" icon={Plus} onClick={() => { setSelectedEvent(null); setIsEventFormOpen(true); }}>Add Event</Button>
             </div>
-          ) : events.length === 0 ? (
-            <div className="bg-slate-50 rounded-2xl p-12 text-center border border-dashed border-slate-300">
-              <Calendar className="mx-auto h-12 w-12 text-slate-300 mb-3" />
-              <h3 className="font-medium text-slate-900">No events scheduled</h3>
-              <p className="text-slate-500 mb-4">No events have been created for this project yet.</p>
-              {canManageEvents && <Button variant="secondary" size="sm" onClick={handleCreateEvent}>Add First Event</Button>}
+          )}
+          
+          {loadingEvents ? (
+            <div className="text-center p-12 text-gray-400"><Loader2 className="animate-spin inline" size={24} strokeWidth={1.5}/></div>
+          ) : events?.length === 0 ? (
+            <div className="bg-white rounded-md p-10 text-center border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+              <p className="text-gray-500 text-sm font-medium">No events have been scheduled.</p>
             </div>
           ) : (
-            <div className="grid gap-4">
-              {events.map((event) => (
-                <div key={event.id} className={`bg-white p-5 rounded-xl border transition-all flex flex-col sm:flex-row items-start sm:items-center gap-5 group ${event.is_primary ? 'border-amber-200 shadow-sm ring-1 ring-amber-50' : 'border-slate-200 hover:border-indigo-300'} ${isPast(event.date) ? 'opacity-75 grayscale-[0.5]' : ''}`}>
-                  <div className={`flex flex-col items-center justify-center w-16 h-16 rounded-xl shrink-0 ${event.is_primary ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
-                    <span className="text-xs font-bold uppercase">{new Date(event.date).toLocaleString('default', { month: 'short' })}</span>
-                    <span className="text-2xl font-bold">{new Date(event.date).getDate()}</span>
+            <div className="grid gap-3">
+              {events?.map((event) => (
+                <div key={event.id} className={`bg-white p-4 rounded-md border shadow-[0_1px_3px_rgba(0,0,0,0.02)] flex flex-col sm:flex-row items-start sm:items-center gap-4 group ${event.is_primary ? 'border-[#5C3030]/20 bg-[#5C3030]/[0.02]' : 'border-gray-200'} ${isPast(event.date) ? 'opacity-60 grayscale' : ''}`}>
+                  <div className={`flex flex-col items-center justify-center w-14 h-14 rounded-md border shrink-0 ${event.is_primary ? 'border-[#5C3030]/20 bg-white text-[#5C3030]' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
+                    <span className="text-[10px] font-bold uppercase tracking-widest leading-none mt-1">{new Date(event.date).toLocaleString('default', { month: 'short' })}</span>
+                    <span className="text-xl font-inter font-bold leading-none mt-0.5">{new Date(event.date).getDate()}</span>
                   </div>
 
                   <div className="flex-1 min-w-0 w-full sm:w-auto">
                     <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-bold text-lg text-slate-800 truncate">{event.name}</h3>
-                      {event.is_primary && <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1 shrink-0"><Star size={10} className="fill-amber-700"/> Primary</span>}
+                      <h3 className="font-semibold text-gray-900 truncate">{event.name}</h3>
+                      {event.is_primary && <Badge variant="primary"><Star size={10} className="inline mr-1 fill-current"/> Primary</Badge>}
                     </div>
-                    
-                    <div className="flex flex-wrap items-center justify-between gap-3 mt-2">
-                       <div className="flex items-center gap-4 text-sm text-slate-500">
-                          <span className="flex items-center gap-1"><Clock size={14}/> All Day</span>
-                       </div>
-                       
-                       {canMarkAttendance && (
-                         <button onClick={() => handleTrackAttendance(event)} className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm shadow-indigo-200 active:scale-95 transition-all">
-                           <QrCode size={16}/> Track Attendance
-                         </button>
-                       )}
+                    <div className="flex items-center gap-4 text-xs text-gray-500 font-medium">
+                       <span className="flex items-center gap-1"><Clock size={12} strokeWidth={1.5}/> All Day</span>
                     </div>
                   </div>
 
-                  {canManageEvents && (
-                    <div className="flex gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity self-end sm:self-center border-t sm:border-t-0 pt-3 sm:pt-0 mt-2 sm:mt-0 w-full sm:w-auto justify-end">
-                      <button onClick={() => handleEditEvent(event)} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"><Edit3 size={18}/></button>
-                      <button onClick={() => handleDeleteEvent(event.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={18}/></button>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-2 w-full sm:w-auto justify-end border-t sm:border-t-0 pt-3 sm:pt-0 mt-2 sm:mt-0">
+                    {canMarkAttendance && (
+                      <Button variant="secondary" size="sm" icon={QrCode} onClick={() => navigate(`/attendance/${project.id}/${event.id}`)}>
+                        Track Attendance
+                      </Button>
+                    )}
+                    {canManageEvents && (
+                      <div className="flex gap-1 ml-2 border-l border-gray-200 pl-2">
+                        <button onClick={() => { setSelectedEvent(event); setIsEventFormOpen(true); }} className="p-1.5 text-gray-400 hover:text-gray-900 rounded-md hover:bg-gray-100 transition-colors"><Edit3 size={16} strokeWidth={1.5}/></button>
+                        <button onClick={() => { if(confirm("Delete event?")) deleteEventMutation.mutate(event.id); }} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md hover:bg-red-50 transition-colors"><Trash2 size={16} strokeWidth={1.5}/></button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -177,12 +138,12 @@ const canManageStaff = isAdmin || (isCoordinator && !isProjectAdminAppRole);
         </div>
       )}
 
-      {/* TAB CONTENT: PROJECT STAFF */}
+      {/* Content: Staff */}
       {activeTab === 'staff' && canManageStaff && (
         <ProjectStaff project={project} isAdmin={isAdmin} isCoordinator={isCoordinator} />
       )}
 
-      <EventForm isOpen={isEventFormOpen} onClose={() => setIsEventFormOpen(false)} onSuccess={fetchEvents} projectId={project.id} initialData={selectedEvent} />
+      <EventForm isOpen={isEventFormOpen} onClose={() => setIsEventFormOpen(false)} onSuccess={() => queryClient.invalidateQueries(['events', project.id])} projectId={project.id} initialData={selectedEvent} />
     </div>
   );
 }

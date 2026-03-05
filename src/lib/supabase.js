@@ -1,9 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-// 1. Check if we are in Production (Vercel) or Local Development
 const isProduction = import.meta.env.PROD;
 
-// 2. Use Vercel Proxy in Prod (bypasses ISP blocks). Use direct URL locally.
 const supabaseUrl = isProduction 
   ? `${window.location.origin}/supabase-api` 
   : import.meta.env.VITE_SUPABASE_URL;
@@ -14,11 +12,21 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.error("Missing Supabase Environment Variables!");
 }
 
-// 3. Export a single, constant instance of the client
+// 1. The Main Client (For the logged-in user)
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true
+  }
+});
+
+// 2. The Ghost Client (For background account creation)
+// We add a custom storageKey to silence the GoTrue warning permanently!
+export const ghostClient = createClient(supabaseUrl, supabaseAnonKey, { 
+  auth: { 
+    persistSession: false, 
+    autoRefreshToken: false,
+    storageKey: 'ghost-client-auth-storage' 
   }
 });

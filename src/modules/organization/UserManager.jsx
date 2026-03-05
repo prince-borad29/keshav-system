@@ -108,13 +108,26 @@ export default function UserManager() {
     setMemberResults([]);
   }, [isSystemModalOpen, isProjectModalOpen, users]);
 
-  // 2. MUTATIONS
+ // 2. MUTATIONS
   const systemMutation = useMutation({
     mutationFn: async () => {
       if (!editingId) {
         const password = systemForm.password || Math.random().toString(36).slice(-8) + "Aa1@";
-        const { data: auth, error: authError } = await supabase.auth.signUp({ email: systemForm.email.trim(), password, options: { data: { full_name: systemForm.full_name, role: systemForm.role } } });
+        
+        // We use supabase.auth.admin.createUser if you are an admin, 
+        // OR we use the ghost client if we want to avoid logging the current admin out.
+        // It's safer to use the ghost client for ALL background creations.
+        const { data: auth, error: authError } = await ghostClient.auth.signUp({ 
+          email: systemForm.email.trim(), 
+          password, 
+          options: { data: { full_name: systemForm.full_name, role: systemForm.role } } 
+        });
+        
         if (authError && !authError.message.includes("already registered")) throw authError;
+        
+        // 🧹 CLEANUP: Sign the ghost client out immediately so it doesn't hold the session
+        await ghostClient.auth.signOut();
+
         const userId = auth?.user?.id || crypto.randomUUID();
 
         await supabase.from("user_profiles").insert({
@@ -153,6 +166,10 @@ export default function UserManager() {
           const password = Math.random().toString(36).slice(-8) + "Aa1@";
           const { data: auth, error: authError } = await ghostClient.auth.signUp({ email, password });
           if (authError) throw authError;
+          
+          // 🧹 CLEANUP: Sign out ghost
+          await ghostClient.auth.signOut();
+          
           targetUserId = auth.user.id;
 
           await supabase.from("user_profiles").insert({ id: targetUserId, full_name: `${m.name} ${m.surname}`, email, role: "volunteer", gender: m.gender, member_id: m.id });
@@ -185,6 +202,10 @@ export default function UserManager() {
         const password = `Keshav@${Math.floor(1000 + Math.random() * 9000)}`;
 
         const { data: auth } = await ghostClient.auth.signUp({ email, password });
+        
+        // 🧹 CLEANUP: Sign out ghost immediately inside the loop
+        await ghostClient.auth.signOut();
+        
         const userId = auth.user.id;
 
         await supabase.from("user_profiles").insert({ id: userId, full_name: `Taker ${suffix}`, role: "taker", email, gender: takerForm.gender, expires_at: expiresAt });

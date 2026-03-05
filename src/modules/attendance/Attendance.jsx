@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Search, ArrowLeft, Check, QrCode, Loader2, BarChart2, Filter, X, Lock, RefreshCw, AlertTriangle, Phone } from "lucide-react";
-import { supabase } from "../../lib/supabase";
+import { supabase, withTimeout } from "../../lib/supabase"; // 👈 Imported global withTimeout
+import toast from "react-hot-toast"; // 👈 Imported toast
 import QrScanner from "./QrScanner";
 import { useAuth } from "../../contexts/AuthContext";
 import AttendanceSummary from "./AttendanceSummary";
@@ -21,13 +22,13 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
     return ["admin", "taker", "project_admin"].includes((profile?.role || "").toLowerCase());
   }, [profile?.role, propReadOnly]);
 
-// --- STATE ---
+  // --- STATE ---
   const [initLoading, setInitLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(true);
-  const [pendingRequests, setPendingRequests] = useState(0); // 👈 Changed to number
+  const [pendingRequests, setPendingRequests] = useState(0); 
   const [error, setError] = useState(null);
   
-  const isSyncing = pendingRequests > 0; // 👈 Derived boolean for the UI dot
+  const isSyncing = pendingRequests > 0; 
 
   const [event, setEvent] = useState(null);
   const [project, setProject] = useState(null);
@@ -43,7 +44,7 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
   const [mandalFilter, setMandalFilter] = useState(null);
   const [mandalFilterName, setMandalFilterName] = useState(null);
 
-  // --- 1. LOAD ROSTER (No Abort Signals) ---
+  // --- 1. LOAD ROSTER (Bulletproofed with Timeouts) ---
   const loadRosterData = useCallback(async (isMounted) => {
     if (!projectId) return;
     try {
@@ -58,7 +59,8 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
         const mId = profile.assigned_mandal_id || profile.mandal_id;
         if (mId) allowedMandalIds = [mId];
       } else if (cleanRole === "nirikshak") {
-        const { data: assigns } = await supabase.from("nirikshak_assignments").select("mandal_id").eq("nirikshak_id", profile.id);
+        // 🛡️ Wrapped in withTimeout
+        const { data: assigns } = await withTimeout(supabase.from("nirikshak_assignments").select("mandal_id").eq("nirikshak_id", profile.id));
         if (assigns) allowedMandalIds = assigns.map((a) => a.mandal_id);
         const profileMandal = profile.assigned_mandal_id || profile.mandal_id;
         if (profileMandal) allowedMandalIds.push(profileMandal);
@@ -67,18 +69,21 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
         allowedKshetraId = profile.assigned_kshetra_id || profile.kshetra_id;
         if (!allowedKshetraId && (profile.assigned_mandal_id || profile.mandal_id)) {
           const mId = profile.assigned_mandal_id || profile.mandal_id;
-          const { data: mData } = await supabase.from("mandals").select("kshetra_id").eq("id", mId).single();
+          // 🛡️ Wrapped in withTimeout
+          const { data: mData } = await withTimeout(supabase.from("mandals").select("kshetra_id").eq("id", mId).single());
           if (mData) allowedKshetraId = mData.kshetra_id;
         }
       }
 
       if (isMounted) setScopePermissions({ mandalIds: allowedMandalIds, kshetraId: allowedKshetraId });
 
-      // Fetch Roster
-      const { data: regData, error: regError } = await supabase
-        .from("project_registrations")
-        .select(`member_id, seat_number, exam_level, external_qr, members (id, name, surname, internal_code, mobile, designation, gender, mandal_id, mandals ( id, name, kshetra_id ))`)
-        .eq("project_id", projectId);
+      // Fetch Roster (🛡️ Wrapped in withTimeout)
+      const { data: regData, error: regError } = await withTimeout(
+        supabase
+          .from("project_registrations")
+          .select(`member_id, seat_number, exam_level, external_qr, members (id, name, surname, internal_code, mobile, designation, gender, mandal_id, mandals ( id, name, kshetra_id ))`)
+          .eq("project_id", projectId)
+      );
 
       if (regError) throw regError;
 
@@ -99,8 +104,8 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
 
       if (isMounted) setMembers(filteredRoster);
 
-      // Fetch Attendance
-      const { data: attData } = await supabase.from("attendance").select("id, member_id, scanned_at").eq("event_id", eventId);
+      // Fetch Attendance (🛡️ Wrapped in withTimeout)
+      const { data: attData } = await withTimeout(supabase.from("attendance").select("id, member_id, scanned_at").eq("event_id", eventId));
       const newMap = new Map();
       attendanceIdMap.current.clear();
       
@@ -112,7 +117,7 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
       if (isMounted) setPresentMap(newMap);
 
     } catch (err) {
-      if (isMounted) setError("Failed to load data.");
+      if (isMounted) setError(err.message.includes("Timeout") ? "Network disconnected. Please refresh." : "Failed to load data.");
     } finally {
       if (isMounted) setDataLoading(false);
     }
@@ -125,9 +130,10 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
     const loadMetadata = async () => {
       try {
         setInitLoading(true);
+        // 🛡️ Wrapped in withTimeout
         const [evtRes, projRes] = await Promise.all([
-          supabase.from("events").select("*").eq("id", eventId).maybeSingle(),
-          supabase.from("projects").select("*").eq("id", projectId).maybeSingle(),
+          withTimeout(supabase.from("events").select("*").eq("id", eventId).maybeSingle()),
+          withTimeout(supabase.from("projects").select("*").eq("id", projectId).maybeSingle()),
         ]);
 
         if (!evtRes.data || !projRes.data) {
@@ -166,7 +172,7 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
         if (payload.eventType === "INSERT" && payload.new.event_id === eventId) {
           attendanceIdMap.current.set(payload.new.id, payload.new.member_id);
           setPresentMap((prevMap) => {
-            if (prevMap.has(payload.new.member_id)) return prevMap; // 👈 Ignore if optimistic update already handled it
+            if (prevMap.has(payload.new.member_id)) return prevMap; 
             const nextMap = new Map(prevMap);
             nextMap.set(payload.new.member_id, payload.new.scanned_at || new Date().toISOString());
             return nextMap;
@@ -177,7 +183,7 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
           if (memberIdToUnmark) {
             attendanceIdMap.current.delete(deletedRowId);
             setPresentMap((prevMap) => {
-              if (!prevMap.has(memberIdToUnmark)) return prevMap; // 👈 Ignore if optimistic update already handled it
+              if (!prevMap.has(memberIdToUnmark)) return prevMap; 
               const nextMap = new Map(prevMap);
               nextMap.delete(memberIdToUnmark);
               return nextMap;
@@ -189,14 +195,14 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
     return () => { supabase.removeChannel(attendanceChannel); };
   }, [eventId, profile?.id]);
 
-// --- 4. ACTIONS & FILTERING ---
+  // --- 4. ACTIONS & FILTERING ---
   const markAttendance = async (memberId) => {
     if (!canMark) return;
 
     const now = new Date().toISOString();
     const isPresent = presentMap.has(memberId);
 
-    // 1. OPTIMISTIC UI: Update instantly so the user never waits
+    // 1. OPTIMISTIC UI
     setPresentMap((prev) => {
       const next = new Map(prev);
       if (isPresent) next.delete(memberId);
@@ -204,36 +210,27 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
       return next;
     });
 
-    // 2. Add to background queue (turns dot yellow)
     setPendingRequests((prev) => prev + 1);
 
     try {
-      // 3. Create a strict 5-second stopwatch (Prevents infinite hanging)
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Network Timeout")), 5000)
-      );
-
-      // 4. Create the database request (Using ultra-fast .eq chaining)
       const dbPromise = isPresent
         ? supabase.from("attendance").delete().eq("event_id", eventId).eq("member_id", memberId)
         : supabase.from("attendance").insert({ event_id: eventId, member_id: memberId });
 
-      // 5. RACE: Whichever finishes first wins. No more hanging forever!
-      const { error } = await Promise.race([dbPromise, timeoutPromise]);
-
+      // 🛡️ Using the new standardized global withTimeout (5 seconds for rapid fire UI)
+      const { error } = await withTimeout(dbPromise, 5000);
       if (error) throw error;
 
     } catch (err) {
-      // 6. If it fails or times out, silently revert the checkmark
+      // Revert UI on failure and notify user cleanly
       setPresentMap((prev) => {
         const next = new Map(prev);
         if (isPresent) next.set(memberId, now);
         else next.delete(memberId);
         return next;
       });
-      console.warn("Sync failed, reverted UI:", err.message);
+      toast.error("Network issue. Checkmark reverted."); // 👈 Added Toast
     } finally {
-      // 7. GUARANTEED to remove from queue and turn dot green
       setPendingRequests((prev) => Math.max(0, prev - 1));
     }
   };
@@ -305,19 +302,25 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
+            {/* 🛡️ 'X' Clear Button Added Here */}
             <input
-              className="w-full pl-9 pr-4 py-2 bg-white border border-gray-200 focus:border-[#5C3030] rounded-md outline-none text-sm transition-colors shadow-[0_1px_3px_rgba(0,0,0,0.02)]"
+              className="w-full pl-9 pr-9 py-2 bg-white border border-gray-200 focus:border-[#5C3030] rounded-md outline-none text-sm transition-colors shadow-[0_1px_3px_rgba(0,0,0,0.02)]"
               placeholder="Search roster..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            {search && (
+              <button onClick={() => setSearch("")} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-700 transition-colors">
+                <X size={16} strokeWidth={1.5} />
+              </button>
+            )}
           </div>
-          <div className="flex bg-gray-100 p-1 rounded-md shrink-0 border border-gray-200">
+          <div className="flex bg-gray-100 p-1 rounded-md shrink-0 border border-gray-200 overflow-x-auto">
             {["all", "present", "absent"].map((f) => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
-                className={`px-3 py-1.5 text-xs font-semibold capitalize rounded-md transition-all ${filter === f ? "bg-white text-gray-900 shadow-[0_1px_3px_rgba(0,0,0,0.02)]" : "text-gray-500 hover:text-gray-700"}`}
+                className={`px-3 py-1.5 text-xs font-semibold capitalize rounded-md transition-all whitespace-nowrap ${filter === f ? "bg-white text-gray-900 shadow-[0_1px_3px_rgba(0,0,0,0.02)]" : "text-gray-500 hover:text-gray-700"}`}
               >
                 {f}
               </button>
@@ -403,4 +406,4 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
       )}
     </div>
   );
-} 
+}

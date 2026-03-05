@@ -1,15 +1,18 @@
 import React, { useState } from "react";
-import { Plus, Search, Folder, ArrowRight, Loader2, Edit3, Trash2, Calendar, Lock } from "lucide-react";
+import { useNavigate } from "react-router-dom"; // 🛡️ Added useNavigate
+import { Plus, Search, Folder, ArrowRight, Loader2, Edit3, Trash2, Calendar, Lock, X, AlertTriangle } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "../../lib/supabase";
+import { supabase, withTimeout } from "../../lib/supabase"; // 🛡️ Added withTimeout
+import toast from "react-hot-toast"; // 🛡️ Added toast
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
+import Modal from "../../components/Modal";
 import ProjectForm from "./ProjectForm";
-import ProjectView from "./ProjectView";
 import { useAuth } from "../../contexts/AuthContext";
 
 export default function ProjectDashboard() {
   const { profile } = useAuth();
+  const navigate = useNavigate(); // 🛡️ Replaces setViewProject
   const queryClient = useQueryClient();
   const isAdmin = profile?.role === 'admin';
   const isProjectAdmin = profile?.role === 'project_admin';
@@ -17,9 +20,9 @@ export default function ProjectDashboard() {
   const [searchTerm, setSearchTerm] = useState("");
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
-  const [viewProject, setViewProject] = useState(null);
+  const [projectToDelete, setProjectToDelete] = useState(null); // 🛡️ Replaces confirm()
 
-  // 1. Fetch Projects using React Query
+  // 1. Fetch Projects
   const { data: projects, isLoading } = useQuery({
     queryKey: ['projects', profile?.id],
     queryFn: async () => {
@@ -27,7 +30,7 @@ export default function ProjectDashboard() {
 
       if (!isAdmin) {
         query = query.eq('is_active', true);
-        const { data: assignments } = await supabase.from('project_assignments').select('project_id').eq('user_id', profile.id);
+        const { data: assignments } = await withTimeout(supabase.from('project_assignments').select('project_id').eq('user_id', profile.id));
         const assignedIds = assignments?.map(a => a.project_id) || [];
 
         if (isProjectAdmin) {
@@ -42,26 +45,32 @@ export default function ProjectDashboard() {
         }
       }
 
-      const { data, error } = await query;
+      // 🛡️ Wrapped in withTimeout
+      const { data, error } = await withTimeout(query);
       if (error) throw error;
       return data || [];
     },
-    enabled: !!profile?.id
+    enabled: !!profile?.id,
+    staleTime: 1000 * 60 * 5, // 5 min cache
   });
 
   const deleteMutation = useMutation({
     mutationFn: async (id) => {
-      const { error } = await supabase.from("projects").delete().eq("id", id);
+      const { error } = await withTimeout(supabase.from("projects").delete().eq("id", id));
       if (error) throw error;
     },
-    onSuccess: () => queryClient.invalidateQueries(['projects'])
+    onSuccess: () => {
+      queryClient.invalidateQueries(['projects']);
+      toast.success("Project deleted successfully");
+      setProjectToDelete(null);
+    },
+    onError: (err) => {
+      toast.error(err.message);
+      setProjectToDelete(null);
+    }
   });
 
   const filteredProjects = projects?.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase())) || [];
-
-  if (viewProject) {
-    return <ProjectView project={viewProject} onBack={() => setViewProject(null)} />;
-  }
 
   return (
     <div className="space-y-5 pb-10">
@@ -77,12 +86,18 @@ export default function ProjectDashboard() {
       {/* Filter Bar */}
       <div className="relative">
         <Search className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
+        {/* 🛡️ 'X' Clear Button Added Here */}
         <input 
-          className="w-full pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-[#5C3030] transition-colors shadow-[0_1px_3px_rgba(0,0,0,0.02)]" 
+          className="w-full pl-9 pr-9 py-2 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-[#5C3030] transition-colors shadow-[0_1px_3px_rgba(0,0,0,0.02)]" 
           placeholder="Search projects..." 
           value={searchTerm} 
           onChange={(e) => setSearchTerm(e.target.value)} 
         />
+        {searchTerm && (
+          <button onClick={() => setSearchTerm("")} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-700 transition-colors">
+            <X size={16} strokeWidth={1.5} />
+          </button>
+        )}
       </div>
 
       {/* Content */}
@@ -97,7 +112,8 @@ export default function ProjectDashboard() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredProjects.map((p) => (
-            <div key={p.id} className="bg-white border border-gray-200 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)] p-4 flex flex-col h-full hover:border-[#5C3030]/30 transition-colors group cursor-pointer" onClick={() => setViewProject(p)}>
+            // 🛡️ Changed onClick to use navigate() so URL updates
+            <div key={p.id} className="bg-white border border-gray-200 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)] p-4 flex flex-col h-full hover:border-[#5C3030]/30 transition-colors group cursor-pointer" onClick={() => navigate(`/projects/${p.id}`)}>
               <div className="flex justify-between items-start mb-3">
                 <div className="flex gap-2">
                   <Badge variant={p.is_active ? "success" : "default"}>{p.is_active ? "Active" : "Archived"}</Badge>
@@ -106,7 +122,8 @@ export default function ProjectDashboard() {
                 {isAdmin && (
                   <div className="flex gap-1 transition-opacity">
                     <button onClick={(e) => { e.stopPropagation(); setSelectedProject(p); setIsFormOpen(true); }} className="p-1 text-gray-400 hover:text-[#5C3030] hover:bg-gray-50 rounded"><Edit3 size={14} strokeWidth={1.5} /></button>
-                    <button onClick={(e) => { e.stopPropagation(); if(confirm("Delete project?")) deleteMutation.mutate(p.id); }} className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"><Trash2 size={14} strokeWidth={1.5} /></button>
+                    {/* 🛡️ Replaced confirm() with Modal state */}
+                    <button onClick={(e) => { e.stopPropagation(); setProjectToDelete(p); }} className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"><Trash2 size={14} strokeWidth={1.5} /></button>
                   </div>
                 )}
               </div>
@@ -128,6 +145,22 @@ export default function ProjectDashboard() {
       )}
       
       <ProjectForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSuccess={() => queryClient.invalidateQueries(['projects'])} initialData={selectedProject} />
+
+      {/* 🛡️ Delete Confirmation Modal */}
+      <Modal isOpen={!!projectToDelete} onClose={() => setProjectToDelete(null)} title="Confirm Deletion">
+        <div className="space-y-4">
+          <div className="bg-red-50 text-red-800 p-4 rounded-md border border-red-100 flex gap-3">
+            <AlertTriangle className="shrink-0 text-red-600 mt-0.5" size={18} />
+            <p className="text-sm">Are you sure you want to permanently delete <span className="font-bold">{projectToDelete?.name}</span>? All associated events, staff, and attendance data will be lost.</p>
+          </div>
+          <div className="pt-2 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setProjectToDelete(null)} disabled={deleteMutation.isPending}>Cancel</Button>
+            <Button className="!bg-red-600 !border-red-600 hover:!bg-red-700" onClick={() => deleteMutation.mutate(projectToDelete.id)} disabled={deleteMutation.isPending}>
+              {deleteMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : "Yes, Delete Project"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

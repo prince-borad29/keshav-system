@@ -30,3 +30,14 @@ export const ghostClient = createClient(supabaseUrl, supabaseAnonKey, {
     storageKey: 'ghost-client-auth-storage' 
   }
 });
+
+// 3. --- NETWORK TIMEOUT GUARD ---
+// Wraps any database call in an 8-second stopwatch. Prevents infinite hanging.
+export const withTimeout = (promise, ms = 8000) => {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => 
+      setTimeout(() => reject(new Error("Network Timeout. Please check your connection.")), ms)
+    )
+  ]);
+};

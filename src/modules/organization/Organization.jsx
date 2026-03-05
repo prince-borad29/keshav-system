@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { LayoutGrid, Users } from 'lucide-react';
-import StructureManager from './StructureManager';
+import {StructureManager} from './StructureManager';
 import UserManager from './UserManager';
 
 export default function Organization() {
@@ -45,3 +45,4 @@ export default function Organization() {
     </div>
   );
 }
+

@@ -7,7 +7,7 @@ import { AlertTriangle, Loader2 } from 'lucide-react';
 
 const INITIAL_FORM = {
   name: '', father_name: '', surname: '', gender: 'Yuvak',
-  dob: '', mobile: '', address: '', designation: 'Member',
+  dob: '', mobile: '', address: '', designation: 'Yuvak',
   kshetra_id: '', mandal_id: '', internal_code: '', is_guest: false
 };
 
@@ -190,7 +190,7 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
             <div className="col-span-2 sm:col-span-1">
               <label className={labelClass}>Designation</label>
               <select className={`${inputClass} appearance-none`} value={formData.designation} onChange={e => setFormData({...formData, designation: e.target.value})}>
-                {['Member', 'Nirdeshak', 'Nirikshak', 'Sanchalak', 'Sah Sanchalak', 'Sampark Karyakar', 'Utsahi Yuvak'].map(d => <option key={d} value={d}>{d}</option>)}
+                {['Member', 'Nirdeshak', 'Nirikshak', 'Sanchalak', 'Sah Sanchalak', 'Sampark Karyakar', 'Yuvak'].map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             </div>
 

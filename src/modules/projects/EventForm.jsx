@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
+import { supabase, withTimeout } from '../../lib/supabase'; // 🛡️ Imported withTimeout
+import toast from 'react-hot-toast'; // 🛡️ Imported toast
 import Button from '../../components/ui/Button';
 import Modal from '../../components/Modal';
+import { Loader2 } from 'lucide-react';
 
 const INITIAL_FORM = { name: '', date: '', is_primary: false };
 
@@ -20,15 +22,23 @@ export default function EventForm({ isOpen, onClose, onSuccess, projectId, initi
     setLoading(true);
     try {
       const payload = { project_id: projectId, ...formData };
+      
+      // 🛡️ Wrapped in withTimeout
+      let query;
       if (initialData?.id) {
-        await supabase.from('events').update(payload).eq('id', initialData.id);
+        query = supabase.from('events').update(payload).eq('id', initialData.id);
       } else {
-        await supabase.from('events').insert(payload);
+        query = supabase.from('events').insert(payload);
       }
+      
+      const { error } = await withTimeout(query);
+      if (error) throw error;
+      
+      toast.success(initialData?.id ? "Event updated!" : "Event created!");
       onSuccess();
       onClose();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message); // 🛡️ Replaced alert()
     } finally {
       setLoading(false);
     }
@@ -54,7 +64,9 @@ export default function EventForm({ isOpen, onClose, onSuccess, projectId, initi
         </label>
         <div className="pt-5 border-t border-gray-100 flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose} type="button">Cancel</Button>
-          <Button type="submit" disabled={loading}>Save Event</Button>
+          <Button type="submit" disabled={loading}>
+            {loading ? <Loader2 className="animate-spin" size={16} /> : 'Save Event'}
+          </Button>
         </div>
       </form>
     </Modal>

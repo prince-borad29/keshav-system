@@ -1,15 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
-import { 
-  Loader2, Search, Archive, Check, ChevronDown, 
-  Download, MapPin, Users, Filter, Briefcase 
-} from 'lucide-react';
+import { supabase, withTimeout } from '../../lib/supabase'; // 🛡️ Imported withTimeout
+import { Loader2, Search, Archive, Check, ChevronDown, Download, MapPin, Users, Filter, Briefcase, X } from 'lucide-react';
+import toast from 'react-hot-toast'; // 🛡️ Imported toast
 import jsPDF from 'jspdf';
 import QRCode from 'qrcode';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import Button from '../../components/ui/Button';
-import Badge from '../../components/ui/Badge';
 
 export default function IDCardGenerator() {
   const [processing, setProcessing] = useState(false);
@@ -29,6 +26,7 @@ export default function IDCardGenerator() {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
 
   const designationOptions = ['Member', 'Nirdeshak', 'Nirikshak', 'Sanchalak', 'Sah Sanchalak', 'Sampark Karyakar', 'Utsahi Yuvak'];
   const genderOptions = ['Yuvak', 'Yuvati'];
@@ -36,25 +34,49 @@ export default function IDCardGenerator() {
   useEffect(() => { fetchDropdowns(); }, []);
 
   const fetchDropdowns = async () => {
-    const [kRes, mRes] = await Promise.all([
-      supabase.from('kshetras').select('id, name').order('name'),
-      supabase.from('mandals').select('id, name, kshetra_id').order('name')
-    ]);
-    if (kRes.data) setKshetras(kRes.data);
-    if (mRes.data) setMandals(mRes.data);
+    try {
+      // 🛡️ Wrapped in withTimeout
+      const [kRes, mRes] = await Promise.all([
+        withTimeout(supabase.from('kshetras').select('id, name').order('name')),
+        withTimeout(supabase.from('mandals').select('id, name, kshetra_id').order('name'))
+      ]);
+      if (kRes.data) setKshetras(kRes.data);
+      if (mRes.data) setMandals(mRes.data);
+    } catch (err) {
+      toast.error("Failed to load regions. Please check connection.");
+    }
   };
 
+  // 🛡️ Bulletproof Debounce Search
   useEffect(() => {
-    if (searchTerm.length < 2) { setSearchResults([]); return; }
+    let isActive = true;
+    if (searchTerm.length < 2) { 
+      setSearchResults([]); 
+      setIsSearching(false);
+      return; 
+    }
+    
     const timer = setTimeout(async () => {
-      const { data } = await supabase
-        .from('members')
-        .select('*, mandals(name)')
-        .or(`name.ilike.%${searchTerm}%,surname.ilike.%${searchTerm}%,internal_code.ilike.%${searchTerm}%,mobile.ilike.%${searchTerm}%`)
-        .limit(5);
-      setSearchResults(data || []);
+      if (!isActive) return;
+      setIsSearching(true);
+      try {
+        const { data } = await withTimeout(
+          supabase.from('members')
+            .select('*, mandals(name)')
+            .or(`name.ilike.%${searchTerm}%,surname.ilike.%${searchTerm}%,internal_code.ilike.%${searchTerm}%,mobile.ilike.%${searchTerm}%`)
+            .limit(5)
+        );
+        if (isActive) setSearchResults(data || []);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        if (isActive) setIsSearching(false);
+      }
     }, 400);
-    return () => clearTimeout(timer);
+    return () => {
+      isActive = false;
+      clearTimeout(timer);
+    };
   }, [searchTerm]);
 
   const createCardBlob = async (m) => {
@@ -104,7 +126,8 @@ export default function IDCardGenerator() {
       if (filters.designations.length > 0) query = query.in('designation', filters.designations);
       if (filters.gender) query = query.eq('gender', filters.gender);
 
-      const { data: members, error } = await query;
+      // 🛡️ Wrapped in withTimeout (increased to 15s for heavy bulk queries)
+      const { data: members, error } = await withTimeout(query, 15000);
       if (error) throw error;
       if (!members || members.length === 0) throw new Error("No members found matching filters.");
 
@@ -120,10 +143,12 @@ export default function IDCardGenerator() {
         zip.folder(folderPath).file(fileName, blob);
         if (i % 10 === 0) await new Promise(r => setTimeout(r, 0));
       }
+      setStatusText("Zipping files...");
       const content = await zip.generateAsync({ type: "blob" });
       saveAs(content, `ID_Cards_${new Date().toISOString().split('T')[0]}.zip`);
+      toast.success("ID Cards successfully generated!");
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message); // 🛡️ Replaced alert()
     } finally {
       setProcessing(false);
       setStatusText('');
@@ -150,12 +175,19 @@ export default function IDCardGenerator() {
         <h2 className="text-sm font-semibold text-gray-900 mb-4">Quick Search & Generate</h2>
         <div className="relative">
           <Search className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
+          {/* 🛡️ X Clear Button Added Here */}
           <input 
-            className={`${inputClass} pl-9`}
+            className={`${inputClass} pl-9 pr-9`}
             placeholder="Search by name, ID, or mobile to generate single card..." 
             value={searchTerm} 
             onChange={e => setSearchTerm(e.target.value)} 
           />
+          {searchTerm && !isSearching && (
+             <button onClick={() => setSearchTerm("")} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-700 transition-colors">
+               <X size={16} strokeWidth={1.5} />
+             </button>
+          )}
+          {isSearching && <Loader2 className="absolute right-3 top-2.5 text-gray-400 animate-spin" size={16} strokeWidth={1.5} />}
         </div>
 
         {/* Search Results Dropdown */}
@@ -225,7 +257,7 @@ export default function IDCardGenerator() {
             </div>
           </div>
 
-          {/* Designations (Custom Accordion Styled as Native) */}
+          {/* Designations */}
           <div>
             <label className={labelClass}>Designations</label>
             <div className="border border-gray-200 rounded-md bg-white overflow-hidden transition-all">
@@ -271,8 +303,8 @@ export default function IDCardGenerator() {
           {processing ? (
              <div className="space-y-2">
                <div className="flex justify-between text-[10px] font-semibold uppercase tracking-widest text-gray-500">
-                  <span>{statusText}</span>
-                  <span className="font-inter">{progress}%</span>
+                 <span>{statusText}</span>
+                 <span className="font-inter">{progress}%</span>
                </div>
                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
                  <div className="h-full bg-[#5C3030] transition-all duration-300" style={{ width: `${progress}%` }} />

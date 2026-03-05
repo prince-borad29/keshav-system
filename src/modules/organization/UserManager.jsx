@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Users, UserPlus, Search, CheckCircle, X, Copy, Globe, Edit3, Trash2, Loader2, Layers, Shield, RefreshCw, AlertTriangle } from "lucide-react";
-import { supabase , ghostClient } from "../../lib/supabase";
+import { supabase, ghostClient, withTimeout } from "../../lib/supabase"; // 🛡️ Imported withTimeout
+import toast from "react-hot-toast";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
 import Modal from "../../components/Modal";
@@ -13,10 +14,10 @@ export default function UserManager() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("system");
   
-  // Modal States
   const [isSystemModalOpen, setIsSystemModalOpen] = useState(false);
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [isFieldModalOpen, setIsFieldModalOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState(null); 
   const [editingId, setEditingId] = useState(null);
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -28,51 +29,60 @@ export default function UserManager() {
   const [projectForm, setProjectForm] = useState(initialProjectForm);
   const [takerForm, setTakerForm] = useState({ count: 1, gender: "Yuvak", validity: "" });
 
-  // 1. INDUSTRY-GRADE DATA FETCHING (Fixes the "Refresh Page" bug)
   const { data, isLoading, isRefetching, refetch, error: fetchError } = useQuery({
     queryKey: ['user-manager-data'],
     queryFn: async () => {
+      // 🛡️ Wrapped in withTimeout
       const [usersRes, mandalsRes, projectsRes, kshetrasRes, assignmentsRes] = await Promise.all([
-        supabase.from("user_profiles").select(`id, full_name, email, role, gender, member_id, assigned_mandal_id, expires_at, members!user_profiles_member_id_fkey(name, surname), mandals!user_profiles_assigned_mandal_id_fkey(name)`).order("created_at", { ascending: false }),
-        supabase.from("mandals").select("id, name, kshetra_id").order("name"),
-        supabase.from("projects").select("id, name").eq("is_active", true),
-        supabase.from("kshetras").select("id, name").order("name"),
-        // 🛑 FIXED: Removed dangerous columns causing silent failures
-        supabase.from("project_assignments").select(`id, role, data_scope, project_id, user_id, projects(id, name), user_profiles(id, full_name, email, role)`).order("created_at", { ascending: false })
+        withTimeout(supabase.from("user_profiles").select(`id, full_name, email, role, gender, member_id, assigned_mandal_id, expires_at, members!user_profiles_member_id_fkey(name, surname), mandals!user_profiles_assigned_mandal_id_fkey(name)`).order("created_at", { ascending: false })),
+        withTimeout(supabase.from("mandals").select("id, name, kshetra_id").order("name")),
+        withTimeout(supabase.from("projects").select("id, name").eq("is_active", true)),
+        withTimeout(supabase.from("kshetras").select("id, name").order("name")),
+        withTimeout(supabase.from("project_assignments").select(`id, role, data_scope, project_id, user_id, projects(id, name), user_profiles(id, full_name, email, role)`).order("created_at", { ascending: false }))
       ]);
-
-      if (assignmentsRes.error) console.error("Project Assignments Error:", assignmentsRes.error);
-      if (usersRes.error) console.error("Users Error:", usersRes.error);
-
       return {
-        users: usersRes.data || [],
-        mandals: mandalsRes.data || [],
-        projects: projectsRes.data || [],
-        kshetras: kshetrasRes.data || [],
-        assignments: assignmentsRes.data || []
+        users: usersRes.data || [], mandals: mandalsRes.data || [], projects: projectsRes.data || [],
+        kshetras: kshetrasRes.data || [], assignments: assignmentsRes.data || []
       };
-    }
+    },
+    staleTime: 1000 * 60 * 5, // 5 mins
   });
 
   const users = data?.users || [];
   const mandals = data?.mandals || [];
   const projects = data?.projects || [];
-  const kshetras = data?.kshetras || [];
   const projectAssignments = data?.assignments || [];
 
   const systemUsersList = useMemo(() => users.filter((u) => ["admin", "nirdeshak", "nirikshak", "sanchalak"].includes(u.role)), [users]);
   const takersList = useMemo(() => users.filter((u) => u.role === "taker"), [users]);
 
-  // Debounced Member Search
+  // 🛡️ FIXED: Bulletproof Search with try/finally to prevent infinite loading
   useEffect(() => {
-    if (searchTerm.length < 2) { setMemberResults([]); return; }
-    setIsSearching(true);
+    let isActive = true;
+    if (!searchTerm || searchTerm.length < 2) { 
+      setMemberResults([]); 
+      setSearching(false);
+      return; 
+    }
     const timer = setTimeout(async () => {
-      const { data } = await supabase.from("members").select("id, name, surname, gender, designation, mobile, mandal_id, mandals(name)").or(`name.ilike.%${searchTerm}%,surname.ilike.%${searchTerm}%`).limit(5);
-      setMemberResults(data || []);
-      setIsSearching(false);
+      if (!isActive) return;
+      setIsSearching(true);
+      try {
+        // 🛡️ Wrapped in withTimeout
+        const { data } = await withTimeout(
+          supabase.from("members").select("id, name, surname, gender, designation, mobile, mandal_id, mandals(name)").or(`name.ilike.%${searchTerm}%,surname.ilike.%${searchTerm}%`).limit(5)
+        );
+        if (isActive) setMemberResults(data || []);
+      } catch(err) {
+        console.error(err);
+      } finally {
+        if (isActive) setIsSearching(false); // GUARANTEES the spinner stops
+      }
     }, 300);
-    return () => clearTimeout(timer);
+    return () => {
+      isActive = false;
+      clearTimeout(timer);
+    }
   }, [searchTerm]);
 
   const resetForms = useCallback(() => {
@@ -84,6 +94,7 @@ export default function UserManager() {
     setIsSystemModalOpen(false);
     setIsProjectModalOpen(false);
     setIsFieldModalOpen(false);
+    setUserToDelete(null);
   }, []);
 
   const selectMember = useCallback((m) => {
@@ -108,48 +119,44 @@ export default function UserManager() {
     setMemberResults([]);
   }, [isSystemModalOpen, isProjectModalOpen, users]);
 
- // 2. MUTATIONS
   const systemMutation = useMutation({
     mutationFn: async () => {
       if (!editingId) {
         const password = systemForm.password || Math.random().toString(36).slice(-8) + "Aa1@";
         
-        // We use supabase.auth.admin.createUser if you are an admin, 
-        // OR we use the ghost client if we want to avoid logging the current admin out.
-        // It's safer to use the ghost client for ALL background creations.
-        const { data: auth, error: authError } = await ghostClient.auth.signUp({ 
-          email: systemForm.email.trim(), 
-          password, 
-          options: { data: { full_name: systemForm.full_name, role: systemForm.role } } 
-        });
-        
+        // Ghost client signups don't need withTimeout as heavily, but it's safe to add
+        const { data: auth, error: authError } = await withTimeout(
+          ghostClient.auth.signUp({ email: systemForm.email.trim(), password, options: { data: { full_name: systemForm.full_name, role: systemForm.role } } })
+        );
         if (authError && !authError.message.includes("already registered")) throw authError;
         
-        // 🧹 CLEANUP: Sign the ghost client out immediately so it doesn't hold the session
         await ghostClient.auth.signOut();
-
         const userId = auth?.user?.id || crypto.randomUUID();
 
-        await supabase.from("user_profiles").insert({
+        await withTimeout(supabase.from("user_profiles").insert({
           id: userId, full_name: systemForm.full_name.trim(), role: systemForm.role, email: systemForm.email.trim(), gender: systemForm.gender, member_id: systemForm.member_id || null, assigned_mandal_id: systemForm.role === "sanchalak" ? systemForm.assigned_mandal_id || null : null,
-        });
+        }));
 
         if (systemForm.role === "nirikshak" && systemForm.assigned_mandals.length > 0) {
           const assignments = systemForm.assigned_mandals.map((mId) => ({ nirikshak_id: userId, mandal_id: mId }));
-          await supabase.from("nirikshak_assignments").insert(assignments);
+          await withTimeout(supabase.from("nirikshak_assignments").insert(assignments));
         }
         setCreatedCredentials([{ name: systemForm.full_name, email: systemForm.email, password }]);
       } else {
-        await supabase.from("user_profiles").update({ role: systemForm.role, full_name: systemForm.full_name?.trim(), assigned_mandal_id: systemForm.role === "sanchalak" ? systemForm.assigned_mandal_id : null }).eq("id", editingId);
-        await supabase.from("nirikshak_assignments").delete().eq("nirikshak_id", editingId);
+        await withTimeout(supabase.from("user_profiles").update({ role: systemForm.role, full_name: systemForm.full_name?.trim(), assigned_mandal_id: systemForm.role === "sanchalak" ? systemForm.assigned_mandal_id : null }).eq("id", editingId));
+        await withTimeout(supabase.from("nirikshak_assignments").delete().eq("nirikshak_id", editingId));
         if (systemForm.role === "nirikshak" && systemForm.assigned_mandals.length > 0) {
           const assignments = systemForm.assigned_mandals.map((mId) => ({ nirikshak_id: editingId, mandal_id: mId }));
-          await supabase.from("nirikshak_assignments").insert(assignments);
+          await withTimeout(supabase.from("nirikshak_assignments").insert(assignments));
         }
       }
     },
-    onSuccess: () => { queryClient.invalidateQueries(['user-manager-data']); resetForms(); },
-    onError: (err) => alert(err.message)
+    onSuccess: () => { 
+      queryClient.invalidateQueries(['user-manager-data']); 
+      toast.success(editingId ? "User updated!" : "User created!");
+      if(createdCredentials.length === 0) resetForms(); 
+    },
+    onError: (err) => toast.error(err.message)
   });
 
   const projectStaffMutation = useMutation({
@@ -158,32 +165,34 @@ export default function UserManager() {
       
       if (!editingId && !targetUserId && projectForm.member_id) {
         const m = projectForm.member_data;
-        const { data: existing } = await supabase.from("user_profiles").select("id").eq("member_id", m.id).maybeSingle();
+        const { data: existing } = await withTimeout(supabase.from("user_profiles").select("id").eq("member_id", m.id).maybeSingle());
 
         if (existing) { targetUserId = existing.id; } 
         else {
-          const email = m.mobile ? `${m.mobile}@keshav.app` : `vol.${m.id.split("-")[0]}@keshav.app`;
+          const safeCode = m.internal_code ? m.internal_code.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : `vol${m.id.split("-")[0]}`;
+          const email = m.mobile ? `${m.mobile}@keshav.app` : `${safeCode}@keshav.app`;
           const password = Math.random().toString(36).slice(-8) + "Aa1@";
-          const { data: auth, error: authError } = await ghostClient.auth.signUp({ email, password });
-          if (authError) throw authError;
           
-          // 🧹 CLEANUP: Sign out ghost
+          const { data: auth, error: authError } = await withTimeout(ghostClient.auth.signUp({ email, password }));
+          if (authError) throw authError;
           await ghostClient.auth.signOut();
           
           targetUserId = auth.user.id;
-
-          await supabase.from("user_profiles").insert({ id: targetUserId, full_name: `${m.name} ${m.surname}`, email, role: "volunteer", gender: m.gender, member_id: m.id });
+          await withTimeout(supabase.from("user_profiles").insert({ id: targetUserId, full_name: `${m.name} ${m.surname}`, email, role: "volunteer", gender: m.gender, member_id: m.id }));
           setCreatedCredentials([{ name: `${m.name} ${m.surname}`, email, password }]);
         }
       }
 
-      // Safest minimal payload
       const payload = { project_id: projectForm.project_id, user_id: targetUserId, role: projectForm.role, data_scope: projectForm.scope_type };
-      if (!editingId) await supabase.from("project_assignments").insert(payload);
-      else await supabase.from("project_assignments").update(payload).eq("id", editingId);
+      if (!editingId) await withTimeout(supabase.from("project_assignments").insert(payload));
+      else await withTimeout(supabase.from("project_assignments").update(payload).eq("id", editingId));
     },
-    onSuccess: () => { queryClient.invalidateQueries(['user-manager-data']); if(createdCredentials.length === 0) resetForms(); },
-    onError: (err) => alert(err.message)
+    onSuccess: () => { 
+      queryClient.invalidateQueries(['user-manager-data']); 
+      toast.success(editingId ? "Assignment updated!" : "Staff assigned!");
+      if(createdCredentials.length === 0) resetForms(); 
+    },
+    onError: (err) => toast.error(err.message)
   });
 
   const takerMutation = useMutation({
@@ -201,42 +210,50 @@ export default function UserManager() {
         const email = `taker.${suffix}@keshav.app`;
         const password = `Keshav@${Math.floor(1000 + Math.random() * 9000)}`;
 
-        const { data: auth } = await ghostClient.auth.signUp({ email, password });
-        
-        // 🧹 CLEANUP: Sign out ghost immediately inside the loop
+        const { data: auth, error } = await withTimeout(ghostClient.auth.signUp({ email, password }));
+        if (error) throw error;
         await ghostClient.auth.signOut();
         
         const userId = auth.user.id;
-
-        await supabase.from("user_profiles").insert({ id: userId, full_name: `Taker ${suffix}`, role: "taker", email, gender: takerForm.gender, expires_at: expiresAt });
+        await withTimeout(supabase.from("user_profiles").insert({ id: userId, full_name: `Taker ${suffix}`, role: "taker", email, gender: takerForm.gender, expires_at: expiresAt }));
         newCreds.push({ name: `Taker ${suffix}`, email, password });
       }
       setCreatedCredentials(newCreds);
     },
-    onSuccess: () => { queryClient.invalidateQueries(['user-manager-data']); resetForms(); },
-    onError: (err) => alert(err.message)
+    onSuccess: () => { 
+      queryClient.invalidateQueries(['user-manager-data']); 
+      toast.success("Accounts generated!");
+    },
+    onError: (err) => toast.error(err.message)
   });
 
   const deleteMutation = useMutation({
     mutationFn: async ({ id, type }) => {
       if (type === "system_user") {
-        await Promise.all([ supabase.from("project_assignments").delete().eq("user_id", id), supabase.from("nirikshak_assignments").delete().eq("nirikshak_id", id) ]);
-        await supabase.from("user_profiles").delete().eq("id", id);
+        await Promise.all([ 
+          withTimeout(supabase.from("project_assignments").delete().eq("user_id", id)), 
+          withTimeout(supabase.from("nirikshak_assignments").delete().eq("nirikshak_id", id)) 
+        ]);
+        await withTimeout(supabase.from("user_profiles").delete().eq("id", id));
       } else if (type === "project_staff") {
-        await supabase.from("project_assignments").delete().eq("id", id);
+        await withTimeout(supabase.from("project_assignments").delete().eq("id", id));
       } else if (type === "taker") {
-        await supabase.from("user_profiles").delete().eq("id", id);
+        await withTimeout(supabase.from("user_profiles").delete().eq("id", id));
       }
     },
-    onSuccess: () => queryClient.invalidateQueries(['user-manager-data']),
-    onError: (err) => alert(err.message)
+    onSuccess: () => {
+      queryClient.invalidateQueries(['user-manager-data']);
+      toast.success("User deleted successfully.");
+      setUserToDelete(null);
+    },
+    onError: (err) => toast.error(err.message)
   });
 
   const openSystemEdit = async (user) => {
     setEditingId(user.id);
     let assignedMandals = [];
     if (user.role === "nirikshak") {
-      const { data } = await supabase.from("nirikshak_assignments").select("mandal_id").eq("nirikshak_id", user.id);
+      const { data } = await withTimeout(supabase.from("nirikshak_assignments").select("mandal_id").eq("nirikshak_id", user.id));
       if (data) assignedMandals = data.map((d) => d.mandal_id);
     }
     setSystemForm({ role: user.role, assigned_mandal_id: user.assigned_mandal_id || "", email: user.email, full_name: user.full_name, assigned_mandals: assignedMandals, member_id: user.member_id, gender: user.gender || "Yuvak", password: "" });
@@ -258,10 +275,7 @@ export default function UserManager() {
     return (
       <div className="p-6 bg-red-50 border border-red-200 text-red-700 rounded-md flex items-center gap-3">
         <AlertTriangle size={20} />
-        <div>
-           <p className="font-bold">Error loading users</p>
-           <p className="text-xs">{fetchError.message}</p>
-        </div>
+        <div><p className="font-bold">Error loading users</p><p className="text-xs">{fetchError.message}</p></div>
         <Button variant="secondary" size="sm" onClick={refetch} className="ml-auto">Retry</Button>
       </div>
     )
@@ -269,37 +283,22 @@ export default function UserManager() {
 
   return (
     <div className="space-y-4">
-      {/* TAB HEADER & ACTIONS */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-3 border border-gray-200 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
         <div className="flex gap-1 overflow-x-auto w-full sm:w-auto bg-gray-100 p-1 rounded-md border border-gray-200">
-          {[
-            { id: "system", label: "System Admins", count: systemUsersList.length },
-            { id: "project", label: "Project Staff", count: projectAssignments.length },
-            { id: "field", label: "Temp Takers", count: takersList.length },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === tab.id ? "bg-white text-gray-900 shadow-[0_1px_3px_rgba(0,0,0,0.02)]" : "text-gray-500 hover:text-gray-700"}`}
-            >
+          {[ { id: "system", label: "System Admins", count: systemUsersList.length }, { id: "project", label: "Project Staff", count: projectAssignments.length }, { id: "field", label: "Temp Takers", count: takersList.length }, ].map((tab) => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === tab.id ? "bg-white text-gray-900 shadow-[0_1px_3px_rgba(0,0,0,0.02)]" : "text-gray-500 hover:text-gray-700"}`}>
               {tab.label} <span className="bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded text-[10px]">{tab.count}</span>
             </button>
           ))}
         </div>
         <div className="flex gap-2 w-full sm:w-auto">
           <Button variant="secondary" size="sm" onClick={refetch} disabled={isLoading || isRefetching} className="!px-3"><RefreshCw size={14} className={isLoading || isRefetching ? "animate-spin" : ""} /></Button>
-          <Button size="sm" icon={UserPlus} onClick={() => {
-            resetForms();
-            if (activeTab === 'system') setIsSystemModalOpen(true);
-            if (activeTab === 'project') setIsProjectModalOpen(true);
-            if (activeTab === 'field') setIsFieldModalOpen(true);
-          }}>
+          <Button size="sm" icon={UserPlus} onClick={() => { resetForms(); if (activeTab === 'system') setIsSystemModalOpen(true); if (activeTab === 'project') setIsProjectModalOpen(true); if (activeTab === 'field') setIsFieldModalOpen(true); }}>
             {activeTab === 'field' ? 'Generate' : 'Add User'}
           </Button>
         </div>
       </div>
 
-      {/* DATA TABLES */}
       <div className="bg-white border border-gray-200 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)] overflow-x-auto min-h-[300px]">
         {isLoading && !isRefetching ? (
           <div className="p-12 text-center text-gray-400"><Loader2 className="animate-spin inline mr-2" size={16}/> Loading users...</div>
@@ -314,13 +313,9 @@ export default function UserManager() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 relative">
-              
-              {/* Subtle Refetching Indicator */}
               {isRefetching && <div className="absolute inset-0 bg-white/50 backdrop-blur-sm z-10 flex items-center justify-center"><Loader2 className="animate-spin text-[#5C3030]"/></div>}
 
-              {activeTab === 'system' && systemUsersList.length === 0 && (
-                <tr><td colSpan="4" className="p-8 text-center text-gray-400 text-sm">No system users found.</td></tr>
-              )}
+              {activeTab === 'system' && systemUsersList.length === 0 && ( <tr><td colSpan="4" className="p-8 text-center text-gray-400 text-sm">No system users found.</td></tr> )}
               {activeTab === 'system' && systemUsersList.map(u => (
                 <tr key={u.id} className="hover:bg-gray-50 transition-colors group">
                   <td className="px-4 py-3">
@@ -332,15 +327,13 @@ export default function UserManager() {
                   <td className="px-4 py-3 text-right">
                     <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button onClick={() => openSystemEdit(u)} className="p-1.5 text-gray-400 hover:text-[#5C3030] rounded-md transition-colors"><Edit3 size={14}/></button>
-                      <button onClick={() => { if(confirm("Delete System User?")) deleteMutation.mutate({ id: u.id, type: "system_user" }); }} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md transition-colors"><Trash2 size={14}/></button>
+                      <button onClick={() => setUserToDelete({ id: u.id, type: "system_user", name: u.full_name })} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md transition-colors"><Trash2 size={14}/></button>
                     </div>
                   </td>
                 </tr>
               ))}
 
-              {activeTab === 'project' && projectAssignments.length === 0 && (
-                <tr><td colSpan="4" className="p-8 text-center text-gray-400 text-sm">No project staff assigned.</td></tr>
-              )}
+              {activeTab === 'project' && projectAssignments.length === 0 && ( <tr><td colSpan="4" className="p-8 text-center text-gray-400 text-sm">No project staff assigned.</td></tr> )}
               {activeTab === 'project' && projectAssignments.map(pa => (
                 <tr key={pa.id} className="hover:bg-gray-50 transition-colors group">
                   <td className="px-4 py-3 font-semibold text-gray-900">{pa.projects?.name}</td>
@@ -352,22 +345,20 @@ export default function UserManager() {
                   <td className="px-4 py-3 text-right">
                     <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button onClick={() => openProjectEdit(pa)} className="p-1.5 text-gray-400 hover:text-[#5C3030] rounded-md transition-colors"><Edit3 size={14}/></button>
-                      <button onClick={() => { if(confirm("Remove from project?")) deleteMutation.mutate({ id: pa.id, type: "project_staff" }); }} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md transition-colors"><Trash2 size={14}/></button>
+                      <button onClick={() => setUserToDelete({ id: pa.id, type: "project_staff", name: pa.user_profiles?.full_name })} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md transition-colors"><Trash2 size={14}/></button>
                     </div>
                   </td>
                 </tr>
               ))}
 
-              {activeTab === 'field' && takersList.length === 0 && (
-                <tr><td colSpan="4" className="p-8 text-center text-gray-400 text-sm">No temp takers found.</td></tr>
-              )}
+              {activeTab === 'field' && takersList.length === 0 && ( <tr><td colSpan="4" className="p-8 text-center text-gray-400 text-sm">No temp takers found.</td></tr> )}
               {activeTab === 'field' && takersList.map(u => (
                 <tr key={u.id} className="hover:bg-gray-50 transition-colors group">
                   <td className="px-4 py-3 font-semibold text-gray-900">{u.full_name}</td>
                   <td className="px-4 py-3 text-sm text-gray-600">{u.gender} Only</td>
                   <td className="px-4 py-3 text-xs text-gray-500 font-inter">{u.expires_at ? new Date(u.expires_at).toLocaleDateString() : "Never"}</td>
                   <td className="px-4 py-3 text-right">
-                     <button onClick={() => { if(confirm("Delete Taker account?")) deleteMutation.mutate({ id: u.id, type: "taker" }); }} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={14}/></button>
+                      <button onClick={() => setUserToDelete({ id: u.id, type: "taker", name: u.full_name })} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={14}/></button>
                   </td>
                 </tr>
               ))}
@@ -376,7 +367,6 @@ export default function UserManager() {
         )}
       </div>
 
-      {/* --- MODALS --- */}
       <Modal isOpen={isSystemModalOpen} onClose={resetForms} title={editingId ? "Edit System User" : "Create System User"}>
         <form onSubmit={(e) => { e.preventDefault(); systemMutation.mutate(); }} className="space-y-4">
           {!editingId && (
@@ -384,12 +374,19 @@ export default function UserManager() {
               <label className={labelClass}>Link Member Profile</label>
               <div className="relative">
                 <Search className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
-                <input className={`${inputClass} pl-9`} placeholder="Search member database..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                {/* 🛡️ X Clear Button */}
+                <input className={`${inputClass} pl-9 pr-9`} placeholder="Search member database..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                {searchTerm && !isSearching && (
+                  <button type="button" onClick={() => setSearchTerm("")} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-700 transition-colors">
+                    <X size={16} strokeWidth={1.5} />
+                  </button>
+                )}
+                {isSearching && <Loader2 className="absolute right-3 top-2.5 text-gray-400 animate-spin" size={16} />}
               </div>
               {memberResults.length > 0 && (
-                <div className="absolute z-50 w-full bg-white border border-gray-200 shadow-lg rounded-md mt-1 overflow-hidden">
+                <div className="absolute z-50 w-full bg-white border border-gray-200 shadow-lg rounded-md mt-1 overflow-hidden max-h-48 overflow-y-auto">
                   {memberResults.map((m) => (
-                    <button key={m.id} type="button" onClick={() => selectMember(m)} className="w-full p-2.5 hover:bg-gray-50 text-left border-b border-gray-100 flex justify-between text-sm transition-colors">
+                    <button key={m.id} type="button" onClick={() => selectMember(m)} className="w-full p-2.5 hover:bg-gray-50 text-left border-b border-gray-100 flex justify-between items-center text-sm transition-colors">
                       <span className="font-semibold text-gray-800">{m.name} {m.surname}</span>
                       <span className="text-[10px] text-gray-500 uppercase tracking-widest">{m.designation}</span>
                     </button>
@@ -399,15 +396,9 @@ export default function UserManager() {
             </div>
           )}
 
-          <div>
-            <label className={labelClass}>Full Name</label>
-            <input required className={inputClass} value={systemForm.full_name} onChange={(e) => setSystemForm({ ...systemForm, full_name: e.target.value })} />
-          </div>
+          <div><label className={labelClass}>Full Name</label><input required className={inputClass} value={systemForm.full_name} onChange={(e) => setSystemForm({ ...systemForm, full_name: e.target.value })} /></div>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelClass}>Email Address</label>
-              <input required type="email" className={inputClass} value={systemForm.email} readOnly={!!editingId} onChange={(e) => setSystemForm({ ...systemForm, email: e.target.value })} />
-            </div>
+            <div><label className={labelClass}>Email Address</label><input required type="email" className={inputClass} value={systemForm.email} readOnly={!!editingId} onChange={(e) => setSystemForm({ ...systemForm, email: e.target.value })} /></div>
             <div>
               <label className={labelClass}>System Role</label>
               <select className={`${inputClass} appearance-none`} value={systemForm.role} onChange={(e) => setSystemForm({ ...systemForm, role: e.target.value })}>
@@ -445,7 +436,6 @@ export default function UserManager() {
                </div>
              </div>
           )}
-
           <div className="pt-4 border-t border-gray-100 flex justify-end gap-2">
             <Button variant="secondary" onClick={resetForms} type="button">Cancel</Button>
             <Button type="submit" disabled={systemMutation.isPending}>{systemMutation.isPending ? <Loader2 className="animate-spin" size={16}/> : 'Save User'}</Button>
@@ -460,9 +450,16 @@ export default function UserManager() {
               <label className={labelClass}>User / Member</label>
               {!editingId ? (
                 <div className="relative">
-                  <input className={inputClass} placeholder="Search database..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                  {/* 🛡️ X Clear Button */}
+                  <input className={`${inputClass} pr-9`} placeholder="Search database..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                  {searchTerm && !isSearching && (
+                    <button type="button" onClick={() => setSearchTerm("")} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-700 transition-colors">
+                      <X size={16} strokeWidth={1.5} />
+                    </button>
+                  )}
+                  {isSearching && <Loader2 className="absolute right-3 top-2.5 text-gray-400 animate-spin" size={16} />}
                   {memberResults.length > 0 && (
-                    <div className="absolute z-50 w-[200%] bg-white border border-gray-200 shadow-lg rounded-md mt-1 overflow-hidden">
+                    <div className="absolute z-50 w-[200%] bg-white border border-gray-200 shadow-lg rounded-md mt-1 overflow-hidden max-h-48 overflow-y-auto">
                       {memberResults.map((m) => (
                         <button key={m.id} type="button" onClick={() => selectMember(m)} className="w-full p-2.5 hover:bg-gray-50 text-left border-b border-gray-100 text-sm transition-colors font-semibold text-gray-800">
                           {m.name} {m.surname}
@@ -483,7 +480,6 @@ export default function UserManager() {
               </select>
             </div>
           </div>
-
           <div className="bg-gray-50 p-4 rounded-md border border-gray-200">
             <label className={labelClass}>Data Scope</label>
             <select className={`${inputClass} appearance-none`} value={projectForm.scope_type} onChange={(e) => setProjectForm({ ...projectForm, scope_type: e.target.value })}>
@@ -492,7 +488,6 @@ export default function UserManager() {
               <option value="Global">Global</option>
             </select>
           </div>
-
           <div className="pt-4 border-t border-gray-100 flex justify-end gap-2">
             <Button variant="secondary" onClick={resetForms} type="button">Cancel</Button>
             <Button type="submit" disabled={projectStaffMutation.isPending}>{projectStaffMutation.isPending ? <Loader2 className="animate-spin" size={16}/> : 'Save Assignment'}</Button>
@@ -503,26 +498,9 @@ export default function UserManager() {
       <Modal isOpen={isFieldModalOpen} onClose={resetForms} title="Generate Temp Takers">
         <form onSubmit={(e) => { e.preventDefault(); takerMutation.mutate(); }} className="space-y-4">
           <div className="grid grid-cols-3 gap-4">
-             <div>
-               <label className={labelClass}>Quantity</label>
-               <input type="number" min="1" max="20" required className={inputClass} value={takerForm.count} onChange={(e) => setTakerForm({ ...takerForm, count: e.target.value })} />
-             </div>
-             <div>
-               <label className={labelClass}>Gender</label>
-               <select className={`${inputClass} appearance-none`} value={takerForm.gender} onChange={(e) => setTakerForm({ ...takerForm, gender: e.target.value })}>
-                 <option>Yuvak</option>
-                 <option>Yuvati</option>
-               </select>
-             </div>
-             <div>
-               <label className={labelClass}>Auto-Delete</label>
-               <select className={`${inputClass} appearance-none`} value={takerForm.validity} onChange={(e) => setTakerForm({ ...takerForm, validity: e.target.value })}>
-                 <option value="">Never</option>
-                 <option value="12">12 Hours</option>
-                 <option value="24">1 Day</option>
-                 <option value="72">3 Days</option>
-               </select>
-             </div>
+             <div><label className={labelClass}>Quantity</label><input type="number" min="1" max="20" required className={inputClass} value={takerForm.count} onChange={(e) => setTakerForm({ ...takerForm, count: e.target.value })} /></div>
+             <div><label className={labelClass}>Gender</label><select className={`${inputClass} appearance-none`} value={takerForm.gender} onChange={(e) => setTakerForm({ ...takerForm, gender: e.target.value })}><option>Yuvak</option><option>Yuvati</option></select></div>
+             <div><label className={labelClass}>Auto-Delete</label><select className={`${inputClass} appearance-none`} value={takerForm.validity} onChange={(e) => setTakerForm({ ...takerForm, validity: e.target.value })}><option value="">Never</option><option value="12">12 Hours</option><option value="24">1 Day</option><option value="72">3 Days</option></select></div>
           </div>
           <div className="pt-4 border-t border-gray-100 flex justify-end gap-2">
             <Button variant="secondary" onClick={resetForms} type="button">Cancel</Button>
@@ -531,7 +509,22 @@ export default function UserManager() {
         </form>
       </Modal>
 
-      {/* SUCCESS MODAL FOR CREDENTIALS */}
+      {/* 🛡️ Delete Confirmation Modal */}
+      <Modal isOpen={!!userToDelete} onClose={() => setUserToDelete(null)} title="Confirm Deletion">
+        <div className="space-y-4">
+          <div className="bg-red-50 text-red-800 p-4 rounded-md border border-red-100 flex gap-3">
+            <AlertTriangle className="shrink-0 text-red-600 mt-0.5" size={18} />
+            <p className="text-sm">Are you sure you want to delete <span className="font-bold">{userToDelete?.name}</span>? This action cannot be undone.</p>
+          </div>
+          <div className="pt-2 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setUserToDelete(null)} disabled={deleteMutation.isPending}>Cancel</Button>
+            <Button className="!bg-red-600 !border-red-600 hover:!bg-red-700" onClick={() => deleteMutation.mutate({ id: userToDelete.id, type: userToDelete.type })} disabled={deleteMutation.isPending}>
+              {deleteMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : "Yes, Delete User"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
       <Modal isOpen={createdCredentials.length > 0} onClose={() => {setCreatedCredentials([]); resetForms();}} title="Credentials Generated">
         <div className="space-y-4">
           <div className="bg-emerald-50 text-emerald-800 p-4 rounded-md border border-emerald-200">
@@ -552,7 +545,7 @@ export default function UserManager() {
           <div className="pt-2 flex justify-end gap-2">
              <Button icon={Copy} onClick={() => {
                 navigator.clipboard.writeText(createdCredentials.map(c => `Login: ${c.email}\nPass: ${c.password}`).join('\n\n'));
-                alert("Copied to clipboard");
+                toast.success("Copied to clipboard!");
              }}>Copy All</Button>
              <Button variant="secondary" onClick={() => {setCreatedCredentials([]); resetForms();}}>Done</Button>
           </div>

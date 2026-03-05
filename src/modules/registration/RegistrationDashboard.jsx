@@ -1,10 +1,9 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '../../lib/supabase';
+import { supabase, withTimeout } from '../../lib/supabase'; // 🛡️ Imported withTimeout
 import { useAuth } from '../../contexts/AuthContext';
 import { Loader2, ShieldAlert, FolderKey } from 'lucide-react';
 import RegistrationRoster from './RegistrationRoster';
-import Button from '../../components/ui/Button';
 
 export default function RegistrationDashboard() {
   const { profile } = useAuth();
@@ -21,16 +20,20 @@ export default function RegistrationDashboard() {
   const { data: projects, isLoading } = useQuery({
     queryKey: ['active-projects-registration'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('projects')
-        .select('id, name, registration_open, type')
-        .eq('is_active', true)
-        .order('created_at', { ascending: false });
+      // 🛡️ Wrapped in withTimeout
+      const { data, error } = await withTimeout(
+        supabase
+          .from('projects')
+          .select('id, name, registration_open, type')
+          .eq('is_active', true)
+          .order('created_at', { ascending: false })
+      );
 
       if (error) throw error;
       return data || [];
     },
-    enabled: isAuthorized
+    enabled: isAuthorized,
+    staleTime: 1000 * 60 * 5 // 5 mins
   });
 
   if (!isAuthorized) {
@@ -54,7 +57,6 @@ export default function RegistrationDashboard() {
     );
   }
 
-  // If a project is selected, render the Roster View
   if (selectedProject) {
     return (
       <RegistrationRoster 
@@ -66,7 +68,6 @@ export default function RegistrationDashboard() {
     );
   }
 
-  // Render the Project Selection Grid
   return (
     <div className="space-y-6 pb-20">
       <div>

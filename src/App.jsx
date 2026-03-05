@@ -11,6 +11,7 @@ import Layout from "./components/Layout";
 import Login from "./modules/auth/Login";
 import ProtectedRoute from "./components/ProtectedRoute";
 import HomeDashboard from "./modules/home/HomeDashboard";
+import ProjectView from "./modules/projects/ProjectView";
 
 // --- LAZY IMPORTS ---
 const MemberDirectory = lazy(() => import("./modules/members/MemberDirectory"));
@@ -75,6 +76,7 @@ export default function App() {
               <Route path="/directory" element={<MemberDirectory />} />
               <Route path="/directory/:id" element={<MemberProfile />} />
               <Route path="/projects" element={<ProjectDashboard />} />
+              <Route path="/projects/:projectId" element={<ProjectView />} />
               <Route path="/registration" element={<RegistrationDashboard />} />
             </Route>
 

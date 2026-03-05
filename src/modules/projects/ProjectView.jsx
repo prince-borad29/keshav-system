@@ -1,15 +1,18 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Calendar, Plus, Clock, Edit3, Trash2, Star, QrCode, Loader2, Shield } from 'lucide-react';
+import { useNavigate, useParams } from 'react-router-dom'; // 🛡️ Added useParams
+import { ArrowLeft, Calendar, Plus, Clock, Edit3, Trash2, Star, QrCode, Loader2, Shield, AlertTriangle } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '../../lib/supabase';
+import { supabase, withTimeout } from '../../lib/supabase'; // 🛡️ Added withTimeout
+import toast from 'react-hot-toast'; // 🛡️ Added toast
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
+import Modal from '../../components/Modal';
 import EventForm from './EventForm';
 import ProjectStaff from './ProjectStaff';
 import { useAuth } from "../../contexts/AuthContext"; 
 
-export default function ProjectView({ project, onBack }) {
+export default function ProjectView() {
+  const { projectId } = useParams(); // 🛡️ Extract ID from URL
   const navigate = useNavigate();
   const { profile } = useAuth(); 
   const queryClient = useQueryClient();
@@ -20,32 +23,53 @@ export default function ProjectView({ project, onBack }) {
   const [activeTab, setActiveTab] = useState('events'); 
   const [isEventFormOpen, setIsEventFormOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
+  const [eventToDelete, setEventToDelete] = useState(null); // 🛡️ Replaces confirm()
 
-  // 1. Fetch Role Data
-  const { data: projectRole } = useQuery({
-    queryKey: ['project-role', project.id, profile?.id],
+  // 1. Fetch Project Details (Required since we only have ID from URL)
+  const { data: project, isLoading: loadingProject } = useQuery({
+    queryKey: ['project', projectId],
     queryFn: async () => {
-      if (isAdmin) return 'admin';
-      const { data } = await supabase.from('project_assignments').select('role').eq('project_id', project.id).eq('user_id', profile.id).maybeSingle();
-      return data?.role || null;
-    },
-    enabled: !!profile
-  });
-
-  // 2. Fetch Events
-  const { data: events, isLoading: loadingEvents } = useQuery({
-    queryKey: ['events', project.id],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('events').select('*').eq('project_id', project.id).order('date', { ascending: true });
+      const { data, error } = await withTimeout(supabase.from('projects').select('*').eq('id', projectId).single());
       if (error) throw error;
       return data;
-    }
+    },
+    enabled: !!projectId
   });
 
-  // 3. Delete Event Mutation
+  // 2. Fetch Role Data
+  const { data: projectRole } = useQuery({
+    queryKey: ['project-role', projectId, profile?.id],
+    queryFn: async () => {
+      if (isAdmin) return 'admin';
+      const { data } = await withTimeout(supabase.from('project_assignments').select('role').eq('project_id', projectId).eq('user_id', profile.id).maybeSingle());
+      return data?.role || null;
+    },
+    enabled: !!profile && !!projectId
+  });
+
+  // 3. Fetch Events
+  const { data: events, isLoading: loadingEvents } = useQuery({
+    queryKey: ['events', projectId],
+    queryFn: async () => {
+      const { data, error } = await withTimeout(supabase.from('events').select('*').eq('project_id', projectId).order('date', { ascending: true }));
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!projectId
+  });
+
+  // 4. Delete Event Mutation
   const deleteEventMutation = useMutation({
-    mutationFn: async (id) => await supabase.from('events').delete().eq('id', id),
-    onSuccess: () => queryClient.invalidateQueries(['events', project.id])
+    mutationFn: async (id) => await withTimeout(supabase.from('events').delete().eq('id', id)),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['events', projectId]);
+      toast.success("Event deleted");
+      setEventToDelete(null);
+    },
+    onError: (err) => {
+      toast.error(err.message);
+      setEventToDelete(null);
+    }
   });
 
   const isPast = (date) => new Date(date) < new Date().setHours(0,0,0,0);
@@ -56,10 +80,13 @@ export default function ProjectView({ project, onBack }) {
   const canMarkAttendance = isAdmin || isCoordinator || projectRole === 'Editor' || projectRole === 'volunteer';
   const canManageStaff = isAdmin || (isCoordinator && !isProjectAdminAppRole);
 
+  if (loadingProject) return <div className="p-12 text-center text-gray-400"><Loader2 className="animate-spin inline mr-2" size={24} /> Loading project...</div>;
+  if (!project) return <div className="p-12 text-center text-gray-400">Project not found.</div>;
+
   return (
     <div className="space-y-6 pb-10">
       {/* Header */}
-      <button onClick={onBack} className="flex items-center gap-2 text-gray-500 hover:text-gray-900 font-semibold text-sm transition-colors w-fit">
+      <button onClick={() => navigate('/projects')} className="flex items-center gap-2 text-gray-500 hover:text-gray-900 font-semibold text-sm transition-colors w-fit">
         <ArrowLeft size={16} strokeWidth={2} /> Back to Projects
       </button>
 
@@ -127,7 +154,8 @@ export default function ProjectView({ project, onBack }) {
                     {canManageEvents && (
                       <div className="flex gap-1 ml-2 border-l border-gray-200 pl-2">
                         <button onClick={() => { setSelectedEvent(event); setIsEventFormOpen(true); }} className="p-1.5 text-gray-400 hover:text-gray-900 rounded-md hover:bg-gray-100 transition-colors"><Edit3 size={16} strokeWidth={1.5}/></button>
-                        <button onClick={() => { if(confirm("Delete event?")) deleteEventMutation.mutate(event.id); }} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md hover:bg-red-50 transition-colors"><Trash2 size={16} strokeWidth={1.5}/></button>
+                        {/* 🛡️ Replaced confirm() with Modal state */}
+                        <button onClick={() => setEventToDelete(event)} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md hover:bg-red-50 transition-colors"><Trash2 size={16} strokeWidth={1.5}/></button>
                       </div>
                     )}
                   </div>
@@ -144,6 +172,23 @@ export default function ProjectView({ project, onBack }) {
       )}
 
       <EventForm isOpen={isEventFormOpen} onClose={() => setIsEventFormOpen(false)} onSuccess={() => queryClient.invalidateQueries(['events', project.id])} projectId={project.id} initialData={selectedEvent} />
+
+      {/* 🛡️ Delete Confirmation Modal */}
+      <Modal isOpen={!!eventToDelete} onClose={() => setEventToDelete(null)} title="Confirm Deletion">
+        <div className="space-y-4">
+          <div className="bg-red-50 text-red-800 p-4 rounded-md border border-red-100 flex gap-3">
+            <AlertTriangle className="shrink-0 text-red-600 mt-0.5" size={18} />
+            <p className="text-sm">Are you sure you want to permanently delete <span className="font-bold">{eventToDelete?.name}</span>? All attendance data for this day will be lost.</p>
+          </div>
+          <div className="pt-2 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setEventToDelete(null)} disabled={deleteEventMutation.isPending}>Cancel</Button>
+            <Button className="!bg-red-600 !border-red-600 hover:!bg-red-700" onClick={() => deleteEventMutation.mutate(eventToDelete.id)} disabled={deleteEventMutation.isPending}>
+              {deleteEventMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : "Yes, Delete Event"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
     </div>
   );
 }

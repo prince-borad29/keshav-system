@@ -1,43 +1,37 @@
 import { createClient } from '@supabase/supabase-js';
 
-const isProduction = import.meta.env.PROD;
-
-const supabaseUrl = isProduction 
-  ? `${window.location.origin}/supabase-api` 
-  : import.meta.env.VITE_SUPABASE_URL;
-
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.error("Missing Supabase Environment Variables!");
-}
+// 100% Native, Direct Connection
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// 1. The Main Client (For the logged-in user)
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+export const ghostClient = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true
-  }
-});
-
-// 2. The Ghost Client (For background account creation)
-// We add a custom storageKey to silence the GoTrue warning permanently!
-export const ghostClient = createClient(supabaseUrl, supabaseAnonKey, { 
-  auth: { 
-    persistSession: false, 
+    persistSession: false,
     autoRefreshToken: false,
-    storageKey: 'ghost-client-auth-storage' 
+    detectSessionInUrl: false
   }
 });
 
-// 3. --- NETWORK TIMEOUT GUARD ---
-// Wraps any database call in an 8-second stopwatch. Prevents infinite hanging.
-export const withTimeout = (promise, ms = 8000) => {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Network Timeout. Please check your connection.")), ms)
-    )
-  ]);
+// 🛡️ THE INDUSTRY-GRADE TIMEOUT
+// This safely guarantees that NO network request in your app will ever hang infinitely.
+export const withTimeout = async (promise, ms = 15000) => {
+  return new Promise((resolve, reject) => {
+    // Start the kill-switch timer
+    const timer = setTimeout(() => {
+      reject(new Error("Network Timeout. Please check your connection."));
+    }, ms);
+
+    // Resolve the Supabase query
+    Promise.resolve(promise)
+      .then((result) => {
+        clearTimeout(timer); // If it succeeds, cancel the kill-switch
+        resolve(result);
+      })
+      .catch((error) => {
+        clearTimeout(timer); // If it fails natively, cancel the kill-switch
+        reject(error);
+      });
+  });
 };

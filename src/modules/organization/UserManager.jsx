@@ -327,7 +327,7 @@ export default function UserManager() {
                   <td className="px-4 py-3"><Badge variant={u.role === 'admin' ? 'danger' : 'primary'}>{u.role}</Badge></td>
                   <td className="px-4 py-3 text-xs text-gray-500 font-medium">{u.mandals?.name || (u.role === "nirikshak" ? "Multi" : "Global")}</td>
                   <td className="px-4 py-3 text-right">
-                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex justify-end gap-1  transition-opacity">
                       <button onClick={() => openSystemEdit(u)} className="p-1.5 text-gray-400 hover:text-[#5C3030] rounded-md transition-colors"><Edit3 size={14}/></button>
                       <button onClick={() => setUserToDelete({ id: u.id, type: "system_user", name: u.full_name })} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md transition-colors"><Trash2 size={14}/></button>
                     </div>
@@ -345,7 +345,7 @@ export default function UserManager() {
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-500 font-medium">{pa.data_scope}</td>
                   <td className="px-4 py-3 text-right">
-                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex justify-end gap-1  transition-opacity">
                       <button onClick={() => openProjectEdit(pa)} className="p-1.5 text-gray-400 hover:text-[#5C3030] rounded-md transition-colors"><Edit3 size={14}/></button>
                       <button onClick={() => setUserToDelete({ id: pa.id, type: "project_staff", name: pa.user_profiles?.full_name })} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md transition-colors"><Trash2 size={14}/></button>
                     </div>
@@ -360,7 +360,7 @@ export default function UserManager() {
                   <td className="px-4 py-3 text-sm text-gray-600">{u.gender} Only</td>
                   <td className="px-4 py-3 text-xs text-gray-500 font-inter">{u.expires_at ? new Date(u.expires_at).toLocaleDateString() : "Never"}</td>
                   <td className="px-4 py-3 text-right">
-                      <button onClick={() => setUserToDelete({ id: u.id, type: "taker", name: u.full_name })} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={14}/></button>
+                      <button onClick={() => setUserToDelete({ id: u.id, type: "taker", name: u.full_name })} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md transition-colors "><Trash2 size={14}/></button>
                   </td>
                 </tr>
               ))}

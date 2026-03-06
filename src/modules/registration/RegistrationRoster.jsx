@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Loader2, User, Plus, MapPin, Lock, ArrowLeft, Users, QrCode, Database, Check, Download, Layers, X, FileText, FileSpreadsheet, Filter, Settings, Trash2, SortAsc } from 'lucide-react';
+import { Search, Loader2, User, Plus, MapPin, Lock, ArrowLeft, Users, QrCode, Database, Check, Download, Layers, X, FileText, FileSpreadsheet, Filter, Settings, Trash2, SortAsc, ChevronDown } from 'lucide-react';
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useInView } from 'react-intersection-observer';
 import { supabase, withTimeout } from '../../lib/supabase';
 import toast from 'react-hot-toast';
+import { saveAs } from 'file-saver'; 
 import QrScanner from '../attendance/QrScanner';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
@@ -19,11 +20,10 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [scanningMember, setScanningMember] = useState(null);
 
-  // Advanced Feature States
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [isMandalExportOpen, setIsMandalExportOpen] = useState(false);
   
-  // Drawer States
   const defaultFilters = { kshetra_id: '', mandal_id: '', gender: '', designation: '', tag_id: '' };
   const [filters, setFilters] = useState(defaultFilters);
   const [draftFilters, setDraftFilters] = useState(defaultFilters);
@@ -35,13 +35,13 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState('filter');
 
-  const [exportFilters, setExportFilters] = useState(defaultFilters);
+  // 🛡️ Updated export state to support multiple mandals
+  const [exportFilters, setExportFilters] = useState({ kshetra_id: '', mandal_ids: [], gender: '', designation: '', tag_id: '' });
   const [bulkConfig, setBulkConfig] = useState({ type: 'designation', value: '' });
 
   const role = (profile?.role || '').toLowerCase();
   const isGlobal = role === 'admin';
 
-  // 🚀 Optimized Debounce: 500ms prevents rapid-fire API spam while typing
   useEffect(() => {
     let isActive = true;
     const timer = setTimeout(() => {
@@ -53,7 +53,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     };
   }, [searchTerm]);
 
-  // Sync draft states when drawer opens
   useEffect(() => {
     if (isFilterOpen) {
       setDraftFilters({ ...filters });
@@ -62,7 +61,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     }
   }, [isFilterOpen, filters, sortConfig]);
 
-  // 1. Fetch Scope
   const { data: scopeData } = useQuery({
     queryKey: ['registration-scope', project.id, profile?.id],
     queryFn: async () => {
@@ -105,7 +103,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     staleTime: 1000 * 60 * 30
   });
 
-  // 2. Fetch Summary Count (Powers the UI badge)
   const { data: registeredCount } = useQuery({
     queryKey: ['registration-count', project.id, scopeData?.ids],
     queryFn: async () => {
@@ -119,7 +116,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     refetchInterval: 5000 
   });
 
-  // 3. 🚀 HIGHLY OPTIMIZED Infinite Query
   const { 
     data: membersPages, 
     fetchNextPage, 
@@ -134,8 +130,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       if (!scopeData) return { data: [] };
       if (!isGlobal && scopeData.ids.length === 0) return { data: [] };
 
-      // 🚀 SPEED FIX 1: Removed count: 'exact'
-      // 🚀 SPEED FIX 2: Simplified Joins
       let selectString = `
         id, name, surname, internal_code, gender, designation, mobile,
         mandals!inner ( id, name, kshetra_id ),
@@ -145,7 +139,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
 
       let query = supabase.from('members').select(selectString);
 
-      // --- Filter Application ---
       if (!scopeData.canRegister) query = query.eq('project_registrations.project_id', project.id);
       if (!isGlobal && profile?.gender) query = query.eq('gender', profile.gender);
       
@@ -164,23 +157,18 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       if (isAdmin && filters.gender) query = query.eq('gender', filters.gender);
       if (filters.tag_id) query = query.eq('member_tags.tag_id', filters.tag_id);
 
-      // --- 🚀 MULTI-LEVEL SORTING ---
       sortConfig.forEach(sort => {
         query = query.order(sort.column, { ascending: sort.ascending });
       });
 
       const from = pageParam * PAGE_SIZE;
-      
       const { data, error } = await withTimeout(
-        query.range(from, from + PAGE_SIZE - 1)
-             .order('id', { ascending: true }) // Stable pagination tie-breaker
-             .abortSignal(signal),
+        query.range(from, from + PAGE_SIZE - 1).order('id', { ascending: true }).abortSignal(signal),
         8000
       );
 
       if (error) throw error;
 
-      // Map final payload
       const processed = data.map(m => {
         const reg = m.project_registrations.find(r => r.project_id === project.id);
         return { ...m, is_registered: !!reg, external_qr: reg?.external_qr || null };
@@ -193,12 +181,10 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     staleTime: 1000 * 60 * 5,
   });
 
-  // 🛡️ Strict Intersection Observer
   useEffect(() => {
     if (inView && hasNextPage && !isFetchingNextPage && !isFetching && !isError) fetchNextPage();
   }, [inView, hasNextPage, isFetchingNextPage, isFetching, isError, fetchNextPage]);
 
-  // Dropdowns for Advanced Admin Export/Bulk
   const { data: dropdowns } = useQuery({
     queryKey: ['admin-dropdowns'],
     queryFn: async () => {
@@ -221,7 +207,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     { value: 'gender', label: 'Gender' }
   ];
 
-  // 4. Individual Registration Mutation
   const toggleRegistration = useMutation({
     mutationFn: async (member) => {
       if (member.is_registered) {
@@ -271,24 +256,37 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     } catch (err) { return { success: false, type: 'error', message: "Database Error" }; }
   };
 
-  // --- EXPORT ENGINE ---
+  // --- 🚀 BULLETPROOF EXPORT ENGINE ---
   const handleExport = async (format) => {
     const loadingToast = toast.loading("Generating report...");
     try {
       let query = supabase.from('project_registrations')
-        .select(`member_id, members!inner(id, name, surname, internal_code, gender, mobile, designation, mandal_id, mandals(id, name, kshetra_id, kshetras(name)), member_tags(tag_id))`)
-        .eq('project_id', project.id);
+        .select(`member_id, members!inner(name, surname, mobile, designation, mandal_id, mandals(id, name, kshetra_id, kshetras(name)), member_tags(tag_id))`)
+        .eq('project_id', project.id)
+        .order('members(name)', { ascending: true });
 
+      // Apply Base Scope
       if (!isGlobal && profile?.gender) query = query.eq('members.gender', profile.gender);
       if (!isGlobal && scopeData?.ids?.length > 0) query = query.in('members.mandal_id', scopeData.ids);
 
-      if (isAdmin && exportFilters.kshetra_id) query = query.eq('members.mandals.kshetra_id', exportFilters.kshetra_id);
-      if (isAdmin && exportFilters.mandal_id) query = query.eq('members.mandal_id', exportFilters.mandal_id);
-      if (isAdmin && exportFilters.gender) query = query.eq('members.gender', exportFilters.gender);
-      if (isAdmin && exportFilters.designation) query = query.eq('members.designation', exportFilters.designation);
-      if (isAdmin && exportFilters.tag_id) query = query.eq('members.member_tags.tag_id', exportFilters.tag_id);
+      // 🛡️ Apply Admin Filters (Natively on Mandal ID instead of relying on joins)
+      if (isAdmin) {
+        if (exportFilters.mandal_ids.length > 0) {
+          query = query.in('members.mandal_id', exportFilters.mandal_ids);
+        } else if (exportFilters.kshetra_id) {
+          const mIds = dropdowns?.mandals.filter(m => m.kshetra_id === exportFilters.kshetra_id).map(m => m.id) || [];
+          if (mIds.length > 0) {
+            query = query.in('members.mandal_id', mIds);
+          } else {
+            query = query.eq('members.mandal_id', '00000000-0000-0000-0000-000000000000'); 
+          }
+        }
+        
+        if (exportFilters.gender) query = query.eq('members.gender', exportFilters.gender);
+        if (exportFilters.designation) query = query.eq('members.designation', exportFilters.designation);
+        if (exportFilters.tag_id) query = query.eq('members.member_tags.tag_id', exportFilters.tag_id);
+      }
 
-      // Extracted to 15s for heavy admin exports
       const { data, error } = await withTimeout(query, 15000);
       if (error) throw error;
 
@@ -297,53 +295,72 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         return;
       }
 
-      const cleanData = data.map(row => ({
-        ID: row.members.internal_code,
-        Name: `${row.members.name} ${row.members.surname}`,
-        Gender: row.members.gender,
-        Mobile: row.members.mobile || '-',
-        Mandal: row.members.mandals?.name || '-',
-        Kshetra: row.members.mandals?.kshetras?.name || '-',
-        Designation: row.members.designation || '-'
-      }));
+      // 🛡️ DYNAMIC HEADERS & COLUMNS
+      const kshetraName = exportFilters.kshetra_id ? dropdowns?.kshetras.find(k => k.id === exportFilters.kshetra_id)?.name : null;
+      const showKshetraCol = !exportFilters.kshetra_id && exportFilters.mandal_ids.length === 0;
+      const showMandalCol = exportFilters.mandal_ids.length !== 1;
+
+      let subtitle = "All Kshetras & Mandals";
+      if (exportFilters.mandal_ids.length === 1) {
+        const mName = dropdowns?.mandals.find(m => m.id === exportFilters.mandal_ids[0])?.name;
+        subtitle = `Mandal: ${mName}`;
+      } else if (exportFilters.mandal_ids.length > 1) {
+        subtitle = kshetraName ? `Kshetra: ${kshetraName} (Filtered Mandals)` : `Multiple Mandals Selected`;
+      } else if (kshetraName) {
+        subtitle = `Kshetra: ${kshetraName} (All Mandals)`;
+      }
+
+      const cleanData = data.map(row => {
+        const m = row.members;
+        const obj = {
+          Name: `${m.name} ${m.surname}`,
+          Mobile: m.mobile || '-'
+        };
+        if (showMandalCol) obj.Mandal = m.mandals?.name || '-';
+        if (showKshetraCol) obj.Kshetra = m.mandals?.kshetras?.name || '-';
+        return obj;
+      });
 
       if (format === 'csv') {
         const headers = Object.keys(cleanData[0]);
         const csvRows = cleanData.map(row => headers.map(h => `"${row[h]}"`).join(','));
-        const csvContent = [headers.join(','), ...csvRows].join('\n');
+        const csvContent = "\uFEFF" + [headers.join(','), ...csvRows].join('\n'); 
         
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(blob);
-        link.setAttribute("download", `Registrations_${project.name}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        saveAs(blob, `Registrations_${project.name.replace(/\s+/g, '_')}.csv`);
         toast.success("Excel/CSV downloaded!", { id: loadingToast });
       } 
       else if (format === 'pdf') {
-        const printWindow = window.open('', '', 'height=800,width=1000');
-        printWindow.document.write('<html><head><title>Registration Report</title>');
-        printWindow.document.write('<style>body{font-family:sans-serif; padding:20px} table{border-collapse:collapse; width:100%; font-size:12px} th,td{border:1px solid #eee; padding:8px; text-align:left} th{background-color:#f9fafb; color:#374151}</style>');
-        printWindow.document.write('</head><body>');
-        printWindow.document.write(`<h2>${project.name} - Registration Report</h2>`);
-        printWindow.document.write(`<p style="color:#6b7280; font-size:12px; margin-top:-10px; margin-bottom:20px">Total Registered: ${cleanData.length}</p>`);
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        document.body.appendChild(iframe);
         
-        printWindow.document.write('<table><thead><tr>');
-        Object.keys(cleanData[0]).forEach(h => printWindow.document.write(`<th>${h}</th>`));
-        printWindow.document.write('</tr></thead><tbody>');
+        const doc = iframe.contentDocument || iframe.contentWindow.document;
+        doc.write('<html><head><title>Registration Report</title>');
+        doc.write('<style>body{font-family:sans-serif; padding:20px; color:#111827;} table{border-collapse:collapse; width:100%; font-size:12px; margin-top:20px;} th,td{border:1px solid #e5e7eb; padding:10px; text-align:left;} th{background-color:#f9fafb; color:#374151;}</style>');
+        doc.write('</head><body>');
+        doc.write(`<h2 style="color:#5C3030; margin-bottom:5px;">${project.name}</h2>`);
+        doc.write(`<p style="color:#6b7280; font-size:14px; margin-top:0;">${subtitle} &bull; Total: ${cleanData.length}</p>`);
+        
+        doc.write('<table><thead><tr>');
+        Object.keys(cleanData[0]).forEach(h => doc.write(`<th>${h}</th>`));
+        doc.write('</tr></thead><tbody>');
         
         cleanData.forEach(row => {
-          printWindow.document.write('<tr>');
-          Object.values(row).forEach(val => printWindow.document.write(`<td>${val}</td>`));
-          printWindow.document.write('</tr>');
+          doc.write('<tr>');
+          Object.values(row).forEach(val => doc.write(`<td>${val}</td>`));
+          doc.write('</tr>');
         });
         
-        printWindow.document.write('</tbody></table></body></html>');
-        printWindow.document.close();
-        printWindow.focus();
-        setTimeout(() => { printWindow.print(); printWindow.close(); }, 250);
-        toast.success("PDF generated!", { id: loadingToast });
+        doc.write('</tbody></table></body></html>');
+        doc.close();
+        
+        setTimeout(() => {
+          iframe.contentWindow.focus();
+          iframe.contentWindow.print();
+          toast.success("PDF generated!", { id: loadingToast });
+          setTimeout(() => document.body.removeChild(iframe), 2000);
+        }, 500);
       }
 
       setIsExportModalOpen(false);
@@ -352,7 +369,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     }
   };
 
-  // --- BULK REGISTRATION ENGINE ---
   const bulkRegisterMutation = useMutation({
     mutationFn: async () => {
       if (!bulkConfig.value) throw new Error("Please select a criteria value");
@@ -389,6 +405,9 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
 
   const members = useMemo(() => membersPages?.pages.flatMap(page => page.data) || [], [membersPages]);
   const canRegister = scopeData?.canRegister;
+  
+  // Calculate Export Modal cascade options
+  const exportAvailableMandals = dropdowns?.mandals.filter(m => !exportFilters.kshetra_id || m.kshetra_id === exportFilters.kshetra_id) || [];
   
   const inputClass = "w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030] transition-colors appearance-none";
 
@@ -473,7 +492,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
 
       {/* Member List */}
       <div className="bg-white border border-gray-200 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)] divide-y divide-gray-100 relative min-h-[300px]">
-        {/* Subtle loading overlay */}
         {(isFetching && !isFetchingNextPage) && (
          <div className="absolute inset-0 bg-white/60 z-10 flex items-center justify-center pointer-events-none backdrop-blur-[1px]">
            <Loader2 className="animate-spin text-[#5C3030]" size={24}/>
@@ -551,8 +569,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
             </div>
 
             <div className="flex-1 overflow-y-auto p-5">
-              
-              {/* Dynamic Filter/Sort Tabs */}
               <div className="flex p-1 bg-gray-100 rounded-lg mb-6 border border-gray-200">
                 <button 
                   onClick={() => setDrawerTab('filter')}
@@ -571,7 +587,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
               {drawerTab === 'filter' ? (
                 <div className="space-y-1 animate-in fade-in duration-200">
                   {isAdmin && <FilterRow label="Kshetra" fieldKey="kshetra_id" value={draftFilters.kshetra_id} options={dropdowns?.kshetras.map(k => ({value: k.id, label: k.name})) || []} />}
-                  {['admin', 'nirdeshak', 'nirikshak', 'project_admin'].includes(role) && <FilterRow label="Mandal" fieldKey="mandal_id" value={draftFilters.mandal_id} options={dropdowns?.mandals.map(m => ({value: m.id, label: m.name})) || []} />}
+                  {['admin', 'nirdeshak', 'nirikshak', 'project_admin'].includes(role) && <FilterRow label="Mandal" fieldKey="mandal_id" value={draftFilters.mandal_id} options={dropdowns?.mandals.filter(m => !draftFilters.kshetra_id || m.kshetra_id === draftFilters.kshetra_id).map(m => ({value: m.id, label: m.name})) || []} />}
                   <FilterRow label="Designation" fieldKey="designation" value={draftFilters.designation} options={['Nirdeshak', 'Nirikshak', 'Sanchalak', 'Member', 'Sah Sanchalak', 'Sampark Karyakar'].map(d => ({value: d, label: d}))} />
                   {isAdmin && <FilterRow label="Gender" fieldKey="gender" value={draftFilters.gender} options={[{value: 'Yuvak', label: 'Yuvak'}, {value: 'Yuvati', label: 'Yuvati'}]} />}
                   <FilterRow label="Tags" fieldKey="tag_id" value={draftFilters.tag_id} options={dropdowns?.tags.map(t => ({value: t.id, label: t.name})) || []} />
@@ -580,7 +596,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
                 <div className="space-y-3 animate-in fade-in duration-200">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-4">Multi-Level Sorting</p>
                   
-                  {/* 🛡️ DYNAMIC SORT BUILDER */}
                   {draftSortConfig.map((sort, index) => (
                     <div key={index} className="flex items-center gap-2 bg-gray-50 p-2 rounded-md border border-gray-200 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
                       <div className="w-6 h-6 bg-white border border-gray-200 rounded flex items-center justify-center text-xs font-bold text-gray-500 shrink-0">
@@ -675,26 +690,84 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           {isAdmin && (
             <div className="bg-gray-50 p-4 rounded-md border border-gray-200 space-y-3">
               <h4 className="text-xs font-bold text-gray-800 uppercase tracking-wider mb-2">Optional Filters</h4>
-              <div className="grid grid-cols-2 gap-3">
-                <select className={`${inputClass} text-xs`} value={exportFilters.kshetra_id} onChange={e => setExportFilters({...exportFilters, kshetra_id: e.target.value})}>
-                  <option value="">All Kshetras</option>
-                  {dropdowns?.kshetras.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
-                </select>
-                <select className={`${inputClass} text-xs`} value={exportFilters.mandal_id} onChange={e => setExportFilters({...exportFilters, mandal_id: e.target.value})}>
-                  <option value="">All Mandals</option>
-                  {dropdowns?.mandals.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
-                <select className={`${inputClass} text-xs`} value={exportFilters.gender} onChange={e => setExportFilters({...exportFilters, gender: e.target.value})}>
-                  <option value="">All Genders</option>
-                  <option value="Yuvak">Yuvak</option>
-                  <option value="Yuvati">Yuvati</option>
-                </select>
-                <select className={`${inputClass} text-xs`} value={exportFilters.designation} onChange={e => setExportFilters({...exportFilters, designation: e.target.value})}>
-                  <option value="">All Roles</option>
-                  {['Nirdeshak', 'Nirikshak', 'Sanchalak', 'Member', 'Sah Sanchalak', 'Sampark Karyakar'].map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
-                <div className="col-span-2">
-                  <select className={`${inputClass} text-xs`} value={exportFilters.tag_id} onChange={e => setExportFilters({...exportFilters, tag_id: e.target.value})}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5">Kshetra</label>
+                  <select className="w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-xs text-gray-900 focus:border-[#5C3030]" value={exportFilters.kshetra_id} onChange={e => setExportFilters({...exportFilters, kshetra_id: e.target.value, mandal_ids: []})}>
+                    <option value="">All Kshetras</option>
+                    {dropdowns?.kshetras.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
+                  </select>
+                </div>
+                
+                {/* 🛡️ Multi-Mandal Selection Accordion */}
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5">Mandals</label>
+                  <div className="border border-gray-200 rounded-md bg-white overflow-hidden transition-all">
+                    <button 
+                      type="button"
+                      onClick={() => setIsMandalExportOpen(!isMandalExportOpen)}
+                      className="w-full px-3 py-2 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                    >
+                      <div className="flex items-center gap-2 text-gray-700 text-xs">
+                        {exportFilters.mandal_ids.length === 0 ? "All Mandals" : <span className="font-semibold text-[#5C3030]">{exportFilters.mandal_ids.length} Selected</span>}
+                      </div>
+                      <ChevronDown className={`text-gray-400 transition-transform ${isMandalExportOpen ? 'rotate-180' : ''}`} size={14} strokeWidth={1.5}/>
+                    </button>
+
+                    {isMandalExportOpen && (
+                      <div className="p-2 bg-gray-50 border-t border-gray-200 space-y-1 max-h-40 overflow-y-auto">
+                        {exportAvailableMandals.length === 0 ? (
+                          <div className="text-xs text-gray-400 p-2 text-center">No mandals available.</div>
+                        ) : (
+                          exportAvailableMandals.map(m => {
+                            const isSelected = exportFilters.mandal_ids.includes(m.id);
+                            return (
+                              <div 
+                                key={m.id} 
+                                onClick={() => {
+                                  setExportFilters(prev => ({
+                                    ...prev,
+                                    mandal_ids: isSelected ? prev.mandal_ids.filter(id => id !== m.id) : [...prev.mandal_ids, m.id]
+                                  }))
+                                }}
+                                className={`flex items-center justify-between p-2 rounded-md cursor-pointer transition-colors ${isSelected ? 'bg-[#5C3030]/10 text-[#5C3030]' : 'text-gray-600 hover:bg-gray-100'}`}
+                              >
+                                <span className="text-xs font-semibold">{m.name}</span>
+                                {isSelected && <Check size={14} className="text-[#5C3030]" strokeWidth={2}/>}
+                              </div>
+                            )
+                          })
+                        )}
+                        {exportFilters.mandal_ids.length > 0 && (
+                          <button onClick={() => { setExportFilters(p => ({...p, mandal_ids: []})); setIsMandalExportOpen(false); }} className="w-full pt-2 pb-1 text-xs text-red-600 font-semibold hover:underline">
+                            Clear Selection
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5">Gender</label>
+                  <select className="w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-xs text-gray-900 focus:border-[#5C3030]" value={exportFilters.gender} onChange={e => setExportFilters({...exportFilters, gender: e.target.value})}>
+                    <option value="">All Genders</option>
+                    <option value="Yuvak">Yuvak</option>
+                    <option value="Yuvati">Yuvati</option>
+                  </select>
+                </div>
+                
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5">Designation</label>
+                  <select className="w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-xs text-gray-900 focus:border-[#5C3030]" value={exportFilters.designation} onChange={e => setExportFilters({...exportFilters, designation: e.target.value})}>
+                    <option value="">All Roles</option>
+                    {['Nirdeshak', 'Nirikshak', 'Sanchalak', 'Member', 'Sah Sanchalak', 'Sampark Karyakar'].map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+                
+                <div className="col-span-1 sm:col-span-2">
+                  <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5">Tag</label>
+                  <select className="w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-xs text-gray-900 focus:border-[#5C3030]" value={exportFilters.tag_id} onChange={e => setExportFilters({...exportFilters, tag_id: e.target.value})}>
                     <option value="">All Tags</option>
                     {dropdowns?.tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                   </select>
@@ -726,14 +799,14 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5">Criteria Type</label>
-                <select className={inputClass} value={bulkConfig.type} onChange={e => setBulkConfig({ type: e.target.value, value: '' })}>
+                <select className="w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030]" value={bulkConfig.type} onChange={e => setBulkConfig({ type: e.target.value, value: '' })}>
                   <option value="designation">By Designation</option>
                   <option value="tag">By Tag</option>
                 </select>
               </div>
               <div>
                 <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5">Select Value</label>
-                <select required className={inputClass} value={bulkConfig.value} onChange={e => setBulkConfig({...bulkConfig, value: e.target.value})}>
+                <select required className="w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030]" value={bulkConfig.value} onChange={e => setBulkConfig({...bulkConfig, value: e.target.value})}>
                   <option value="">Select...</option>
                   {bulkConfig.type === 'designation' 
                     ? ['Nirdeshak', 'Nirikshak', 'Sanchalak', 'Member', 'Sah Sanchalak', 'Sampark Karyakar'].map(d => <option key={d} value={d}>{d}</option>)

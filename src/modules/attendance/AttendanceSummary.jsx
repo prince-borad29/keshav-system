@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Loader2, ChevronRight, BarChart3, Download, FileText, FileSpreadsheet, UserX, Layers, MapPin, Shield } from 'lucide-react';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
-import * as XLSX from 'xlsx';
+import { saveAs } from 'file-saver'; 
+import toast from 'react-hot-toast'; 
 import Modal from '../../components/Modal';
 import Button from '../../components/ui/Button';
 
@@ -20,7 +19,6 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
 
   const attendanceIdMap = useRef(new Map());
 
-  // Data Fetching logic (NO abort signals to prevent header drop)
   useEffect(() => {
     let isMounted = true;
     const loadInitialData = async () => {
@@ -66,7 +64,6 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
     return () => { isMounted = false; };
   }, [event?.id, isVisible, project.id, userScope]);
 
-  // Data Processing
   useEffect(() => {
     if (!rawRegs) return;
     const groups = {};
@@ -86,19 +83,279 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
         groups[groupName].present++;
         totalPres++;
       } else {
-        absents.push({ name: `${m.name} ${m.surname}`, mobile: m.mobile || 'N/A', mandal: m.mandals?.name, kshetra: m.mandals?.kshetras?.name, id: m.internal_code });
+        absents.push({ name: `${m.name} ${m.surname}`, mobile: m.mobile || '-', mandal: m.mandals?.name || '-', kshetra: m.mandals?.kshetras?.name || '-', id: m.internal_code || '-' });
       }
     });
 
     setData(Object.values(groups).sort((a, b) => b.present - a.present));
-    setAbsentList(absents);
+    setAbsentList(absents.sort((a, b) => a.name.localeCompare(b.name)));
     setTotals({ present: totalPres, registered: totalReg });
   }, [rawRegs, presentSet, groupBy]);
 
   const getPct = (curr, total) => total > 0 ? Math.round((curr / total) * 100) : 0;
 
-  // Export functions (Admin Master, PDF, Excel) omitted for brevity as they are purely JS logic and don't affect UI components.
-  // Assume exportAdminMasterReport, exportPDFSummary, exportPDFAbsent, exportExcel exist exactly as before.
+  // --- 🚀 UPGRADED MOBILE-PROOF EXPORT ENGINE ---
+  const generatePDF = (title, subtitle, bodyHtml) => {
+    const loadingToast = toast.loading("Generating PDF...");
+    try {
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
+      
+      const doc = iframe.contentDocument || iframe.contentWindow.document;
+      doc.write('<html><head><title>Attendance Report</title>');
+      doc.write(`
+        <style>
+          /* 🛡️ FORCE BROWSER TO PRINT BACKGROUND COLORS */
+          @media print {
+            * {
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+          }
+          body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            padding: 20px; 
+            background-color: #ffffff;
+            color: #000000; 
+          }
+          h2 { color: #5C3030; margin-bottom: 5px; font-size: 20px; }
+          p { color: #6b7280; font-size: 12px; margin-top: 0; margin-bottom: 20px; border-bottom: 2px solid #5C3030; padding-bottom: 10px; }
+          table { border-collapse: collapse; width: 100%; font-size: 11px; margin-bottom: 20px; }
+          th, td { border: 1px solid #d1d5db; padding: 8px 10px; text-align: left; }
+          
+          /* 🛡️ Strict Header Colors */
+          th { 
+            background-color: #5C3030 !important; 
+            color: #ffffff !important; 
+            font-weight: bold; 
+            text-transform: uppercase; 
+            letter-spacing: 0.05em; 
+            font-size: 10px; 
+          }
+          
+          /* 🛡️ Strict Row Colors (White bg, Black text) */
+          td {
+            background-color: #ffffff !important;
+            color: #000000 !important;
+          }
+
+          /* Grouping Headers */
+          .kshetra-head { 
+            background-color: #ffffff !important; 
+            color: #000000 !important; 
+            padding: 10px; 
+            font-weight: bold; 
+            margin-top: 25px; 
+            margin-bottom: 10px; 
+            border-left: 4px solid #5C3030; 
+            font-size: 14px; 
+            border-top: 1px solid #e5e7eb;
+            border-right: 1px solid #e5e7eb;
+            border-bottom: 1px solid #e5e7eb;
+          }
+          .text-center { text-align: center; }
+          .text-right { text-align: right; }
+          .font-bold { font-weight: bold; }
+        </style>
+      `);
+      doc.write('</head><body>');
+      doc.write(`<h2>${title}</h2>`);
+      doc.write(`<p>${subtitle}</p>`);
+      doc.write(bodyHtml);
+      doc.write('</body></html>');
+      doc.close();
+      
+      setTimeout(() => {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+        toast.success("PDF opened successfully!", { id: loadingToast });
+        setTimeout(() => document.body.removeChild(iframe), 2000);
+      }, 500);
+    } catch (err) {
+      toast.error("Failed to generate PDF.", { id: loadingToast });
+    }
+  };
+
+  const exportAdminMasterReport = () => {
+    setShowExportMenu(false);
+    
+    // 🛡️ Data Structures for Master Report
+    const kshetraSummary = {}; // High level totals
+    const kshetraAbsentees = {}; // Grouped list of absent people
+    
+    rawRegs.forEach(r => {
+      const m = r.members;
+      const kName = m.mandals?.kshetras?.name || 'Unknown Kshetra';
+      const mName = m.mandals?.name || 'Unknown Mandal';
+      const isPres = presentSet.has(r.member_id);
+
+      // Initialize Summary
+      if (!kshetraSummary[kName]) {
+        kshetraSummary[kName] = { present: 0, reg: 0 };
+        kshetraAbsentees[kName] = [];
+      }
+
+      // Update Summary Totals
+      kshetraSummary[kName].reg++;
+      if (isPres) {
+        kshetraSummary[kName].present++;
+      } else {
+        // Add to absentee list for this Kshetra
+        kshetraAbsentees[kName].push({
+          name: `${m.name} ${m.surname}`,
+          mobile: m.mobile || '-',
+          mandal: mName
+        });
+      }
+    });
+
+    // 🛡️ GENERATE HTML BODY
+    let html = '';
+
+    // --- PART 1: OVERALL KSHETRA SUMMARY TABLE ---
+    html += `<div class="kshetra-head" style="margin-top:0;">Overall Kshetra Summary</div>`;
+    html += `
+      <table>
+        <thead>
+          <tr>
+            <th>Kshetra Name</th>
+            <th class="text-center">Registered</th>
+            <th class="text-center">Present</th>
+            <th class="text-right">Attendance %</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    Object.keys(kshetraSummary).sort().forEach(kName => {
+      const data = kshetraSummary[kName];
+      const pct = getPct(data.present, data.reg);
+      html += `
+        <tr>
+          <td class="font-bold">${kName}</td>
+          <td class="text-center">${data.reg}</td>
+          <td class="text-center">${data.present}</td>
+          <td class="text-right font-bold" style="color: ${pct < 50 ? '#dc2626' : '#059669'}">${pct}%</td>
+        </tr>
+      `;
+    });
+    html += `</tbody></table>`;
+
+    // Space between sections
+    html += `<div style="height: 30px;"></div>`;
+
+    // --- PART 2: KSHETRA-WISE ABSENTEE LISTS ---
+    html += `<h2 style="border-bottom: 1px solid #eee; padding-bottom: 5px;">Detailed Absentee Lists</h2>`;
+    
+    Object.keys(kshetraAbsentees).sort().forEach(kName => {
+      const absentees = kshetraAbsentees[kName];
+      
+      html += `<div class="kshetra-head">${kName} - Absent Members (${absentees.length})</div>`;
+      
+      if (absentees.length === 0) {
+        html += `<p style="font-style: italic; color: #6b7280; padding: 10px;">No absentees in this Kshetra.</p>`;
+      } else {
+        html += `
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 40%;">Member Name</th>
+                <th style="width: 30%;">Mobile Number</th>
+                <th style="width: 30%;">Mandal</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+        
+        // Sort absentees by name A-Z
+        absentees.sort((a, b) => a.name.localeCompare(b.name)).forEach(person => {
+          html += `
+            <tr>
+              <td class="font-bold">${person.name}</td>
+              <td>${person.mobile}</td>
+              <td>${person.mandal}</td>
+            </tr>
+          `;
+        });
+        
+        html += `</tbody></table>`;
+      }
+    });
+
+    // 🛡️ TRIGGER THE MOBILE-PROOF PRINT ENGINE
+    generatePDF(
+      `${event.name} - Master Absentee Report`,
+      `${project.name} &bull; Generated: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`,
+      html
+    );
+  };
+
+  const exportPDFSummary = () => {
+    setShowExportMenu(false);
+    let html = `<table><thead><tr><th>${groupBy === 'mandal' ? 'Mandal' : 'Kshetra'}</th><th class="text-center">Present / Reg</th><th class="text-right">Percentage</th></tr></thead><tbody>`;
+    data.forEach(row => {
+      html += `<tr><td class="font-bold">${row.name}</td><td class="text-center">${row.present} / ${row.registered}</td><td class="text-right">${getPct(row.present, row.registered)}%</td></tr>`;
+    });
+    html += `</tbody></table>`;
+
+    generatePDF(
+      `${event.name} - View Summary`,
+      `${project.name} &bull; Total: ${totals.present} / ${totals.registered} (${getPct(totals.present, totals.registered)}%)`,
+      html
+    );
+  };
+
+  const exportPDFAbsent = () => {
+    setShowExportMenu(false);
+    if (absentList.length === 0) {
+      toast.success("Everyone is present!");
+      return;
+    }
+
+    let html = `<table><thead><tr><th>Name</th><th>Internal ID</th><th>Mobile</th><th>Mandal</th>${userScope.isGlobal ? '<th>Kshetra</th>' : ''}</tr></thead><tbody>`;
+    absentList.forEach(row => {
+      html += `<tr><td class="font-bold">${row.name}</td><td>${row.id}</td><td>${row.mobile}</td><td>${row.mandal}</td>${userScope.isGlobal ? `<td>${row.kshetra}</td>` : ''}</tr>`;
+    });
+    html += `</tbody></table>`;
+
+    generatePDF(
+      `${event.name} - Absent List`,
+      `${project.name} &bull; Total Absent: ${absentList.length}`,
+      html
+    );
+  };
+
+  const exportExcel = () => {
+    setShowExportMenu(false);
+    const loadingToast = toast.loading("Generating CSV...");
+    try {
+      const cleanData = rawRegs.map(r => {
+        const m = r.members;
+        const obj = {
+          ID: m.internal_code || '-',
+          Name: `${m.name} ${m.surname}`,
+          Mobile: m.mobile || '-',
+          Mandal: m.mandals?.name || '-',
+          Status: presentSet.has(r.member_id) ? 'Present' : 'Absent'
+        };
+        if (userScope.isGlobal) obj.Kshetra = m.mandals?.kshetras?.name || '-';
+        return obj;
+      });
+
+      if (cleanData.length === 0) throw new Error("No data to export");
+
+      const headers = Object.keys(cleanData[0]);
+      const csvRows = cleanData.map(row => headers.map(h => `"${row[h]}"`).join(','));
+      const csvContent = "\uFEFF" + [headers.join(','), ...csvRows].join('\n'); 
+      
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      saveAs(blob, `Attendance_${event.name.replace(/\s+/g, '_')}.csv`);
+      toast.success("CSV Downloaded!", { id: loadingToast });
+    } catch (err) {
+      toast.error(err.message, { id: loadingToast });
+    }
+  };
 
   if (!isVisible) return null;
 
@@ -113,24 +370,27 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
           </Button>
 
           {showExportMenu && (
-            <div className="absolute right-0 top-10 w-56 bg-white rounded-md shadow-[0_4px_20px_rgba(0,0,0,0.08)] border border-gray-200 p-1.5 z-50">
-              {userScope.isGlobal && (
-                <div className="mb-1 pb-1 border-b border-gray-100">
-                  <button onClick={() => { /* exportAdminMasterReport() */ }} className="w-full text-left px-3 py-2 bg-gray-50 hover:bg-gray-100 rounded-md text-sm flex items-center gap-2 text-gray-900 font-semibold transition-colors">
-                    <Shield size={14} className="text-[#5C3030]"/> Master Report (PDF)
-                  </button>
-                </div>
-              )}
-              <button onClick={() => { /* exportPDFSummary() */ }} className="w-full text-left px-3 py-2 hover:bg-gray-50 rounded-md text-sm flex items-center gap-2 text-gray-700 transition-colors">
-                <FileText size={14} className="text-gray-400"/> Current Summary (PDF)
-              </button>
-              <button onClick={() => { /* exportPDFAbsent() */ }} className="w-full text-left px-3 py-2 hover:bg-gray-50 rounded-md text-sm flex items-center gap-2 text-gray-700 transition-colors">
-                <UserX size={14} className="text-gray-400"/> Absent List (PDF)
-              </button>
-              <button onClick={() => { /* exportExcel() */ }} className="w-full text-left px-3 py-2 hover:bg-gray-50 rounded-md text-sm flex items-center gap-2 text-gray-700 transition-colors">
-                <FileSpreadsheet size={14} className="text-gray-400"/> Excel Report
-              </button>
-            </div>
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
+              <div className="absolute right-0 top-10 w-56 bg-white rounded-md shadow-[0_4px_20px_rgba(0,0,0,0.08)] border border-gray-200 p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
+                {userScope.isGlobal && (
+                  <div className="mb-1 pb-1 border-b border-gray-100">
+                    <button onClick={exportAdminMasterReport} className="w-full text-left px-3 py-2 bg-gray-50 hover:bg-gray-100 rounded-md text-sm flex items-center gap-2 text-gray-900 font-semibold transition-colors">
+                      <Shield size={14} className="text-[#5C3030]"/> Master Report (PDF)
+                    </button>
+                  </div>
+                )}
+                <button onClick={exportPDFSummary} className="w-full text-left px-3 py-2 hover:bg-gray-50 rounded-md text-sm flex items-center gap-2 text-gray-700 transition-colors">
+                  <FileText size={14} className="text-gray-400"/> Current Summary (PDF)
+                </button>
+                <button onClick={exportPDFAbsent} className="w-full text-left px-3 py-2 hover:bg-gray-50 rounded-md text-sm flex items-center gap-2 text-gray-700 transition-colors">
+                  <UserX size={14} className="text-gray-400"/> Absent List (PDF)
+                </button>
+                <button onClick={exportExcel} className="w-full text-left px-3 py-2 hover:bg-gray-50 rounded-md text-sm flex items-center gap-2 text-gray-700 transition-colors">
+                  <FileSpreadsheet size={14} className="text-gray-400"/> Raw Excel (.csv)
+                </button>
+              </div>
+            </>
           )}
         </div>
 
@@ -163,9 +423,9 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
             )}
 
             {/* Dense Data Table */}
-            <div className="border border-gray-200 rounded-md overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">
+            <div className="border border-gray-200 rounded-md overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.02)] max-h-60 overflow-y-auto">
+              <table className="w-full text-left text-sm relative">
+                <thead className="bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-widest sticky top-0 shadow-sm z-10">
                   <tr>
                     <th className="px-3 py-2.5">{groupBy === 'mandal' ? 'Mandal' : 'Kshetra'}</th>
                     <th className="px-3 py-2.5 text-center">Count</th>

@@ -29,6 +29,8 @@ export default function UserManager() {
   const [projectForm, setProjectForm] = useState(initialProjectForm);
   const [takerForm, setTakerForm] = useState({ count: 1, gender: "Yuvak", validity: "" });
 
+  const [searching,setSearching] = useState();
+
   const { data, isLoading, isRefetching, refetch, error: fetchError } = useQuery({
     queryKey: ['user-manager-data'],
     queryFn: async () => {

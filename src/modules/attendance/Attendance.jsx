@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Search, ArrowLeft, Check, QrCode, Loader2, BarChart2, Filter, X, Lock, RefreshCw, AlertTriangle, Phone } from "lucide-react";
-import { supabase, withTimeout } from "../../lib/supabase"; // 👈 Imported global withTimeout
-import toast from "react-hot-toast"; // 👈 Imported toast
+import { Search, ArrowLeft, Check, QrCode, Loader2, BarChart2, Filter, X, Lock, RefreshCw, AlertTriangle, Phone, Settings, Trash2, SortAsc, Plus } from "lucide-react";
+import { supabase, withTimeout } from "../../lib/supabase"; 
+import toast from "react-hot-toast"; 
 import QrScanner from "./QrScanner";
 import { useAuth } from "../../contexts/AuthContext";
 import AttendanceSummary from "./AttendanceSummary";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
+import { useQuery } from "@tanstack/react-query"; // 🛡️ Added for dropdowns
 
 export default function Attendance({ projectId: propPid, eventId: propEid, embedded = false, readOnly: propReadOnly = false, hideSummary = false }) {
   const params = useParams();
@@ -17,6 +18,7 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
   const projectId = propPid || params.projectId;
   const eventId = propEid || params.eventId;
 
+  const isAdmin = (profile?.role || "").toLowerCase() === "admin";
   const canMark = useMemo(() => {
     if (propReadOnly) return false;
     return ["admin", "taker", "project_admin"].includes((profile?.role || "").toLowerCase());
@@ -44,7 +46,42 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
   const [mandalFilter, setMandalFilter] = useState(null);
   const [mandalFilterName, setMandalFilterName] = useState(null);
 
-  // --- 1. LOAD ROSTER (Bulletproofed with Timeouts) ---
+  // --- ADVANCED ADMIN FILTERS & SORTING ---
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [drawerTab, setDrawerTab] = useState('filter');
+
+  const defaultAdvFilters = { kshetra_id: '', mandal_id: '', designation: '', gender: '' };
+  const [advFilters, setAdvFilters] = useState(defaultAdvFilters);
+  const [draftAdvFilters, setDraftAdvFilters] = useState(defaultAdvFilters);
+
+  const defaultSortConfig = [{ column: 'name', ascending: true }];
+  const [sortConfig, setSortConfig] = useState(defaultSortConfig);
+  const [draftSortConfig, setDraftSortConfig] = useState(defaultSortConfig);
+
+  // Sync drawer drafts
+  useEffect(() => {
+    if (isFilterOpen) {
+      setDraftAdvFilters({ ...advFilters });
+      setDraftSortConfig([...sortConfig]);
+      setDrawerTab('filter');
+    }
+  }, [isFilterOpen, advFilters, sortConfig]);
+
+  // Fetch Dropdowns for Admin Filters
+  const { data: dropdowns } = useQuery({
+    queryKey: ['admin-dropdowns-attendance'],
+    queryFn: async () => {
+      const [kRes, mRes] = await Promise.all([
+        withTimeout(supabase.from('kshetras').select('id, name').order('name')),
+        withTimeout(supabase.from('mandals').select('id, name, kshetra_id').order('name'))
+      ]);
+      return { kshetras: kRes.data || [], mandals: mRes.data || [] };
+    },
+    enabled: isAdmin && isFilterOpen,
+    staleTime: 1000 * 60 * 30
+  });
+
+  // --- 1. LOAD ROSTER ---
   const loadRosterData = useCallback(async (isMounted) => {
     if (!projectId) return;
     try {
@@ -59,7 +96,6 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
         const mId = profile.assigned_mandal_id || profile.mandal_id;
         if (mId) allowedMandalIds = [mId];
       } else if (cleanRole === "nirikshak") {
-        // 🛡️ Wrapped in withTimeout
         const { data: assigns } = await withTimeout(supabase.from("nirikshak_assignments").select("mandal_id").eq("nirikshak_id", profile.id));
         if (assigns) allowedMandalIds = assigns.map((a) => a.mandal_id);
         const profileMandal = profile.assigned_mandal_id || profile.mandal_id;
@@ -69,7 +105,6 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
         allowedKshetraId = profile.assigned_kshetra_id || profile.kshetra_id;
         if (!allowedKshetraId && (profile.assigned_mandal_id || profile.mandal_id)) {
           const mId = profile.assigned_mandal_id || profile.mandal_id;
-          // 🛡️ Wrapped in withTimeout
           const { data: mData } = await withTimeout(supabase.from("mandals").select("kshetra_id").eq("id", mId).single());
           if (mData) allowedKshetraId = mData.kshetra_id;
         }
@@ -77,7 +112,6 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
 
       if (isMounted) setScopePermissions({ mandalIds: allowedMandalIds, kshetraId: allowedKshetraId });
 
-      // Fetch Roster (🛡️ Wrapped in withTimeout)
       const { data: regData, error: regError } = await withTimeout(
         supabase
           .from("project_registrations")
@@ -94,17 +128,17 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
       }).filter(Boolean);
 
       const userGender = profile?.gender;
-      const filteredRoster = rawRoster.filter((m) => {
+      const initialRoster = rawRoster.filter((m) => {
         if (cleanRole === "admin" || cleanRole === "taker") return true;
         if (userGender && m.gender !== userGender) return false;
         if (cleanRole === "sanchalak" || cleanRole === "nirikshak") return allowedMandalIds.includes(m.mandal_id);
         if (cleanRole === "nirdeshak" || cleanRole === "project_admin") return allowedKshetraId && m.kshetra_id === allowedKshetraId;
         return false;
-      }).sort((a, b) => a.name.localeCompare(b.name));
+      });
 
-      if (isMounted) setMembers(filteredRoster);
+      if (isMounted) setMembers(initialRoster);
 
-      // Fetch Attendance (🛡️ Wrapped in withTimeout)
+      // Fetch Attendance
       const { data: attData } = await withTimeout(supabase.from("attendance").select("id, member_id, scanned_at").eq("event_id", eventId));
       const newMap = new Map();
       attendanceIdMap.current.clear();
@@ -130,25 +164,17 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
     const loadMetadata = async () => {
       try {
         setInitLoading(true);
-        // 🛡️ Wrapped in withTimeout
         const [evtRes, projRes] = await Promise.all([
           withTimeout(supabase.from("events").select("*").eq("id", eventId).maybeSingle()),
           withTimeout(supabase.from("projects").select("*").eq("id", projectId).maybeSingle()),
         ]);
 
         if (!evtRes.data || !projRes.data) {
-          if (isMounted) {
-            setError("This event or project no longer exists.");
-            setInitLoading(false);
-          }
+          if (isMounted) { setError("This event or project no longer exists."); setInitLoading(false); }
           return; 
         }
         
-        if (isMounted) {
-          setEvent(evtRes.data);
-          setProject(projRes.data);
-        }
-
+        if (isMounted) { setEvent(evtRes.data); setProject(projRes.data); }
         await loadRosterData(isMounted);
       } catch (err) {
         if (isMounted) setError("Failed to load event details.");
@@ -157,10 +183,7 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
       }
     };
 
-    if (projectId && eventId && profile?.id) {
-      loadMetadata();
-    }
-
+    if (projectId && eventId && profile?.id) loadMetadata();
     return () => { isMounted = false; }; 
   }, [projectId, eventId, profile?.id, loadRosterData]);
 
@@ -202,7 +225,6 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
     const now = new Date().toISOString();
     const isPresent = presentMap.has(memberId);
 
-    // 1. OPTIMISTIC UI
     setPresentMap((prev) => {
       const next = new Map(prev);
       if (isPresent) next.delete(memberId);
@@ -217,19 +239,16 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
         ? supabase.from("attendance").delete().eq("event_id", eventId).eq("member_id", memberId)
         : supabase.from("attendance").insert({ event_id: eventId, member_id: memberId });
 
-      // 🛡️ Using the new standardized global withTimeout (5 seconds for rapid fire UI)
       const { error } = await withTimeout(dbPromise, 5000);
       if (error) throw error;
-
     } catch (err) {
-      // Revert UI on failure and notify user cleanly
       setPresentMap((prev) => {
         const next = new Map(prev);
         if (isPresent) next.set(memberId, now);
         else next.delete(memberId);
         return next;
       });
-      toast.error("Network issue. Checkmark reverted."); // 👈 Added Toast
+      toast.error("Network issue. Checkmark reverted.");
     } finally {
       setPendingRequests((prev) => Math.max(0, prev - 1));
     }
@@ -252,17 +271,87 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
     setShowSummary(false);
   };
 
-  const filteredList = members.filter((m) => {
-    if (mandalFilter && m.mandal_id !== mandalFilter) return false;
-    if (search && !`${m.name} ${m.surname} ${m.internal_code}`.toLowerCase().includes(search.toLowerCase())) return false;
-    const isPresent = presentMap.has(m.id);
-    if (filter === "present" && !isPresent) return false;
-    if (filter === "absent" && isPresent) return false;
-    return true;
-  });
+  // --- CLIENT SIDE FILTERING & SORTING ENGINE ---
+  const filteredList = useMemo(() => {
+    let result = members.filter((m) => {
+      // 1. Basic Filters
+      if (mandalFilter && m.mandal_id !== mandalFilter) return false;
+      if (search && !`${m.name} ${m.surname} ${m.internal_code}`.toLowerCase().includes(search.toLowerCase())) return false;
+      
+      const isPresent = presentMap.has(m.id);
+      if (filter === "present" && !isPresent) return false;
+      if (filter === "absent" && isPresent) return false;
+
+      // 2. Advanced Admin Filters
+      if (advFilters.kshetra_id && m.kshetra_id !== advFilters.kshetra_id) return false;
+      if (advFilters.mandal_id && m.mandal_id !== advFilters.mandal_id) return false;
+      if (advFilters.designation && m.designation !== advFilters.designation) return false;
+      if (advFilters.gender && m.gender !== advFilters.gender) return false;
+
+      return true;
+    });
+
+    // 3. Multi-Level Sort
+    result.sort((a, b) => {
+      for (let sort of sortConfig) {
+        let valA = a[sort.column] || '';
+        let valB = b[sort.column] || '';
+        
+        // Custom column mappings
+        if (sort.column === 'time') {
+          valA = presentMap.has(a.id) ? presentMap.get(a.id) : '0';
+          valB = presentMap.has(b.id) ? presentMap.get(b.id) : '0';
+        }
+
+        if (valA < valB) return sort.ascending ? -1 : 1;
+        if (valA > valB) return sort.ascending ? 1 : -1;
+      }
+      return 0;
+    });
+
+    return result;
+  }, [members, mandalFilter, search, filter, presentMap, advFilters, sortConfig]);
 
   const presentCount = members.filter((m) => presentMap.has(m.id)).length;
-  const userScope = { role: (profile?.role || "").toLowerCase(), gender: profile?.gender, mandalIds: scopePermissions.mandalIds, kshetraId: scopePermissions.kshetraId, isGlobal: profile?.role === "admin" };
+  const userScope = { role: (profile?.role || "").toLowerCase(), gender: profile?.gender, mandalIds: scopePermissions.mandalIds, kshetraId: scopePermissions.kshetraId, isGlobal: isAdmin };
+  const activeFilterCount = Object.values(advFilters).filter(v => v !== '').length;
+
+  const inputClass = "w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030] transition-colors appearance-none";
+  const labelClass = "block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5";
+
+  const FilterRow = ({ label, value, options, fieldKey }) => (
+    <div className="flex items-center gap-2 mb-3">
+      <div className="flex-1 min-w-[120px] border border-gray-200 rounded-md p-2 bg-white text-sm font-medium flex justify-between items-center text-gray-700">
+        {label} 
+        {/* <Settings size={14} className="text-gray-400"/> */}
+      </div>
+      <div className="flex-[1.5] relative">
+        <select 
+          className="w-full border border-gray-200 rounded-md p-2 bg-white text-sm outline-none appearance-none cursor-pointer focus:border-[#5C3030]" 
+          value={value} 
+          onChange={(e) => setDraftAdvFilters(prev => ({...prev, [fieldKey]: e.target.value}))}
+        >
+          <option value="">Select Criteria...</option>
+          {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </div>
+      {/* <button 
+        onClick={() => setDraftAdvFilters(prev => ({...prev, [fieldKey]: ''}))} 
+        className="p-2 bg-gray-50 border border-gray-200 rounded-md text-gray-500 hover:text-red-600 transition-colors"
+      >
+        <Trash2 size={16} strokeWidth={1.5}/>
+      </button> */}
+    </div>
+  );
+
+  const sortableColumns = [
+    { value: 'name', label: 'First Name' },
+    { value: 'surname', label: 'Last Name' },
+    { value: 'internal_code', label: 'Internal ID' },
+    { value: 'mandal', label: 'Mandal' },
+    { value: 'designation', label: 'Designation' },
+    { value: 'time', label: 'Check-in Time' }
+  ];
 
   if (initLoading) return <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-gray-400" size={32} strokeWidth={1.5} /></div>;
   if (!event) return <div className="p-8 text-center text-red-500 font-semibold border border-red-200 bg-red-50 rounded-md">Event not found.</div>;
@@ -300,9 +389,8 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
 
         {/* Filters */}
         <div className="flex gap-2">
-          <div className="relative flex-1">
+          <div className="relative flex-1 min-w-[120px]">
             <Search className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
-            {/* 🛡️ 'X' Clear Button Added Here */}
             <input
               className="w-full pl-9 pr-9 py-2 bg-white border border-gray-200 focus:border-[#5C3030] rounded-md outline-none text-sm transition-colors shadow-[0_1px_3px_rgba(0,0,0,0.02)]"
               placeholder="Search roster..."
@@ -315,7 +403,8 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
               </button>
             )}
           </div>
-          <div className="flex bg-gray-100 p-1 rounded-md shrink-0 border border-gray-200 overflow-x-auto">
+          
+          <div className="flex bg-gray-100 p-1 rounded-md shrink-0 border border-gray-200 overflow-x-auto hide-scrollbar">
             {["all", "present", "absent"].map((f) => (
               <button
                 key={f}
@@ -326,11 +415,22 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
               </button>
             ))}
           </div>
+
+          {isAdmin && (
+            <Button variant="secondary" icon={Filter} onClick={() => setIsFilterOpen(true)} className="relative shrink-0 !bg-white">
+              View
+              {activeFilterCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-[#5C3030] text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full font-bold shadow-sm border border-white">
+                  {activeFilterCount}
+                </span>
+              )}
+            </Button>
+          )}
         </div>
 
         {mandalFilter && (
           <div className="mt-3 flex items-center justify-between bg-[#5C3030]/10 px-3 py-2 rounded-md text-xs text-[#5C3030] font-semibold border border-[#5C3030]/20">
-            <span className="flex items-center gap-1.5"><Filter size={12} strokeWidth={2}/> Filtering: {mandalFilterName}</span>
+            <span className="flex items-center gap-1.5"><Filter size={12} strokeWidth={2}/> Summary Filter: {mandalFilterName}</span>
             <button onClick={() => { setMandalFilter(null); setMandalFilterName(null); }} className="p-1 hover:bg-[#5C3030]/20 rounded-md transition-colors"><X size={14} strokeWidth={2}/></button>
           </div>
         )}
@@ -397,6 +497,130 @@ export default function Attendance({ projectId: propPid, eventId: propEid, embed
           );
         })}
       </div>
+
+      {/* --- SLIDE OUT FILTER & SORT DRAWER (ADMIN ONLY) --- */}
+      {isAdmin && isFilterOpen && (
+        <>
+          <div className="fixed inset-0 bg-black/20 z-40 transition-opacity backdrop-blur-sm" onClick={() => setIsFilterOpen(false)} />
+          <div className="fixed top-0 right-0 h-full w-full sm:w-[400px] bg-white z-50 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
+            
+            <div className="p-4 border-b border-gray-100 flex justify-between items-center">
+              <h2 className="font-bold text-lg text-gray-900">Configure View</h2>
+              <button onClick={() => setIsFilterOpen(false)} className="text-gray-400 hover:text-gray-900 bg-gray-50 p-1.5 rounded-md transition-colors"><X size={18}/></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5">
+              <div className="flex p-1 bg-gray-100 rounded-lg mb-6 border border-gray-200">
+                <button 
+                  onClick={() => setDrawerTab('filter')}
+                  className={`flex-1 py-1.5 rounded-md text-sm font-bold transition-all ${drawerTab === 'filter' ? 'bg-white shadow-[0_1px_3px_rgba(0,0,0,0.05)] text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Filter
+                </button>
+                <button 
+                  onClick={() => setDrawerTab('sort')}
+                  className={`flex-1 py-1.5 rounded-md text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${drawerTab === 'sort' ? 'bg-white shadow-[0_1px_3px_rgba(0,0,0,0.05)] text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  <SortAsc size={14} /> Sort
+                </button>
+              </div>
+
+              {drawerTab === 'filter' ? (
+                <div className="space-y-1 animate-in fade-in duration-200">
+                  <FilterRow label="Kshetra" fieldKey="kshetra_id" value={draftAdvFilters.kshetra_id} options={dropdowns?.kshetras.map(k => ({value: k.id, label: k.name})) || []} />
+                  <FilterRow label="Mandal" fieldKey="mandal_id" value={draftAdvFilters.mandal_id} options={dropdowns?.mandals.filter(m => !draftAdvFilters.kshetra_id || m.kshetra_id === draftAdvFilters.kshetra_id).map(m => ({value: m.id, label: m.name})) || []} />
+                  <FilterRow label="Designation" fieldKey="designation" value={draftAdvFilters.designation} options={['Nirdeshak', 'Nirikshak', 'Sanchalak', 'Member', 'Sah Sanchalak', 'Sampark Karyakar'].map(d => ({value: d, label: d}))} />
+                  <FilterRow label="Gender" fieldKey="gender" value={draftAdvFilters.gender} options={[{value: 'Yuvak', label: 'Yuvak'}, {value: 'Yuvati', label: 'Yuvati'}]} />
+                </div>
+              ) : (
+                <div className="space-y-3 animate-in fade-in duration-200">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-4">Multi-Level Sorting</p>
+                  
+                  {draftSortConfig.map((sort, index) => (
+                    <div key={index} className="flex items-center gap-2 bg-gray-50 p-2 rounded-md border border-gray-200 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+                      <div className="w-6 h-6 bg-white border border-gray-200 rounded flex items-center justify-center text-xs font-bold text-gray-500 shrink-0">
+                        {index + 1}
+                      </div>
+                      <select 
+                        className="flex-1 border border-gray-200 rounded-md p-1.5 bg-white text-sm outline-none cursor-pointer focus:border-[#5C3030]"
+                        value={sort.column}
+                        onChange={e => {
+                          const newSort = [...draftSortConfig];
+                          newSort[index].column = e.target.value;
+                          setDraftSortConfig(newSort);
+                        }}
+                      >
+                        {sortableColumns.map(col => <option key={col.value} value={col.value}>{col.label}</option>)}
+                      </select>
+                      <select 
+                        className="w-24 border border-gray-200 rounded-md p-1.5 bg-white text-sm outline-none cursor-pointer focus:border-[#5C3030]"
+                        value={sort.ascending.toString()}
+                        onChange={e => {
+                          const newSort = [...draftSortConfig];
+                          newSort[index].ascending = e.target.value === 'true';
+                          setDraftSortConfig(newSort);
+                        }}
+                      >
+                        <option value="true">A-Z / Asc</option>
+                        <option value="false">Z-A / Desc</option>
+                      </select>
+                      {draftSortConfig.length > 1 && (
+                        <button 
+                          onClick={() => {
+                            const newSort = [...draftSortConfig];
+                            newSort.splice(index, 1);
+                            setDraftSortConfig(newSort);
+                          }} 
+                          className="p-1.5 text-gray-400 hover:text-red-600 transition-colors bg-white rounded border border-gray-200"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  
+                  {draftSortConfig.length < 3 && (
+                    <Button 
+                      variant="secondary" 
+                      size="sm" 
+                      className="w-full border-dashed border-gray-300 text-gray-500 bg-transparent hover:bg-gray-50 mt-2"
+                      onClick={() => setDraftSortConfig([...draftSortConfig, { column: 'designation', ascending: true }])}
+                    >
+                      <Plus size={14} className="mr-1.5" /> Add Sort Level
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-gray-100 flex gap-3 bg-white">
+              <Button 
+                variant="secondary" 
+                className="flex-1 bg-gray-50 !border-gray-200 !text-gray-700 hover:!bg-gray-100" 
+                onClick={() => {
+                  setDraftAdvFilters(defaultAdvFilters);
+                  setAdvFilters(defaultAdvFilters);
+                  setDraftSortConfig(defaultSortConfig);
+                  setSortConfig(defaultSortConfig);
+                  setIsFilterOpen(false);
+                }}
+              >
+                Reset All
+              </Button>
+              <Button 
+                className="flex-1 !bg-[#1E4B59] !border-[#1E4B59] hover:!bg-[#153641]" 
+                onClick={() => { 
+                  setAdvFilters(draftAdvFilters); 
+                  setSortConfig(draftSortConfig); 
+                  setIsFilterOpen(false); 
+                }}
+              >
+                Apply View
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
 
       {!hideSummary && (
         <AttendanceSummary isVisible={showSummary} onClose={() => setShowSummary(false)} event={event} project={project} userScope={userScope} onMandalClick={handleMandalClick} />

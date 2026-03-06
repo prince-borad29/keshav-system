@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Loader2, User, Plus, MapPin, Lock, ArrowLeft, Users, QrCode, Database, Check, Download, Layers, X, FileText, FileSpreadsheet } from 'lucide-react';
+import { Search, Loader2, User, Plus, MapPin, Lock, ArrowLeft, Users, QrCode, Database, Check, Download, Layers, X, FileText, FileSpreadsheet, Filter, Settings, Trash2, SortAsc } from 'lucide-react';
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useInView } from 'react-intersection-observer';
-import { supabase, withTimeout } from '../../lib/supabase'; // 🛡️ Imported withTimeout
-import toast from 'react-hot-toast'; // 🛡️ Imported toast
+import { supabase, withTimeout } from '../../lib/supabase';
+import toast from 'react-hot-toast';
 import QrScanner from '../attendance/QrScanner';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
@@ -22,25 +22,47 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
   // Advanced Feature States
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
-  const [exportFilters, setExportFilters] = useState({ kshetra_id: '', mandal_id: '', gender: '', designation: '', tag_id: '' });
+  
+  // Drawer States
+  const defaultFilters = { kshetra_id: '', mandal_id: '', gender: '', designation: '', tag_id: '' };
+  const [filters, setFilters] = useState(defaultFilters);
+  const [draftFilters, setDraftFilters] = useState(defaultFilters);
+  
+  const defaultSortConfig = [{ column: 'name', ascending: true }];
+  const [sortConfig, setSortConfig] = useState(defaultSortConfig);
+  const [draftSortConfig, setDraftSortConfig] = useState(defaultSortConfig);
+
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [drawerTab, setDrawerTab] = useState('filter');
+
+  const [exportFilters, setExportFilters] = useState(defaultFilters);
   const [bulkConfig, setBulkConfig] = useState({ type: 'designation', value: '' });
 
   const role = (profile?.role || '').toLowerCase();
   const isGlobal = role === 'admin';
 
-  // 🛡️ Bulletproof Debounce search
+  // 🚀 Optimized Debounce: 500ms prevents rapid-fire API spam while typing
   useEffect(() => {
     let isActive = true;
     const timer = setTimeout(() => {
       if (isActive) setDebouncedSearch(searchTerm);
-    }, 300);
+    }, 500);
     return () => {
       isActive = false;
       clearTimeout(timer);
     };
   }, [searchTerm]);
 
-  // 1. Fetch Scope (Protected with Timeout)
+  // Sync draft states when drawer opens
+  useEffect(() => {
+    if (isFilterOpen) {
+      setDraftFilters({ ...filters });
+      setDraftSortConfig([...sortConfig]); 
+      setDrawerTab('filter'); 
+    }
+  }, [isFilterOpen, filters, sortConfig]);
+
+  // 1. Fetch Scope
   const { data: scopeData } = useQuery({
     queryKey: ['registration-scope', project.id, profile?.id],
     queryFn: async () => {
@@ -83,7 +105,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     staleTime: 1000 * 60 * 30
   });
 
-  // 2. Fetch Summary Count
+  // 2. Fetch Summary Count (Powers the UI badge)
   const { data: registeredCount } = useQuery({
     queryKey: ['registration-count', project.id, scopeData?.ids],
     queryFn: async () => {
@@ -97,7 +119,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     refetchInterval: 5000 
   });
 
-  // 3. Infinite Query for Roster List
+  // 3. 🚀 HIGHLY OPTIMIZED Infinite Query
   const { 
     data: membersPages, 
     fetchNextPage, 
@@ -107,33 +129,58 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     isFetching,
     isError
   } = useInfiniteQuery({
-    queryKey: ['registration-list', project.id, scopeData, debouncedSearch],
+    queryKey: ['registration-list', project.id, scopeData, debouncedSearch, filters, sortConfig],
     queryFn: async ({ pageParam = 0, signal }) => {
       if (!scopeData) return { data: [] };
       if (!isGlobal && scopeData.ids.length === 0) return { data: [] };
 
-      const regJoin = scopeData.canRegister 
-         ? `project_registrations ( project_id, external_qr )`
-         : `project_registrations!inner ( project_id, external_qr )`;
-
-      let query = supabase.from('members').select(`
-        id, name, surname, internal_code, gender,
+      // 🚀 SPEED FIX 1: Removed count: 'exact'
+      // 🚀 SPEED FIX 2: Simplified Joins
+      let selectString = `
+        id, name, surname, internal_code, gender, designation, mobile,
         mandals!inner ( id, name, kshetra_id ),
-        ${regJoin} 
-      `);
+        ${filters.tag_id ? 'member_tags!inner(tag_id),' : ''}
+        ${scopeData.canRegister ? `project_registrations ( project_id, external_qr )` : `project_registrations!inner ( project_id, external_qr )`}
+      `;
 
+      let query = supabase.from('members').select(selectString);
+
+      // --- Filter Application ---
       if (!scopeData.canRegister) query = query.eq('project_registrations.project_id', project.id);
       if (!isGlobal && profile?.gender) query = query.eq('gender', profile.gender);
-      if (!isGlobal) query = query.in('mandal_id', scopeData.ids);
+      
+      if (!isGlobal) {
+        if (scopeData.ids && scopeData.ids.length > 0) query = query.in('mandal_id', scopeData.ids);
+        else query = query.eq('mandal_id', '00000000-0000-0000-0000-000000000000');
+      }
 
       if (debouncedSearch) {
         query = query.or(`name.ilike.%${debouncedSearch}%,surname.ilike.%${debouncedSearch}%,internal_code.ilike.%${debouncedSearch}%`);
       }
+      
+      if (isAdmin && filters.kshetra_id) query = query.eq('mandals.kshetra_id', filters.kshetra_id);
+      if (filters.mandal_id) query = query.eq('mandal_id', filters.mandal_id);
+      if (filters.designation) query = query.eq('designation', filters.designation);
+      if (isAdmin && filters.gender) query = query.eq('gender', filters.gender);
+      if (filters.tag_id) query = query.eq('member_tags.tag_id', filters.tag_id);
+
+      // --- 🚀 MULTI-LEVEL SORTING ---
+      sortConfig.forEach(sort => {
+        query = query.order(sort.column, { ascending: sort.ascending });
+      });
 
       const from = pageParam * PAGE_SIZE;
-      const { data, error } = await withTimeout(query.range(from, from + PAGE_SIZE - 1).order('name').abortSignal(signal));
+      
+      const { data, error } = await withTimeout(
+        query.range(from, from + PAGE_SIZE - 1)
+             .order('id', { ascending: true }) // Stable pagination tie-breaker
+             .abortSignal(signal),
+        8000
+      );
+
       if (error) throw error;
 
+      // Map final payload
       const processed = data.map(m => {
         const reg = m.project_registrations.find(r => r.project_id === project.id);
         return { ...m, is_registered: !!reg, external_qr: reg?.external_qr || null };
@@ -162,9 +209,17 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       ]);
       return { tags: tRes.data || [], kshetras: kRes.data || [], mandals: mRes.data || [] };
     },
-    enabled: isAdmin && (isExportModalOpen || isBulkModalOpen),
+    enabled: isAdmin && (isExportModalOpen || isBulkModalOpen || isFilterOpen),
     staleTime: 1000 * 60 * 30
   });
+
+  const sortableColumns = [
+    { value: 'name', label: 'First Name' },
+    { value: 'surname', label: 'Last Name' },
+    { value: 'internal_code', label: 'Internal ID' },
+    { value: 'designation', label: 'Designation' },
+    { value: 'gender', label: 'Gender' }
+  ];
 
   // 4. Individual Registration Mutation
   const toggleRegistration = useMutation({
@@ -179,9 +234,9 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     },
     onMutate: async (member) => {
       await queryClient.cancelQueries({ queryKey: ['registration-list', project.id] });
-      const previousData = queryClient.getQueryData(['registration-list', project.id, scopeData, debouncedSearch]);
+      const previousData = queryClient.getQueryData(['registration-list', project.id, scopeData, debouncedSearch, filters, sortConfig]);
       
-      queryClient.setQueryData(['registration-list', project.id, scopeData, debouncedSearch], old => {
+      queryClient.setQueryData(['registration-list', project.id, scopeData, debouncedSearch, filters, sortConfig], old => {
         if (!old) return old;
         return {
           ...old,
@@ -195,8 +250,8 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['registration-count', project.id] }),
     onError: (err, member, context) => {
-      if (context?.previousData) queryClient.setQueryData(['registration-list', project.id, scopeData, debouncedSearch], context.previousData);
-      toast.error(`Action failed: ${err.message}`); // 🛡️ Replaced alert()
+      if (context?.previousData) queryClient.setQueryData(['registration-list', project.id, scopeData, debouncedSearch, filters, sortConfig], context.previousData);
+      toast.error(`Action failed: ${err.message}`);
     }
   });
 
@@ -216,7 +271,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     } catch (err) { return { success: false, type: 'error', message: "Database Error" }; }
   };
 
-  // --- NEW: ADVANCED EXPORT ENGINE ---
+  // --- EXPORT ENGINE ---
   const handleExport = async (format) => {
     const loadingToast = toast.loading("Generating report...");
     try {
@@ -224,18 +279,17 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         .select(`member_id, members!inner(id, name, surname, internal_code, gender, mobile, designation, mandal_id, mandals(id, name, kshetra_id, kshetras(name)), member_tags(tag_id))`)
         .eq('project_id', project.id);
 
-      // Apply Base Scope
       if (!isGlobal && profile?.gender) query = query.eq('members.gender', profile.gender);
       if (!isGlobal && scopeData?.ids?.length > 0) query = query.in('members.mandal_id', scopeData.ids);
 
-      // Apply Admin Explicit Filters
       if (isAdmin && exportFilters.kshetra_id) query = query.eq('members.mandals.kshetra_id', exportFilters.kshetra_id);
       if (isAdmin && exportFilters.mandal_id) query = query.eq('members.mandal_id', exportFilters.mandal_id);
       if (isAdmin && exportFilters.gender) query = query.eq('members.gender', exportFilters.gender);
       if (isAdmin && exportFilters.designation) query = query.eq('members.designation', exportFilters.designation);
       if (isAdmin && exportFilters.tag_id) query = query.eq('members.member_tags.tag_id', exportFilters.tag_id);
 
-      const { data, error } = await withTimeout(query);
+      // Extracted to 15s for heavy admin exports
+      const { data, error } = await withTimeout(query, 15000);
       if (error) throw error;
 
       if (!data || data.length === 0) {
@@ -243,7 +297,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         return;
       }
 
-      // Map Clean Data
       const cleanData = data.map(row => ({
         ID: row.members.internal_code,
         Name: `${row.members.name} ${row.members.surname}`,
@@ -269,7 +322,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         toast.success("Excel/CSV downloaded!", { id: loadingToast });
       } 
       else if (format === 'pdf') {
-        // Native Print-to-PDF approach
         const printWindow = window.open('', '', 'height=800,width=1000');
         printWindow.document.write('<html><head><title>Registration Report</title>');
         printWindow.document.write('<style>body{font-family:sans-serif; padding:20px} table{border-collapse:collapse; width:100%; font-size:12px} th,td{border:1px solid #eee; padding:8px; text-align:left} th{background-color:#f9fafb; color:#374151}</style>');
@@ -300,7 +352,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     }
   };
 
-  // --- NEW: BULK REGISTRATION ENGINE (Admin Only) ---
+  // --- BULK REGISTRATION ENGINE ---
   const bulkRegisterMutation = useMutation({
     mutationFn: async () => {
       if (!bulkConfig.value) throw new Error("Please select a criteria value");
@@ -309,11 +361,10 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       if (bulkConfig.type === 'designation') query = query.eq('designation', bulkConfig.value);
       if (bulkConfig.type === 'tag') query = query.eq('member_tags.tag_id', bulkConfig.value).select('id, member_tags!inner(tag_id)');
 
-      const { data: membersToAdd, error: memError } = await withTimeout(query);
+      const { data: membersToAdd, error: memError } = await withTimeout(query, 15000);
       if (memError) throw memError;
       if (!membersToAdd?.length) throw new Error("No members match this criteria.");
 
-      // Fetch existing to prevent duplicates
       const { data: existingRegs } = await withTimeout(supabase.from('project_registrations').select('member_id').eq('project_id', project.id));
       const existingSet = new Set(existingRegs.map(e => e.member_id));
 
@@ -338,10 +389,36 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
 
   const members = useMemo(() => membersPages?.pages.flatMap(page => page.data) || [], [membersPages]);
   const canRegister = scopeData?.canRegister;
-  const inputClass = "w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030] transition-colors";
+  
+  const inputClass = "w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030] transition-colors appearance-none";
+
+  const FilterRow = ({ label, value, options, fieldKey }) => (
+    <div className="flex items-center gap-2 mb-3">
+      <div className="flex-1 min-w-[120px] border border-gray-200 rounded-md p-2 bg-white text-sm font-medium flex justify-between items-center text-gray-700">
+        {label} <Settings size={14} className="text-gray-400"/>
+      </div>
+      <div className="flex-[1.5] relative">
+        <select 
+          className="w-full border border-gray-200 rounded-md p-2 bg-white text-sm outline-none appearance-none cursor-pointer focus:border-[#5C3030]" 
+          value={value} 
+          onChange={(e) => setDraftFilters(prev => ({...prev, [fieldKey]: e.target.value}))}
+        >
+          <option value="">Select Criteria...</option>
+          {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </div>
+      <button 
+        onClick={() => setDraftFilters(prev => ({...prev, [fieldKey]: ''}))} 
+        className="p-2 bg-gray-50 border border-gray-200 rounded-md text-gray-500 hover:text-red-600 transition-colors"
+      >
+        <Trash2 size={16} strokeWidth={1.5}/>
+      </button>
+    </div>
+  );
 
   return (
     <div className="space-y-4 pb-10">
+      
       {/* Sticky Header */}
       <div className="bg-white p-3 sm:p-4 rounded-md border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)] sticky top-0 z-10 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-y-2 gap-x-4">
@@ -358,7 +435,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           </div>
           
           <div className="flex items-center justify-end gap-1.5 shrink-0">
-            {/* 🛡️ Advanced Actions */}
             {isAdmin && <Button variant="secondary" size="sm" onClick={() => setIsBulkModalOpen(true)} className="!px-2 sm:!px-3 hidden sm:flex"><Layers size={14} className="mr-1.5"/> Bulk Add</Button>}
             <Button variant="secondary" size="sm" onClick={() => setIsExportModalOpen(true)} className="!px-2 sm:!px-3"><Download size={14} className="sm:mr-1.5"/> <span className="hidden sm:inline">Export</span></Button>
 
@@ -368,83 +444,92 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           </div>
         </div>
         
-        {/* Search Bar */}
-        <div className="relative">
-          <Search className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
-          {/* 🛡️ X Clear Button Added Here */}
-          <input 
-            className={`${inputClass} pl-9 pr-9`}
-            placeholder={canRegister ? "Search name or ID..." : "Search registered..."}
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-          />
-          {searchTerm && (
-            <button onClick={() => setSearchTerm("")} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-700 transition-colors">
-              <X size={16} strokeWidth={1.5} />
-            </button>
-          )}
+        {/* Search & Filter Toolbar */}
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
+            <input 
+              className={`${inputClass} pl-9 pr-9`}
+              placeholder={canRegister ? "Search name or ID..." : "Search registered..."}
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+            />
+            {searchTerm && (
+              <button onClick={() => setSearchTerm("")} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-700 transition-colors">
+                <X size={16} strokeWidth={1.5} />
+              </button>
+            )}
+          </div>
+          <Button variant="secondary" icon={Filter} onClick={() => setIsFilterOpen(true)} className="relative !bg-white shrink-0">
+            View
+            {Object.values(filters).filter(v => v !== '').length > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 bg-[#5C3030] text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full font-bold shadow-sm border border-white">
+                {Object.values(filters).filter(v => v !== '').length}
+              </span>
+            )}
+          </Button>
         </div>
       </div>
 
       {/* Member List */}
-      <div className="space-y-2">
+      <div className="bg-white border border-gray-200 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)] divide-y divide-gray-100 relative min-h-[300px]">
+        {/* Subtle loading overlay */}
+        {(isFetching && !isFetchingNextPage) && (
+         <div className="absolute inset-0 bg-white/60 z-10 flex items-center justify-center pointer-events-none backdrop-blur-[1px]">
+           <Loader2 className="animate-spin text-[#5C3030]" size={24}/>
+         </div>
+        )}
+
         {isMembersLoading && members.length === 0 ? (
           <div className="py-12 text-center text-gray-400 text-sm"><Loader2 className="animate-spin inline mr-2" size={16}/> Loading records...</div>
         ) : members.length === 0 ? (
-          <div className="text-center py-12 text-gray-500 text-sm bg-white rounded-md border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+          <div className="text-center py-12 text-gray-500 text-sm">
             {searchTerm ? "No matching records found." : canRegister ? "Search to find members to register." : "No members registered yet."}
           </div>
         ) : (
-          <div className="bg-white border border-gray-200 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)] divide-y divide-gray-100 relative">
-             {/* Subtle loading overlay */}
-             {(isFetching && !isFetchingNextPage) && (
-              <div className="absolute inset-0 bg-white/40 z-10 flex items-center justify-center pointer-events-none"></div>
-             )}
+          members.map(m => {
+            const isProcessing = (toggleRegistration.isPending || toggleRegistration.isLoading) && toggleRegistration.variables?.id === m.id;
 
-            {members.map(m => {
-              const isProcessing = (toggleRegistration.isPending || toggleRegistration.isLoading) && toggleRegistration.variables?.id === m.id;
-
-              return (
-                <div key={m.id} className="flex items-center justify-between p-3 sm:p-4 gap-2 hover:bg-gray-50 transition-colors">
-                  <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-                    <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-md flex items-center justify-center font-inter font-bold text-[10px] sm:text-xs shrink-0 border ${m.is_registered ? 'bg-gray-100 text-gray-900 border-gray-200' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>
-                      {m.name[0]}{m.surname[0]}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-gray-900 text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 truncate">
-                        <span className="truncate">{m.name} {m.surname}</span>
-                        {m.external_qr && <Badge variant="success" className="shrink-0 hidden sm:inline-flex">Linked</Badge>}
-                      </div>
-                      <div className="text-[9px] sm:text-[10px] text-gray-500 uppercase tracking-widest font-semibold flex items-center gap-1 sm:gap-1.5 mt-0.5 truncate">
-                        <MapPin size={10} strokeWidth={2} className="shrink-0 hidden sm:block"/> 
-                        <span className="truncate">{m.mandals?.name}</span> 
-                        <span className="font-inter lowercase tracking-normal mx-0.5 sm:mx-1 text-gray-300 shrink-0">•</span> 
-                        <span className="font-inter shrink-0">{m.internal_code}</span>
-                      </div>
-                    </div>
+            return (
+              <div key={m.id} className="flex items-center justify-between p-3 sm:p-4 gap-2 hover:bg-gray-50 transition-colors">
+                <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                  <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-md flex items-center justify-center font-inter font-bold text-[10px] sm:text-xs shrink-0 border ${m.is_registered ? 'bg-gray-100 text-gray-900 border-gray-200' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>
+                    {m.name[0]}{m.surname[0]}
                   </div>
-
-                  <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                    {m.is_registered && isAdmin && (
-                      <button onClick={() => setScanningMember(m)} className={`p-1.5 sm:p-2 rounded-md border transition-colors ${m.external_qr ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-gray-200 text-gray-400 hover:text-gray-900 hover:bg-gray-50'}`}>
-                        <QrCode size={14} className="sm:w-4 sm:h-4" strokeWidth={1.5} />
-                      </button>
-                    )}
-
-                    {canRegister && project.registration_open ? (
-                      <Button size="sm" variant={m.is_registered ? "secondary" : "primary"} onClick={() => toggleRegistration.mutate(m)} disabled={isProcessing} className="w-16 sm:w-24 text-[10px] sm:text-xs !px-0 h-7 sm:h-8">
-                        {isProcessing ? <Loader2 size={12} className="animate-spin text-gray-400"/> : m.is_registered ? "Remove" : <span className="flex items-center gap-1"><Plus size={12} className="hidden sm:block"/> Add</span>}
-                      </Button>
-                    ) : (
-                      m.is_registered 
-                        ? <Badge variant="primary" className="flex items-center gap-1"><Check size={10} className="hidden sm:block"/> Added</Badge> 
-                        : <span className="text-[10px] sm:text-xs text-gray-400 font-medium px-1 sm:px-2">Unregistered</span>
-                    )}
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold text-gray-900 text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 truncate">
+                      <span className="truncate">{m.name} {m.surname}</span>
+                      {m.external_qr && <Badge variant="success" className="shrink-0 hidden sm:inline-flex">Linked</Badge>}
+                    </div>
+                    <div className="text-[9px] sm:text-[10px] text-gray-500 uppercase tracking-widest font-semibold flex items-center gap-1 sm:gap-1.5 mt-0.5 truncate">
+                      <MapPin size={10} strokeWidth={2} className="shrink-0 hidden sm:block"/> 
+                      <span className="truncate">{m.mandals?.name}</span> 
+                      <span className="font-inter lowercase tracking-normal mx-0.5 sm:mx-1 text-gray-300 shrink-0">•</span> 
+                      <span className="font-inter shrink-0">{m.internal_code}</span>
+                    </div>
                   </div>
                 </div>
-              )
-            })}
-          </div>
+
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                  {m.is_registered && isAdmin && (
+                    <button onClick={() => setScanningMember(m)} className={`p-1.5 sm:p-2 rounded-md border transition-colors ${m.external_qr ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-gray-200 text-gray-400 hover:text-gray-900 hover:bg-gray-50'}`}>
+                      <QrCode size={14} className="sm:w-4 sm:h-4" strokeWidth={1.5} />
+                    </button>
+                  )}
+
+                  {canRegister && project.registration_open ? (
+                    <Button size="sm" variant={m.is_registered ? "secondary" : "primary"} onClick={() => toggleRegistration.mutate(m)} disabled={isProcessing} className="w-16 sm:w-24 text-[10px] sm:text-xs !px-0 h-7 sm:h-8">
+                      {isProcessing ? <Loader2 size={12} className="animate-spin text-gray-400"/> : m.is_registered ? "Remove" : <span className="flex items-center gap-1"><Plus size={12} className="hidden sm:block"/> Add</span>}
+                    </Button>
+                  ) : (
+                    m.is_registered 
+                      ? <Badge variant="primary" className="flex items-center gap-1"><Check size={10} className="hidden sm:block"/> Added</Badge> 
+                      : <span className="text-[10px] sm:text-xs text-gray-400 font-medium px-1 sm:px-2">Unregistered</span>
+                  )}
+                </div>
+              </div>
+            )
+          })
         )}
         
         {members.length > 0 && (
@@ -453,6 +538,134 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           </div>
         )}
       </div>
+
+      {/* --- SLIDE OUT FILTER & SORT DRAWER --- */}
+      {isFilterOpen && (
+        <>
+          <div className="fixed inset-0 bg-black/20 z-40 transition-opacity backdrop-blur-sm" onClick={() => setIsFilterOpen(false)} />
+          <div className="fixed top-0 right-0 h-full w-full sm:w-[400px] bg-white z-50 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
+            
+            <div className="p-4 border-b border-gray-100 flex justify-between items-center">
+              <h2 className="font-bold text-lg text-gray-900">Configure View</h2>
+              <button onClick={() => setIsFilterOpen(false)} className="text-gray-400 hover:text-gray-900 bg-gray-50 p-1.5 rounded-md transition-colors"><X size={18}/></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5">
+              
+              {/* Dynamic Filter/Sort Tabs */}
+              <div className="flex p-1 bg-gray-100 rounded-lg mb-6 border border-gray-200">
+                <button 
+                  onClick={() => setDrawerTab('filter')}
+                  className={`flex-1 py-1.5 rounded-md text-sm font-bold transition-all ${drawerTab === 'filter' ? 'bg-white shadow-[0_1px_3px_rgba(0,0,0,0.05)] text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Filter
+                </button>
+                <button 
+                  onClick={() => setDrawerTab('sort')}
+                  className={`flex-1 py-1.5 rounded-md text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${drawerTab === 'sort' ? 'bg-white shadow-[0_1px_3px_rgba(0,0,0,0.05)] text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  <SortAsc size={14} /> Sort
+                </button>
+              </div>
+
+              {drawerTab === 'filter' ? (
+                <div className="space-y-1 animate-in fade-in duration-200">
+                  {isAdmin && <FilterRow label="Kshetra" fieldKey="kshetra_id" value={draftFilters.kshetra_id} options={dropdowns?.kshetras.map(k => ({value: k.id, label: k.name})) || []} />}
+                  {['admin', 'nirdeshak', 'nirikshak', 'project_admin'].includes(role) && <FilterRow label="Mandal" fieldKey="mandal_id" value={draftFilters.mandal_id} options={dropdowns?.mandals.map(m => ({value: m.id, label: m.name})) || []} />}
+                  <FilterRow label="Designation" fieldKey="designation" value={draftFilters.designation} options={['Nirdeshak', 'Nirikshak', 'Sanchalak', 'Member', 'Sah Sanchalak', 'Sampark Karyakar'].map(d => ({value: d, label: d}))} />
+                  {isAdmin && <FilterRow label="Gender" fieldKey="gender" value={draftFilters.gender} options={[{value: 'Yuvak', label: 'Yuvak'}, {value: 'Yuvati', label: 'Yuvati'}]} />}
+                  <FilterRow label="Tags" fieldKey="tag_id" value={draftFilters.tag_id} options={dropdowns?.tags.map(t => ({value: t.id, label: t.name})) || []} />
+                </div>
+              ) : (
+                <div className="space-y-3 animate-in fade-in duration-200">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-4">Multi-Level Sorting</p>
+                  
+                  {/* 🛡️ DYNAMIC SORT BUILDER */}
+                  {draftSortConfig.map((sort, index) => (
+                    <div key={index} className="flex items-center gap-2 bg-gray-50 p-2 rounded-md border border-gray-200 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+                      <div className="w-6 h-6 bg-white border border-gray-200 rounded flex items-center justify-center text-xs font-bold text-gray-500 shrink-0">
+                        {index + 1}
+                      </div>
+                      <select 
+                        className="flex-1 border border-gray-200 rounded-md p-1.5 bg-white text-sm outline-none cursor-pointer focus:border-[#5C3030]"
+                        value={sort.column}
+                        onChange={e => {
+                          const newSort = [...draftSortConfig];
+                          newSort[index].column = e.target.value;
+                          setDraftSortConfig(newSort);
+                        }}
+                      >
+                        {sortableColumns.map(col => <option key={col.value} value={col.value}>{col.label}</option>)}
+                      </select>
+                      <select 
+                        className="w-24 border border-gray-200 rounded-md p-1.5 bg-white text-sm outline-none cursor-pointer focus:border-[#5C3030]"
+                        value={sort.ascending.toString()}
+                        onChange={e => {
+                          const newSort = [...draftSortConfig];
+                          newSort[index].ascending = e.target.value === 'true';
+                          setDraftSortConfig(newSort);
+                        }}
+                      >
+                        <option value="true">A-Z / Asc</option>
+                        <option value="false">Z-A / Desc</option>
+                      </select>
+                      {draftSortConfig.length > 1 && (
+                        <button 
+                          onClick={() => {
+                            const newSort = [...draftSortConfig];
+                            newSort.splice(index, 1);
+                            setDraftSortConfig(newSort);
+                          }} 
+                          className="p-1.5 text-gray-400 hover:text-red-600 transition-colors bg-white rounded border border-gray-200"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  
+                  {draftSortConfig.length < 3 && (
+                    <Button 
+                      variant="secondary" 
+                      size="sm" 
+                      className="w-full border-dashed border-gray-300 text-gray-500 bg-transparent hover:bg-gray-50 mt-2"
+                      onClick={() => setDraftSortConfig([...draftSortConfig, { column: 'designation', ascending: true }])}
+                    >
+                      <Plus size={14} className="mr-1.5" /> Add Sort Level
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-gray-100 flex gap-3 bg-white">
+              <Button 
+                variant="secondary" 
+                className="flex-1 bg-gray-50 !border-gray-200 !text-gray-700 hover:!bg-gray-100" 
+                onClick={() => {
+                  setDraftFilters(defaultFilters);
+                  setFilters(defaultFilters);
+                  setDraftSortConfig(defaultSortConfig);
+                  setSortConfig(defaultSortConfig);
+                  setIsFilterOpen(false);
+                }}
+              >
+                Reset All
+              </Button>
+              <Button 
+                className="flex-1 !bg-[#1E4B59] !border-[#1E4B59] hover:!bg-[#153641]" 
+                onClick={() => { 
+                  setFilters(draftFilters); 
+                  setSortConfig(draftSortConfig); 
+                  setIsFilterOpen(false); 
+                }}
+              >
+                Apply View
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* --- EXPORT MODAL --- */}
       <Modal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} title="Export Report">

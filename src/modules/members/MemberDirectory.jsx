@@ -28,13 +28,15 @@ export default function MemberDirectory() {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   
-  // Filter & Sort States
+  // Filter & Multi-Sort States
   const defaultFilters = { kshetra_id: '', mandal_id: '', gender: '', designation: '', tag_id: '' };
   const [filters, setFilters] = useState(defaultFilters);
   const [draftFilters, setDraftFilters] = useState(defaultFilters);
   
-  const [sortOrder, setSortOrder] = useState('name_asc'); // Default Sort
-  const [draftSortOrder, setDraftSortOrder] = useState('name_asc');
+  // 🛡️ NEW: Multi-Level Sort Array
+  const defaultSortConfig = [{ column: 'name', ascending: true }];
+  const [sortConfig, setSortConfig] = useState(defaultSortConfig);
+  const [draftSortConfig, setDraftSortConfig] = useState(defaultSortConfig);
 
   // Drawer States
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -62,10 +64,10 @@ export default function MemberDirectory() {
   useEffect(() => {
     if (isFilterOpen) {
       setDraftFilters({ ...filters });
-      setDraftSortOrder(sortOrder);
-      setDrawerTab('filter'); // Default to filter tab
+      setDraftSortConfig([...sortConfig]); // Deep copy sort array
+      setDrawerTab('filter'); 
     }
-  }, [isFilterOpen, filters, sortOrder]);
+  }, [isFilterOpen, filters, sortConfig]);
 
   // 1. Fetch Scope Permissions
   const { data: scopeData } = useQuery({
@@ -135,8 +137,7 @@ export default function MemberDirectory() {
     isError,
     refetch
   } = useInfiniteQuery({
-    // 🛡️ Notice `sortOrder` is added to the queryKey so React Query knows to refetch when you change sorting!
-    queryKey: ['members', scopeData, debouncedSearch, filters, sortOrder],
+    queryKey: ['members', scopeData, debouncedSearch, filters, sortConfig], // 🛡️ Re-fetches when Multi-Sort changes
     queryFn: async ({ pageParam = 0, signal }) => {
       if (!scopeData) return { data: [], count: 0 };
       if (!isAdmin && scopeData.allowedMandalIds.length === 0) return { data: [], count: 0 };
@@ -147,8 +148,8 @@ export default function MemberDirectory() {
 
       let query = supabase.from('members').select(selectString, { count: 'exact' });
 
+      // Apply Filters
       if (!isAdmin && profile?.gender) query = query.eq('gender', profile.gender);
-      
       if (!isAdmin) {
         if (scopeData.allowedMandalIds && scopeData.allowedMandalIds.length > 0) {
           query = query.in('mandal_id', scopeData.allowedMandalIds);
@@ -156,7 +157,6 @@ export default function MemberDirectory() {
           query = query.eq('mandal_id', '00000000-0000-0000-0000-000000000000'); 
         }
       }
-
       if (role === 'project_admin') {
         if (scopeData.assignedProjectIds && scopeData.assignedProjectIds.length > 0) {
            query = query.in('project_registrations.project_id', scopeData.assignedProjectIds);
@@ -172,21 +172,16 @@ export default function MemberDirectory() {
       if (isAdmin && filters.gender) query = query.eq('gender', filters.gender);
       if (filters.tag_id) query = query.eq('member_tags.tag_id', filters.tag_id);
 
-      // --- APPLY DYNAMIC SORTING ---
-      let sortCol = 'name';
-      let sortAsc = true;
-      
-      if (sortOrder === 'name_desc') { sortCol = 'name'; sortAsc = false; }
-      else if (sortOrder === 'code_asc') { sortCol = 'internal_code'; sortAsc = true; }
-      else if (sortOrder === 'code_desc') { sortCol = 'internal_code'; sortAsc = false; }
+      // 🛡️ APPLY MULTI-LEVEL SORTING
+      sortConfig.forEach(sort => {
+        query = query.order(sort.column, { ascending: sort.ascending });
+      });
 
       const from = pageParam * PAGE_SIZE;
       
       const { data, count, error } = await withTimeout(
         query.range(from, from + PAGE_SIZE - 1)
-             .order(sortCol, { ascending: sortAsc })
-             .order('surname', { ascending: sortAsc }) // Keep surname matching name order
-             .order('id', { ascending: true }) // Tie-breaker
+             .order('id', { ascending: true }) // Final tie-breaker for stable pagination
              .abortSignal(signal),
         10000
       );
@@ -225,6 +220,15 @@ export default function MemberDirectory() {
   const totalCount = membersPages?.pages[0]?.count || 0;
   const activeFilterCount = Object.values(filters).filter(v => v !== '').length;
 
+  // Options for Sort Builder
+  const sortableColumns = [
+    { value: 'name', label: 'First Name' },
+    { value: 'surname', label: 'Last Name' },
+    { value: 'internal_code', label: 'Internal ID' },
+    { value: 'designation', label: 'Designation' },
+    { value: 'gender', label: 'Gender' }
+  ];
+
   if (profile && !isAuthorized) {
     return (
       <div className="flex flex-col items-center justify-center p-12 text-center bg-white border border-gray-200 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
@@ -241,7 +245,8 @@ export default function MemberDirectory() {
   const FilterRow = ({ label, value, options, fieldKey }) => (
     <div className="flex items-center gap-2 mb-3">
       <div className="flex-1 min-w-[120px] border border-gray-200 rounded-md p-2 bg-white text-sm font-medium flex justify-between items-center text-gray-700">
-        {label} <Settings size={14} className="text-gray-400"/>
+        {label} 
+        {/* <Settings size={14} className="text-gray-400"/> */}
       </div>
       <div className="flex-[1.5] relative">
         <select 
@@ -253,12 +258,12 @@ export default function MemberDirectory() {
           {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </div>
-      <button 
+      {/* <button 
         onClick={() => setDraftFilters(prev => ({...prev, [fieldKey]: ''}))} 
         className="p-2 bg-gray-50 border border-gray-200 rounded-md text-gray-500 hover:text-red-600 transition-colors"
       >
         <Trash2 size={16} strokeWidth={1.5}/>
-      </button>
+      </button> */}
     </div>
   );
 
@@ -289,7 +294,7 @@ export default function MemberDirectory() {
           )}
         </div>
         <Button variant="secondary" icon={Filter} onClick={() => setIsFilterOpen(true)} className="relative !bg-white">
-          Filters
+          View & Sort
           {activeFilterCount > 0 && (
              <span className="absolute -top-1.5 -right-1.5 bg-[#5C3030] text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full font-bold shadow-sm border border-white">
                {activeFilterCount}
@@ -428,20 +433,63 @@ export default function MemberDirectory() {
                   <FilterRow label="Tags" fieldKey="tag_id" value={draftFilters.tag_id} options={dropdowns?.tags.map(t => ({value: t.id, label: t.name})) || []} />
                 </div>
               ) : (
-                <div className="space-y-4 animate-in fade-in duration-200">
-                   <div>
-                     <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5">Sort Directory By</label>
-                     <select 
-                       className={`${inputClass} cursor-pointer py-3`} 
-                       value={draftSortOrder} 
-                       onChange={e => setDraftSortOrder(e.target.value)}
-                     >
-                       <option value="name_asc">Name (A to Z)</option>
-                       <option value="name_desc">Name (Z to A)</option>
-                       <option value="code_asc">Internal Code (Ascending)</option>
-                       <option value="code_desc">Internal Code (Descending)</option>
-                     </select>
-                   </div>
+                <div className="space-y-3 animate-in fade-in duration-200">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-4">Multi-Level Sorting</p>
+                  
+                  {/* 🛡️ DYNAMIC SORT BUILDER */}
+                  {draftSortConfig.map((sort, index) => (
+                    <div key={index} className="flex items-center gap-2 bg-gray-50 p-2 rounded-md border border-gray-200 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+                      <div className="w-6 h-6 bg-white border border-gray-200 rounded flex items-center justify-center text-xs font-bold text-gray-500 shrink-0">
+                        {index + 1}
+                      </div>
+                      <select 
+                        className="flex-1 border border-gray-200 rounded-md p-1.5 bg-white text-sm outline-none cursor-pointer focus:border-[#5C3030]"
+                        value={sort.column}
+                        onChange={e => {
+                          const newSort = [...draftSortConfig];
+                          newSort[index].column = e.target.value;
+                          setDraftSortConfig(newSort);
+                        }}
+                      >
+                        {sortableColumns.map(col => <option key={col.value} value={col.value}>{col.label}</option>)}
+                      </select>
+                      <select 
+                        className="w-24 border border-gray-200 rounded-md p-1.5 bg-white text-sm outline-none cursor-pointer focus:border-[#5C3030]"
+                        value={sort.ascending.toString()}
+                        onChange={e => {
+                          const newSort = [...draftSortConfig];
+                          newSort[index].ascending = e.target.value === 'true';
+                          setDraftSortConfig(newSort);
+                        }}
+                      >
+                        <option value="true">A-Z / Asc</option>
+                        <option value="false">Z-A / Desc</option>
+                      </select>
+                      {draftSortConfig.length > 1 && (
+                        <button 
+                          onClick={() => {
+                            const newSort = [...draftSortConfig];
+                            newSort.splice(index, 1);
+                            setDraftSortConfig(newSort);
+                          }} 
+                          className="p-1.5 text-gray-400 hover:text-red-600 transition-colors bg-white rounded border border-gray-200"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  
+                  {draftSortConfig.length < 3 && (
+                    <Button 
+                      variant="secondary" 
+                      size="sm" 
+                      className="w-full border-dashed border-gray-300 text-gray-500 bg-transparent hover:bg-gray-50 mt-2"
+                      onClick={() => setDraftSortConfig([...draftSortConfig, { column: 'designation', ascending: true }])}
+                    >
+                      <Plus size={14} className="mr-1.5" /> Add Sort Level
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
@@ -453,22 +501,22 @@ export default function MemberDirectory() {
                 onClick={() => {
                   setDraftFilters(defaultFilters);
                   setFilters(defaultFilters);
-                  setDraftSortOrder('name_asc');
-                  setSortOrder('name_asc');
+                  setDraftSortConfig(defaultSortConfig);
+                  setSortConfig(defaultSortConfig);
                   setIsFilterOpen(false);
                 }}
               >
-                Clear all
+                Reset All
               </Button>
               <Button 
-                className="flex-1 !bg-[#5c3030] !border-[#5c3030] hover:!bg-[#5c3030]" 
+                className="flex-1 !bg-[#1E4B59] !border-[#1E4B59] hover:!bg-[#153641]" 
                 onClick={() => { 
                   setFilters(draftFilters); 
-                  setSortOrder(draftSortOrder); 
+                  setSortConfig(draftSortConfig); 
                   setIsFilterOpen(false); 
                 }}
               >
-                Apply
+                Apply View
               </Button>
             </div>
           </div>

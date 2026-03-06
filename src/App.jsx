@@ -35,23 +35,26 @@ const queryClient = new QueryClient({
   },
 });
 
+// 🛡️ Fixed: Removed blue loader, applied standard UI colors
 const PageLoader = () => (
-  <div className="flex h-[80vh] w-full flex-col items-center justify-center text-slate-400 gap-4">
-    <Loader2 className="animate-spin text-indigo-600" size={40} />
-    <p className="text-sm font-bold uppercase tracking-widest animate-pulse">Loading Module...</p>
+  <div className="flex h-[80vh] w-full flex-col items-center justify-center text-gray-400 gap-3">
+    <Loader2 className="animate-spin text-[#5C3030]" size={32} strokeWidth={1.5} />
+    <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Loading Module...</p>
   </div>
 );
 
 const ProtectedHome = () => {
-  const { user, profile, loading } = useAuth();
-  if (loading) return <PageLoader />;
+  const { user, profile } = useAuth(); // 🛡️ Removed 'loading' check since AuthContext handles it
+  
   if (!user) return <Navigate to="/login" replace />;
   if (!profile) return (
-    <div className="h-screen flex items-center justify-center p-8 bg-slate-50">
-      <div className="max-w-md bg-white p-8 rounded-2xl shadow-xl border border-slate-200 text-center">
-        <h2 className="text-2xl font-bold text-slate-800 mb-2">Profile Error</h2>
-        <p className="text-slate-500 mb-4">Profile details not found.</p>
-        <button onClick={() => window.location.reload()} className="px-4 py-2 bg-indigo-600 text-white rounded-lg">Retry</button>
+    <div className="h-screen flex items-center justify-center p-8 bg-gray-50">
+      <div className="max-w-md bg-white p-8 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)] border border-gray-200 text-center">
+        <h2 className="text-xl font-bold text-gray-900 mb-2">Profile Error</h2>
+        <p className="text-gray-500 text-sm mb-6">Profile details not found.</p>
+        <button onClick={() => window.location.reload()} className="px-4 py-2 bg-[#5C3030] text-white text-sm font-semibold rounded-md transition-colors hover:bg-[#4a2626]">
+          Retry
+        </button>
       </div>
     </div>
   );

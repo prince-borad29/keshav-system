@@ -1,21 +1,13 @@
 import React from 'react';
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Loader2, ShieldAlert } from 'lucide-react';
+import { ShieldAlert } from 'lucide-react';
 import Button from './ui/Button';
 
 export default function ProtectedRoute({ allowedRoles = [] }) {
-  const { profile, loading } = useAuth();
+  const { profile } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-
-  if (loading) {
-    return (
-      <div className="h-screen w-full flex items-center justify-center bg-gray-50">
-        <Loader2 className="animate-spin text-[#5C3030]" size={24} strokeWidth={1.5} />
-      </div>
-    );
-  }
 
   // 1. Guard: Not Logged In
   if (!profile) {

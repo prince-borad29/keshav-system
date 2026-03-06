@@ -5,6 +5,7 @@ import { supabase, withTimeout } from '../../lib/supabase'; // 🛡️ Imported 
 import toast from 'react-hot-toast'; // 🛡️ Imported toast
 import Modal from '../../components/Modal';
 import Button from '../../components/ui/Button';
+import { useState } from 'react';
 
 export function StructureManager() {
   const queryClient = useQueryClient();

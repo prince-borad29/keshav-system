@@ -1,9 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Scanner } from '@yudiel/react-qr-scanner';
-import { X, CheckCircle, AlertTriangle, XCircle, Activity } from 'lucide-react';
+import { 
+  X, CheckCircle, AlertTriangle, XCircle, Activity, 
+  Flashlight, FlashlightOff // <-- 1. Added Flashlight icons
+} from 'lucide-react';
 
 export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
   const [feedback, setFeedback] = useState(null); 
+  const [flashlightOn, setFlashlightOn] = useState(false); // <-- 2. Added flashlight state
   const lastScannedCode = useRef(null);
   const isProcessing = useRef(false);
 
@@ -38,6 +42,10 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
     }, 1000);
   };
 
+  const toggleFlashlight = () => {
+    setFlashlightOn((prev) => !prev);
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -50,9 +58,23 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
              <Activity size={12} strokeWidth={2}/> Active
            </div>
         </div>
-        <button onClick={onClose} className="p-2 bg-white/10 hover:bg-white/20 border border-white/10 backdrop-blur-md rounded-md text-white transition-colors">
-          <X size={18} strokeWidth={2} />
-        </button>
+        
+        {/* <-- 3. Grouped the new Flashlight button with the Close button --> */}
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={toggleFlashlight} 
+            className="p-2 bg-white/10 hover:bg-white/20 border border-white/10 backdrop-blur-md rounded-md text-white transition-colors"
+          >
+            {flashlightOn ? <Flashlight size={18} strokeWidth={2} /> : <FlashlightOff size={18} strokeWidth={2} />}
+          </button>
+          
+          <button 
+            onClick={onClose} 
+            className="p-2 bg-white/10 hover:bg-white/20 border border-white/10 backdrop-blur-md rounded-md text-white transition-colors"
+          >
+            <X size={18} strokeWidth={2} />
+          </button>
+        </div>
       </div>
 
       {/* Viewport */}
@@ -64,6 +86,11 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
           allowMultiple={true}
           components={{ audio: false, finder: false }} 
           styles={{ container: { height: '100%' }, video: { objectFit: 'cover' } }}
+          // <-- 4. Passed the flashlight state to the browser's video constraints -->
+          constraints={{ 
+            facingMode: 'environment',
+            advanced: flashlightOn ? [{ torch: true }] : undefined
+          }}
         />
 
         {/* Feedback Overlay - Flat and direct */}
@@ -84,7 +111,7 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
            </div>
         )}
         
-        {/* Finder Box - Sharp borders instead of rounded-2xl */}
+        {/* Finder Box - Sharp borders */}
         {!feedback && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
              <div className="w-64 h-64 border border-white/20 relative">

@@ -13,34 +13,33 @@ export default function Login() {
   const [error, setError] = useState(null);
   const [formData, setFormData] = useState({ email: '', password: '' });
 
-  // 🛑 SAFETY REDIRECT: Push to dashboard if already logged in
-  useEffect(() => {
-    if (!authLoading && user && profile) {
-      navigate('/');
-    }
-  }, [user, profile, authLoading, navigate]);
+ // This only runs when user AND profile are both truthy
+useEffect(() => {
+  if (!authLoading && user && profile) {  // ← remove profile requirement
+    navigate('/');
+  }
+}, [user, authLoading, navigate,profile]);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
+ const handleSubmit = async (e) => {
+  e.preventDefault();
+  setError(null);
+  setLoading(true);
 
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: formData.email,
-        password: formData.password,
-      });
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: formData.email,
+      password: formData.password,
+    });
 
-      if (error) throw error;
-      // Do not navigate here; AuthContext's onAuthStateChange handles it safely
-    } catch (err) {
-      console.error(err);
-      setError(err.message === "Invalid login credentials" 
-        ? "Incorrect email or password." 
-        : "Login failed. Please try again.");
-      setLoading(false);
-    } 
-  };
+    console.log('[LOGIN] result:', data, error); // add this
+    if (error) throw error;
+  } catch (err) {
+    setError(err.message === "Invalid login credentials"
+      ? "Incorrect email or password."
+      : "Login failed. Please try again.");
+    setLoading(false);
+  }
+};
 
   const inputClass = "w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-md font-medium text-gray-900 focus:outline-none focus:border-[#5C3030] transition-colors placeholder:text-gray-400 text-sm";
 

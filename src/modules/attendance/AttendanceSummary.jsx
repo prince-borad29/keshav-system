@@ -5,6 +5,8 @@ import { saveAs } from 'file-saver';
 import toast from 'react-hot-toast'; 
 import Modal from '../../components/Modal';
 import Button from '../../components/ui/Button';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 export default function AttendanceSummary({ event, project, userScope, onMandalClick, isVisible, onClose }) {
   const [loading, setLoading] = useState(true);
@@ -94,216 +96,128 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
 
   const getPct = (curr, total) => total > 0 ? Math.round((curr / total) * 100) : 0;
 
-  // --- 🚀 UPGRADED MOBILE-PROOF EXPORT ENGINE ---
-  const generatePDF = (title, subtitle, bodyHtml) => {
-    const loadingToast = toast.loading("Generating PDF...");
-    try {
-      const iframe = document.createElement('iframe');
-      iframe.style.display = 'none';
-      document.body.appendChild(iframe);
-      
-      const doc = iframe.contentDocument || iframe.contentWindow.document;
-      doc.write('<html><head><title>Attendance Report</title>');
-      doc.write(`
-        <style>
-          /* 🛡️ FORCE BROWSER TO PRINT BACKGROUND COLORS */
-          @media print {
-            * {
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-            }
-          }
-          body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            padding: 20px; 
-            background-color: #ffffff;
-            color: #000000; 
-          }
-          h2 { color: #5C3030; margin-bottom: 5px; font-size: 20px; }
-          p { color: #6b7280; font-size: 12px; margin-top: 0; margin-bottom: 20px; border-bottom: 2px solid #5C3030; padding-bottom: 10px; }
-          table { border-collapse: collapse; width: 100%; font-size: 11px; margin-bottom: 20px; }
-          th, td { border: 1px solid #d1d5db; padding: 8px 10px; text-align: left; }
-          
-          /* 🛡️ Strict Header Colors */
-          th { 
-            background-color: #5C3030 !important; 
-            color: #ffffff !important; 
-            font-weight: bold; 
-            text-transform: uppercase; 
-            letter-spacing: 0.05em; 
-            font-size: 10px; 
-          }
-          
-          /* 🛡️ Strict Row Colors (White bg, Black text) */
-          td {
-            background-color: #ffffff !important;
-            color: #000000 !important;
-          }
-
-          /* Grouping Headers */
-          .kshetra-head { 
-            background-color: #ffffff !important; 
-            color: #000000 !important; 
-            padding: 10px; 
-            font-weight: bold; 
-            margin-top: 25px; 
-            margin-bottom: 10px; 
-            border-left: 4px solid #5C3030; 
-            font-size: 14px; 
-            border-top: 1px solid #e5e7eb;
-            border-right: 1px solid #e5e7eb;
-            border-bottom: 1px solid #e5e7eb;
-          }
-          .text-center { text-align: center; }
-          .text-right { text-align: right; }
-          .font-bold { font-weight: bold; }
-        </style>
-      `);
-      doc.write('</head><body>');
-      doc.write(`<h2>${title}</h2>`);
-      doc.write(`<p>${subtitle}</p>`);
-      doc.write(bodyHtml);
-      doc.write('</body></html>');
-      doc.close();
-      
-      setTimeout(() => {
-        iframe.contentWindow.focus();
-        iframe.contentWindow.print();
-        toast.success("PDF opened successfully!", { id: loadingToast });
-        setTimeout(() => document.body.removeChild(iframe), 2000);
-      }, 500);
-    } catch (err) {
-      toast.error("Failed to generate PDF.", { id: loadingToast });
-    }
+  // ============================================================================
+  // 🚀 BULLETPROOF PDF EXPORT ENGINE (jsPDF AutoTable)
+  // ============================================================================
+  const createBasePDF = (title, subtitle) => {
+    const doc = new jsPDF();
+    doc.setFontSize(18);
+    doc.setTextColor(92, 48, 48); 
+    doc.text(title, 14, 20);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100, 100, 100);
+    doc.text(subtitle, 14, 28);
+    return doc;
   };
 
   const exportAdminMasterReport = () => {
     setShowExportMenu(false);
+    const loadingToast = toast.loading("Generating PDF...");
     
-    // 🛡️ Data Structures for Master Report
-    const kshetraSummary = {}; // High level totals
-    const kshetraAbsentees = {}; // Grouped list of absent people
-    
-    rawRegs.forEach(r => {
-      const m = r.members;
-      const kName = m.mandals?.kshetras?.name || 'Unknown Kshetra';
-      const mName = m.mandals?.name || 'Unknown Mandal';
-      const isPres = presentSet.has(r.member_id);
-
-      // Initialize Summary
-      if (!kshetraSummary[kName]) {
-        kshetraSummary[kName] = { present: 0, reg: 0 };
-        kshetraAbsentees[kName] = [];
-      }
-
-      // Update Summary Totals
-      kshetraSummary[kName].reg++;
-      if (isPres) {
-        kshetraSummary[kName].present++;
-      } else {
-        // Add to absentee list for this Kshetra
-        kshetraAbsentees[kName].push({
-          name: `${m.name} ${m.surname}`,
-          mobile: m.mobile || '-',
-          mandal: mName
-        });
-      }
-    });
-
-    // 🛡️ GENERATE HTML BODY
-    let html = '';
-
-    // --- PART 1: OVERALL KSHETRA SUMMARY TABLE ---
-    html += `<div class="kshetra-head" style="margin-top:0;">Overall Kshetra Summary</div>`;
-    html += `
-      <table>
-        <thead>
-          <tr>
-            <th>Kshetra Name</th>
-            <th class="text-center">Registered</th>
-            <th class="text-center">Present</th>
-            <th class="text-right">Attendance %</th>
-          </tr>
-        </thead>
-        <tbody>
-    `;
-
-    Object.keys(kshetraSummary).sort().forEach(kName => {
-      const data = kshetraSummary[kName];
-      const pct = getPct(data.present, data.reg);
-      html += `
-        <tr>
-          <td class="font-bold">${kName}</td>
-          <td class="text-center">${data.reg}</td>
-          <td class="text-center">${data.present}</td>
-          <td class="text-right font-bold" style="color: ${pct < 50 ? '#dc2626' : '#059669'}">${pct}%</td>
-        </tr>
-      `;
-    });
-    html += `</tbody></table>`;
-
-    // Space between sections
-    html += `<div style="height: 30px;"></div>`;
-
-    // --- PART 2: KSHETRA-WISE ABSENTEE LISTS ---
-    html += `<h2 style="border-bottom: 1px solid #eee; padding-bottom: 5px;">Detailed Absentee Lists</h2>`;
-    
-    Object.keys(kshetraAbsentees).sort().forEach(kName => {
-      const absentees = kshetraAbsentees[kName];
-      
-      html += `<div class="kshetra-head">${kName} - Absent Members (${absentees.length})</div>`;
-      
-      if (absentees.length === 0) {
-        html += `<p style="font-style: italic; color: #6b7280; padding: 10px;">No absentees in this Kshetra.</p>`;
-      } else {
-        html += `
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 40%;">Member Name</th>
-                <th style="width: 30%;">Mobile Number</th>
-                <th style="width: 30%;">Mandal</th>
-              </tr>
-            </thead>
-            <tbody>
-        `;
+    // 🛡️ THE FIX: Use a timeout callback instead of async/await to preserve the data context
+    setTimeout(() => {
+      try {
+        const doc = createBasePDF(`${event.name} - Master Report`, `Generated: ${new Date().toLocaleString()}`);
         
-        // Sort absentees by name A-Z
-        absentees.sort((a, b) => a.name.localeCompare(b.name)).forEach(person => {
-          html += `
-            <tr>
-              <td class="font-bold">${person.name}</td>
-              <td>${person.mobile}</td>
-              <td>${person.mandal}</td>
-            </tr>
-          `;
-        });
+        let grandTotalReg = 0;
+        let grandTotalPres = 0;
+        const kshetraSummary = {}; 
+        const kshetraAbsentees = {}; 
         
-        html += `</tbody></table>`;
-      }
-    });
+        rawRegs.forEach(r => {
+          const m = r.members;
+          const kName = m.mandals?.kshetras?.name || 'Unknown Kshetra';
+          const mName = m.mandals?.name || 'Unknown Mandal';
+          const isPres = presentSet.has(r.member_id);
 
-    // 🛡️ TRIGGER THE MOBILE-PROOF PRINT ENGINE
-    generatePDF(
-      `${event.name} - Master Absentee Report`,
-      `${project.name} &bull; Generated: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`,
-      html
-    );
+          if (!kshetraSummary[kName]) {
+            kshetraSummary[kName] = { present: 0, reg: 0 };
+            kshetraAbsentees[kName] = [];
+          }
+
+          kshetraSummary[kName].reg++;
+          if (isPres) {
+            kshetraSummary[kName].present++;
+          } else {
+            kshetraAbsentees[kName].push({ name: `${m.name} ${m.surname}`, mobile: m.mobile || '-', mandal: mName });
+          }
+        });
+
+        // Generate Rows and accumulate Totals
+        const summaryRows = Object.keys(kshetraSummary).sort().map(kName => {
+          const d = kshetraSummary[kName];
+          grandTotalReg += d.reg;
+          grandTotalPres += d.present;
+          return [kName, d.reg.toString(), d.present.toString(), `${getPct(d.present, d.reg)}%`];
+        });
+
+        // 🛡️ NEW FEATURE: Add the Total Row at the bottom
+        autoTable(doc, {
+          startY: 35,
+          head: [['Kshetra Name', 'Registered', 'Present', 'Attendance %']],
+          body: summaryRows,
+          foot: [['TOTAL', grandTotalReg.toString(), grandTotalPres.toString(), `${getPct(grandTotalPres, grandTotalReg)}%`]],
+          theme: 'grid',
+          headStyles: { fillColor: [92, 48, 48], textColor: 255, fontSize: 10 },
+          footStyles: { fillColor: [240, 240, 240], textColor: [92, 48, 48], fontSize: 10, fontStyle: 'bold' },
+          bodyStyles: { fontSize: 9 },
+        });
+
+        // Generate Absentee Tables (One per Kshetra)
+        Object.keys(kshetraAbsentees).sort().forEach(kName => {
+          const absentees = kshetraAbsentees[kName];
+          
+          autoTable(doc, {
+            startY: doc.lastAutoTable.finalY + 15,
+            head: [[`${kName} - Absent Members (${absentees.length})`, 'Mobile Number', 'Mandal']],
+            body: absentees.length > 0 
+                  ? absentees.sort((a,b) => a.name.localeCompare(b.name)).map(p => [p.name, p.mobile, p.mandal])
+                  : [['No absentees in this Kshetra.', '-', '-']],
+            theme: 'grid',
+            headStyles: { fillColor: [240, 240, 240], textColor: [92, 48, 48], fontSize: 10, fontStyle: 'bold' },
+            bodyStyles: { fontSize: 9 },
+          });
+        });
+
+        doc.save(`Master_Report_${event.name.replace(/\s+/g, '_')}.pdf`);
+        toast.success("PDF Downloaded!", { id: loadingToast });
+      } catch (err) {
+        console.error(err);
+        toast.error("Failed to generate PDF.", { id: loadingToast });
+      }
+    }, 50); // 50ms delay allows the loading spinner to appear before locking the thread
   };
 
   const exportPDFSummary = () => {
     setShowExportMenu(false);
-    let html = `<table><thead><tr><th>${groupBy === 'mandal' ? 'Mandal' : 'Kshetra'}</th><th class="text-center">Present / Reg</th><th class="text-right">Percentage</th></tr></thead><tbody>`;
-    data.forEach(row => {
-      html += `<tr><td class="font-bold">${row.name}</td><td class="text-center">${row.present} / ${row.registered}</td><td class="text-right">${getPct(row.present, row.registered)}%</td></tr>`;
-    });
-    html += `</tbody></table>`;
+    const loadingToast = toast.loading("Generating PDF...");
+    
+    setTimeout(() => {
+      try {
+        const doc = createBasePDF(`${event.name} - View Summary`, `Total: ${totals.present} / ${totals.registered} (${getPct(totals.present, totals.registered)}%)`);
+        
+        const tableRows = data.map(row => [
+          row.name, 
+          `${row.present} / ${row.registered}`, 
+          `${getPct(row.present, row.registered)}%`
+        ]);
 
-    generatePDF(
-      `${event.name} - View Summary`,
-      `${project.name} &bull; Total: ${totals.present} / ${totals.registered} (${getPct(totals.present, totals.registered)}%)`,
-      html
-    );
+        autoTable(doc, {
+          startY: 35,
+          head: [[groupBy === 'mandal' ? 'Mandal' : 'Kshetra', 'Present / Reg', 'Percentage']],
+          body: tableRows,
+          theme: 'grid',
+          headStyles: { fillColor: [92, 48, 48], textColor: 255, fontSize: 10 },
+        });
+
+        doc.save(`Summary_${event.name.replace(/\s+/g, '_')}.pdf`);
+        toast.success("PDF Downloaded!", { id: loadingToast });
+      } catch (err) {
+        console.error(err);
+        toast.error("Failed to generate PDF.", { id: loadingToast });
+      }
+    }, 50);
   };
 
   const exportPDFAbsent = () => {
@@ -313,48 +227,70 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
       return;
     }
 
-    let html = `<table><thead><tr><th>Name</th><th>Internal ID</th><th>Mobile</th><th>Mandal</th>${userScope.isGlobal ? '<th>Kshetra</th>' : ''}</tr></thead><tbody>`;
-    absentList.forEach(row => {
-      html += `<tr><td class="font-bold">${row.name}</td><td>${row.id}</td><td>${row.mobile}</td><td>${row.mandal}</td>${userScope.isGlobal ? `<td>${row.kshetra}</td>` : ''}</tr>`;
-    });
-    html += `</tbody></table>`;
+    const loadingToast = toast.loading("Generating PDF...");
+    
+    setTimeout(() => {
+      try {
+        const doc = createBasePDF(`${event.name} - Absent List`, `Total Absent: ${absentList.length}`);
+        
+        const head = userScope.isGlobal 
+          ? [['Name', 'Internal ID', 'Mobile', 'Mandal', 'Kshetra']] 
+          : [['Name', 'Internal ID', 'Mobile', 'Mandal']];
 
-    generatePDF(
-      `${event.name} - Absent List`,
-      `${project.name} &bull; Total Absent: ${absentList.length}`,
-      html
-    );
+        const body = absentList.map(row => {
+          const rowData = [row.name, row.id, row.mobile, row.mandal];
+          if (userScope.isGlobal) rowData.push(row.kshetra);
+          return rowData;
+        });
+
+        autoTable(doc, {
+          startY: 35,
+          head: head,
+          body: body,
+          theme: 'grid',
+          headStyles: { fillColor: [92, 48, 48], textColor: 255, fontSize: 10 },
+        });
+
+        doc.save(`Absent_${event.name.replace(/\s+/g, '_')}.pdf`);
+        toast.success("PDF Downloaded!", { id: loadingToast });
+      } catch (err) {
+        console.error(err);
+        toast.error("Failed to generate PDF.", { id: loadingToast });
+      }
+    }, 50);
   };
 
   const exportExcel = () => {
     setShowExportMenu(false);
     const loadingToast = toast.loading("Generating CSV...");
-    try {
-      const cleanData = rawRegs.map(r => {
-        const m = r.members;
-        const obj = {
-          ID: m.internal_code || '-',
-          Name: `${m.name} ${m.surname}`,
-          Mobile: m.mobile || '-',
-          Mandal: m.mandals?.name || '-',
-          Status: presentSet.has(r.member_id) ? 'Present' : 'Absent'
-        };
-        if (userScope.isGlobal) obj.Kshetra = m.mandals?.kshetras?.name || '-';
-        return obj;
-      });
+    setTimeout(() => {
+      try {
+        const cleanData = rawRegs.map(r => {
+          const m = r.members;
+          const obj = {
+            ID: m.internal_code || '-',
+            Name: `${m.name} ${m.surname}`,
+            Mobile: m.mobile || '-',
+            Mandal: m.mandals?.name || '-',
+            Status: presentSet.has(r.member_id) ? 'Present' : 'Absent'
+          };
+          if (userScope.isGlobal) obj.Kshetra = m.mandals?.kshetras?.name || '-';
+          return obj;
+        });
 
-      if (cleanData.length === 0) throw new Error("No data to export");
+        if (cleanData.length === 0) throw new Error("No data to export");
 
-      const headers = Object.keys(cleanData[0]);
-      const csvRows = cleanData.map(row => headers.map(h => `"${row[h]}"`).join(','));
-      const csvContent = "\uFEFF" + [headers.join(','), ...csvRows].join('\n'); 
-      
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      saveAs(blob, `Attendance_${event.name.replace(/\s+/g, '_')}.csv`);
-      toast.success("CSV Downloaded!", { id: loadingToast });
-    } catch (err) {
-      toast.error(err.message, { id: loadingToast });
-    }
+        const headers = Object.keys(cleanData[0]);
+        const csvRows = cleanData.map(row => headers.map(h => `"${row[h]}"`).join(','));
+        const csvContent = "\uFEFF" + [headers.join(','), ...csvRows].join('\n'); 
+        
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        saveAs(blob, `Attendance_${event.name.replace(/\s+/g, '_')}.csv`);
+        toast.success("CSV Downloaded!", { id: loadingToast });
+      } catch (err) {
+        toast.error(err.message, { id: loadingToast });
+      }
+    }, 50);
   };
 
   if (!isVisible) return null;
@@ -363,7 +299,6 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
     <Modal isOpen={isVisible} onClose={onClose} title="Attendance Summary">
       <div className="space-y-5">
         
-        {/* Custom Export Trigger inside Modal Body */}
         <div className="flex justify-end relative">
           <Button variant="secondary" size="sm" icon={Download} onClick={() => setShowExportMenu(!showExportMenu)}>
             Export Reports
@@ -398,7 +333,6 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
           <div className="py-12 text-center text-gray-400"><Loader2 className="animate-spin inline mr-2" size={20}/> Calculating...</div>
         ) : (
           <>
-            {/* Flat Stats Grid */}
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-[#5C3030] text-white p-4 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)] text-center">
                 <div className="text-3xl font-bold font-inter">{totals.present}</div>
@@ -410,7 +344,6 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
               </div>
             </div>
 
-            {/* Radix Toggle */}
             {userScope.isGlobal && (
               <div className="flex bg-gray-100 p-1 rounded-md border border-gray-200">
                 <button onClick={() => setGroupBy('mandal')} className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center justify-center gap-1.5 ${groupBy === 'mandal' ? 'bg-white text-gray-900 shadow-[0_1px_3px_rgba(0,0,0,0.02)]' : 'text-gray-500 hover:text-gray-700'}`}>
@@ -422,7 +355,6 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
               </div>
             )}
 
-            {/* Dense Data Table */}
             <div className="border border-gray-200 rounded-md overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.02)] max-h-60 overflow-y-auto">
               <table className="w-full text-left text-sm relative">
                 <thead className="bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-widest sticky top-0 shadow-sm z-10">

@@ -13,7 +13,8 @@ export default function AttendanceDashboard({ preSelectedProject = null, preSele
 
   const [isScanning, setIsScanning] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
-  const [drillDownMandal, setDrillDownMandal] = useState(null); 
+  const [drillDownMandal, setDrillDownMandal] = useState(null);
+  const [IsScannerOpen,setIsScannerOpen] = useState(false);
   const [userScope, setUserScope] = useState({ role: '', gender: '', mandalIds: [], kshetraId: null, isGlobal: false });
 
   useEffect(() => {

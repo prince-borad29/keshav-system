@@ -11,6 +11,7 @@ import Login from "./modules/auth/Login";
 import ProtectedRoute from "./components/ProtectedRoute";
 import HomeDashboard from "./modules/home/HomeDashboard";
 import ProjectView from "./modules/projects/ProjectView";
+import IDCardGenerator from "./modules/reports/IDCardGenerator";
 
 // --- STANDARD LAZY IMPORTS ---
 const MemberDirectory = lazy(() => import("./modules/members/MemberDirectory"));
@@ -134,6 +135,7 @@ export default function App() {
               </Route>
 
               <Route element={<ProtectedRoute allowedRoles={["admin", "nirdeshak", "nirikshak", "sanchalak", "project_admin"]} />}>
+                <Route path="/id" element={<IDCardGenerator/>}/>
                 <Route path="/directory" element={<MemberDirectory />} />
                 <Route path="/directory/:id" element={<MemberProfile />} />
                 <Route path="/projects" element={<ProjectDashboard />} />

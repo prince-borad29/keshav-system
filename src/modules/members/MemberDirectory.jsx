@@ -1,9 +1,5 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
-import {
-  Search, Plus, Eye, Edit3, Trash2, Loader2, ShieldAlert, X,
-  AlertTriangle, Filter, RefreshCw, ArrowDownAZ, Download,
-  FileSpreadsheet, FileText, ChevronDown, Columns,
-} from "lucide-react";
+import React, { useState, useEffect, useMemo } from "react";
+import { Plus, Eye, Edit3, Trash2, Loader2, ShieldAlert, AlertTriangle, RefreshCw } from "lucide-react";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useInView } from "react-intersection-observer";
 import { supabase, withTimeout } from "../../lib/supabase";
@@ -11,9 +7,9 @@ import toast from "react-hot-toast";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
 import Modal from "../../components/Modal";
-import Select from "../../components/ui/Select";
 import MemberForm from "./MemberForm";
 import MemberProfile from "./MemberProfile";
+import DataTableToolbar from "../../components/ui/DataTableToolbar"; 
 import { useAuth } from "../../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import jsPDF from "jspdf";
@@ -21,38 +17,38 @@ import autoTable from "jspdf-autotable";
 
 const PAGE_SIZE = 20;
 
-// ⚡ Memoized Row for High Performance
+// 🌟 Added mapping for ALL requested columns
 const MemberRow = React.memo(({ m, role, isAdmin, visibleColumns, onView, onEdit, onDelete }) => (
   <tr className="hover:bg-gray-50 transition-colors">
-    {visibleColumns.includes("internal_code") && (
-      <td className="px-4 py-3 font-inter text-xs text-gray-500">{m.internal_code}</td>
-    )}
+    {visibleColumns.includes("internal_code") && <td className="px-4 py-3 font-inter text-xs text-gray-500">{m.internal_code || "-"}</td>}
     {visibleColumns.includes("name") && (
       <td className="px-4 py-3">
-        <div className="font-semibold text-gray-900">{m.name} {m.surname}</div>
-        <div className="text-xs text-gray-500 font-inter mt-0.5">{m.mobile || "No Mobile"}</div>
+        <div className="font-semibold text-gray-900">{m.name}</div>
         {m.member_tags?.length > 0 && (
           <div className="flex gap-1 flex-wrap mt-1.5">
             {m.member_tags.map((mt) => (
-              <span key={mt.tag_id} className="px-1.5 py-[1px] bg-gray-100 text-gray-600 text-[9px] uppercase tracking-wider rounded border border-gray-200 font-semibold">
-                {mt.tags?.name}
-              </span>
+              <span key={mt.tag_id} className="px-1.5 py-[1px] bg-gray-100 text-gray-600 text-[9px] uppercase tracking-wider rounded border border-gray-200 font-semibold">{mt.tags?.name}</span>
             ))}
           </div>
         )}
       </td>
     )}
+    {visibleColumns.includes("surname") && <td className="px-4 py-3 font-semibold text-gray-900">{m.surname || "-"}</td>}
+    {visibleColumns.includes("mobile") && <td className="px-4 py-3 font-inter text-sm">{m.mobile || "-"}</td>}
+    {visibleColumns.includes("designation") && <td className="px-4 py-3"><Badge variant="default">{m.designation}</Badge></td>}
+    {visibleColumns.includes("email") && <td className="px-4 py-3 text-sm">{m.email || "-"}</td>}
+    {visibleColumns.includes("gender") && <td className="px-4 py-3 text-sm">{m.gender || "-"}</td>}
+    {visibleColumns.includes("blood_group") && <td className="px-4 py-3 font-semibold text-red-500">{m.blood_group || "-"}</td>}
+    {visibleColumns.includes("dob") && <td className="px-4 py-3 text-sm">{m.dob ? new Date(m.dob).toLocaleDateString() : "-"}</td>}
+    {visibleColumns.includes("education") && <td className="px-4 py-3 text-sm">{m.education || "-"}</td>}
+    {visibleColumns.includes("profession") && <td className="px-4 py-3 text-sm">{m.profession || "-"}</td>}
     {visibleColumns.includes("location") && (
       <td className="px-4 py-3">
         <div className="font-medium text-gray-700">{m.mandals?.name}</div>
-        {["admin", "nirdeshak", "project_admin"].includes(role) && (
-          <div className="text-[10px] text-gray-400 mt-0.5 uppercase tracking-wide">{m.mandals?.kshetras?.name}</div>
-        )}
+        {["admin", "nirdeshak", "project_admin"].includes(role) && <div className="text-[10px] text-gray-400 mt-0.5 uppercase tracking-wide">{m.mandals?.kshetras?.name}</div>}
       </td>
     )}
-    {visibleColumns.includes("role") && (
-      <td className="px-4 py-3"><Badge variant="default">{m.designation}</Badge></td>
-    )}
+    
     <td className="px-4 py-3 text-right">
       <div className="flex justify-end gap-1">
         <button onClick={() => onView(m)} className="p-1.5 text-gray-400 hover:text-[#5C3030] hover:bg-gray-100 rounded-md transition-colors"><Eye size={16} strokeWidth={1.5} /></button>
@@ -84,23 +80,26 @@ export default function MemberDirectory() {
 
   const defaultFilters = { kshetra_id: [], mandal_id: [], gender: [], designation: [], tag_id: [] };
   const [filters, setFilters] = useState(defaultFilters);
-  const [activeFilterKeys, setActiveFilterKeys] = useState([]); 
-
   const [sortConfig, setSortConfig] = useState([{ column: "name", ascending: true }]);
 
-  const [useCustomHeader, setUseCustomHeader] = useState(false);
-  const [exportTitle, setExportTitle] = useState("");
-
+  // 🌟 FULL LIST OF COLUMNS AVAILABLE
   const allColumns = [
     { id: "internal_code", label: "Internal ID" },
-    { id: "name", label: "Full Name & Details" },
-    { id: "location", label: "Location (Mandal/Kshetra)" },
-    { id: "role", label: "Designation" },
+    { id: "name", label: "First Name & Tags" },
+    { id: "surname", label: "Last Name" },
+    { id: "mobile", label: "Mobile Number" },
+    { id: "designation", label: "Designation" },
+    { id: "email", label: "Email Address" },
+    { id: "gender", label: "Gender" },
+    { id: "blood_group", label: "Blood Group" },
+    { id: "dob", label: "Date of Birth" },
+    { id: "education", label: "Education" },
+    { id: "profession", label: "Profession" },
+    { id: "location", label: "Location (Mandal/Kshetra)" }
   ];
-  const [visibleColumns, setVisibleColumns] = useState(["internal_code", "name", "location", "role"]);
-
-  const [activePopover, setActivePopover] = useState(null);
-  const popoverRef = useRef(null);
+  
+  // 🌟 YOUR REQUESTED DEFAULTS
+  const [visibleColumns, setVisibleColumns] = useState(["internal_code", "name", "surname", "mobile", "designation"]);
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedMember, setSelectedMember] = useState(null);
@@ -111,14 +110,6 @@ export default function MemberDirectory() {
     const timer = setTimeout(() => setDebouncedSearch(searchTerm), 300);
     return () => clearTimeout(timer);
   }, [searchTerm]);
-
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target)) setActivePopover(null);
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
 
   const { data: scopeData } = useQuery({
     queryKey: ["directory-scope", profile?.id],
@@ -240,12 +231,8 @@ export default function MemberDirectory() {
 
   const members = useMemo(() => membersPages?.pages.flatMap((page) => page.data) || [], [membersPages]);
   const totalCount = membersPages?.pages[0]?.count || 0;
-  
-  const activeFilterCount = Object.values(filters).reduce((acc, arr) => acc + arr.length, 0);
 
-  const handleExport = async (format) => {
-    setActivePopover(null);
-
+  const handleExport = async (format, customExportTitle, useCustomHeader) => {
     if (visibleColumns.length === 0) return toast.error("Please select at least one column to export.");
     const loadingId = toast.loading(`Fetching all records — this may take a moment...`);
 
@@ -257,30 +244,26 @@ export default function MemberDirectory() {
       }
       toast.loading(`Generating ${format.toUpperCase()} — ${sourceData.length} records...`, { id: loadingId });
 
-      const finalTitle = useCustomHeader && exportTitle.trim() !== "" ? exportTitle.trim() : "Member Directory Report";
+      const finalTitle = useCustomHeader && customExportTitle.trim() !== "" ? customExportTitle.trim() : "Member Directory Report";
       const generatedOn = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
-      const headers = [];
-      if (visibleColumns.includes("internal_code")) headers.push("Internal ID");
-      if (visibleColumns.includes("name")) headers.push("Full Name", "Mobile");
-      if (visibleColumns.includes("location")) headers.push("Mandal", "Kshetra");
-      if (visibleColumns.includes("role")) headers.push("Designation", "Gender");
+      const headers = allColumns.filter(c => visibleColumns.includes(c.id)).map(c => c.label);
 
       const exportData = sourceData.map((m) => {
         const row = [];
+        // 🌟 Maps exactly to your new DB columns
         if (visibleColumns.includes("internal_code")) row.push(m.internal_code || "-");
-        if (visibleColumns.includes("name")) {
-          row.push(`${m.name} ${m.surname}`);
-          row.push(m.mobile || "-");
-        }
-        if (visibleColumns.includes("location")) {
-          row.push(m.mandals?.name || "-");
-          row.push(m.mandals?.kshetras?.name || "-");
-        }
-        if (visibleColumns.includes("role")) {
-          row.push(m.designation || "-");
-          row.push(m.gender || "-");
-        }
+        if (visibleColumns.includes("name")) row.push(m.name || "-");
+        if (visibleColumns.includes("surname")) row.push(m.surname || "-");
+        if (visibleColumns.includes("mobile")) row.push(m.mobile || "-");
+        if (visibleColumns.includes("designation")) row.push(m.designation || "-");
+        if (visibleColumns.includes("email")) row.push(m.email || "-");
+        if (visibleColumns.includes("gender")) row.push(m.gender || "-");
+        if (visibleColumns.includes("blood_group")) row.push(m.blood_group || "-");
+        if (visibleColumns.includes("dob")) row.push(m.dob ? new Date(m.dob).toLocaleDateString() : "-");
+        if (visibleColumns.includes("education")) row.push(m.education || "-");
+        if (visibleColumns.includes("profession")) row.push(m.profession || "-");
+        if (visibleColumns.includes("location")) row.push(`${m.mandals?.name || "-"} (${m.mandals?.kshetras?.name || "-"})`);
         return row;
       });
 
@@ -422,291 +405,22 @@ export default function MemberDirectory() {
         )}
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-t-xl p-3 sm:p-4 flex flex-col gap-4 relative z-[60] shadow-sm">
-        <div className="relative w-full">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={18} strokeWidth={2} />
-          <input
-            className="w-full pl-10 pr-10 py-2.5 bg-gray-50/50 border border-gray-200 hover:border-gray-300 focus:bg-white focus:border-[#5C3030] focus:ring-4 focus:ring-[#5C3030]/10 rounded-lg outline-none text-sm text-gray-900 transition-all placeholder:text-gray-400"
-            placeholder="Search by name, ID, or mobile..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-          {searchTerm && (
-            <button onClick={() => setSearchTerm("")} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 bg-gray-200 hover:bg-gray-300 text-gray-600 rounded-full transition-colors">
-              <X size={12} strokeWidth={3} />
-            </button>
-          )}
-        </div>
+      <DataTableToolbar
+        searchTerm={searchTerm}
+        setSearchTerm={setSearchTerm}
+        filterFields={filterFields}
+        filters={filters}
+        setFilters={setFilters}
+        sortableColumns={sortableColumns}
+        sortConfig={sortConfig}
+        setSortConfig={setSortConfig}
+        allColumns={allColumns}
+        visibleColumns={visibleColumns}
+        setVisibleColumns={setVisibleColumns}
+        totalCount={totalCount}
+        onExport={handleExport}
+      />
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider mr-1 hidden sm:block">View Rules:</span>
-
-            {/* FILTER */}
-            <div className="relative" ref={activePopover === "filter" ? popoverRef : null}>
-              <button
-                onClick={() => setActivePopover(activePopover === "filter" ? null : "filter")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold transition-all border ${
-                  activeFilterCount > 0 || activePopover === "filter" ? "bg-[#5C3030] border-[#5C3030] text-white shadow-md shadow-[#5C3030]/20" : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300"
-                }`}
-              >
-                <Filter size={14} strokeWidth={activeFilterCount > 0 ? 2.5 : 2} />
-                Filter {activeFilterCount > 0 && <span className="bg-white/25 px-1.5 rounded-full text-xs ml-0.5">{activeFilterCount}</span>}
-              </button>
-
-              {activePopover === "filter" && (
-                <>
-                  <div className="fixed inset-0 bg-black/20 z-[90] sm:hidden backdrop-blur-sm" onClick={() => setActivePopover(null)} />
-                  <div className="fixed sm:absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 sm:top-full sm:left-0 sm:transform-none sm:translate-x-0 sm:translate-y-0 mt-0 sm:mt-2 w-[calc(100vw-2rem)] sm:w-[320px] bg-white border border-gray-200 rounded-xl shadow-2xl z-[100] p-4 animate-in fade-in zoom-in-95 duration-150">
-                    <div className="flex justify-between items-center mb-3 pb-2 border-b border-gray-100">
-                      <p className="text-sm font-bold text-gray-900">Filter Records</p>
-                      <div className="flex items-center gap-2">
-                        {activeFilterCount > 0 && (
-                          <button onClick={() => { setFilters(defaultFilters); setActiveFilterKeys([]); }} className="text-xs font-semibold text-gray-500 hover:text-red-600 transition-colors">Clear All</button>
-                        )}
-                        <button onClick={() => setActivePopover(null)} className="sm:hidden text-gray-400 p-1"><X size={16} /></button>
-                      </div>
-                    </div>
-
-                    {/* 🛡️ Z-INDEX FIX: overflow-visible instead of overflow-y-auto so the Select dropdown is not clipped */}
-                    <div className="space-y-3 overflow-visible pr-1">
-                      {activeFilterKeys.map((key) => {
-                        const field = filterFields.find((f) => f.key === key);
-                        if (!field) return null;
-                        return (
-                          <div key={key}>
-                            <div className="flex justify-between items-center mb-1">
-                              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{field.label}</label>
-                              <button
-                                onClick={() => {
-                                  setActiveFilterKeys((prev) => prev.filter((k) => k !== key));
-                                  setFilters((prev) => ({ ...prev, [key]: [] }));
-                                }}
-                                className="text-gray-400 hover:text-red-500 p-0.5 rounded transition-colors"
-                              >
-                                <X size={14} />
-                              </button>
-                            </div>
-                            <Select
-                              multiple={true}
-                              options={field.options}
-                              value={filters[key]}
-                              onChange={(valArr) => setFilters((prev) => ({ ...prev, [key]: valArr }))}
-                              placeholder={`Select ${field.label}(s)...`}
-                            />
-                          </div>
-                        );
-                      })}
-
-                      {activeFilterKeys.length < filterFields.length && (
-                        <div className="pt-1">
-                          <Select
-                            placeholder="+ Add condition"
-                            value=""
-                            options={filterFields.filter((f) => !activeFilterKeys.includes(f.key)).map((f) => ({ value: f.key, label: f.label }))}
-                            onChange={(selectedKey) => setActiveFilterKeys((prev) => [...prev, selectedKey])}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* SORT */}
-            <div className="relative" ref={activePopover === "sort" ? popoverRef : null}>
-              <button
-                onClick={() => setActivePopover(activePopover === "sort" ? null : "sort")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold transition-all border ${
-                  activePopover === "sort" ? "bg-[#1E4B59] border-[#1E4B59] text-white" : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300"
-                }`}
-              >
-                <ArrowDownAZ size={14} strokeWidth={2} /> Sort
-                {sortConfig.length > 0 && <span className="text-xs ml-0.5 opacity-70">({sortConfig.length})</span>}
-              </button>
-
-              {activePopover === "sort" && (
-                <>
-                  <div className="fixed inset-0 bg-black/20 z-[90] sm:hidden backdrop-blur-sm" onClick={() => setActivePopover(null)} />
-                  <div className="fixed sm:absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 sm:top-full sm:left-0 sm:transform-none sm:translate-x-0 sm:translate-y-0 mt-0 sm:mt-2 w-[calc(100vw-2rem)] sm:w-[340px] bg-white border border-gray-200 rounded-xl shadow-2xl z-[100] p-4 animate-in fade-in zoom-in-95 duration-150">
-                    <div className="flex justify-between items-center mb-3 pb-2 border-b border-gray-100">
-                      <p className="text-sm font-bold text-gray-900">Sort Records</p>
-                      <button onClick={() => setActivePopover(null)} className="sm:hidden text-gray-400 p-1"><X size={16} /></button>
-                    </div>
-                    {/* 🛡️ Z-INDEX FIX: overflow-visible */}
-                    <div className="space-y-2 overflow-visible">
-                      {sortConfig.map((sort, index) => (
-                        <div key={index} className="flex gap-2 items-center bg-gray-50 p-2 rounded-lg border border-gray-100">
-                          <span className="text-xs font-bold text-gray-400 w-10 text-center shrink-0">{index === 0 ? "1st" : "Then"}</span>
-                          <div className="flex-1 flex gap-2">
-                            <Select
-                              className="flex-1"
-                              options={sortableColumns}
-                              value={sort.column}
-                              onChange={(val) => {
-                                const newSort = [...sortConfig];
-                                newSort[index] = { ...newSort[index], column: val };
-                                setSortConfig(newSort);
-                              }}
-                            />
-                            <Select
-                              className="w-[80px] shrink-0"
-                              options={[{ value: "true", label: "A→Z" }, { value: "false", label: "Z→A" }]}
-                              value={sort.ascending.toString()}
-                              onChange={(val) => {
-                                const newSort = [...sortConfig];
-                                newSort[index] = { ...newSort[index], ascending: val === "true" };
-                                setSortConfig(newSort);
-                              }}
-                            />
-                          </div>
-                          {sortConfig.length > 1 && (
-                            <button
-                              onClick={() => setSortConfig(sortConfig.filter((_, i) => i !== index))}
-                              className="text-gray-400 hover:text-red-500 shrink-0 p-1.5 hover:bg-white rounded-md transition-colors"
-                            >
-                              <X size={14} />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                      {sortConfig.length < 3 && (
-                        <button onClick={() => setSortConfig([...sortConfig, { column: "designation", ascending: true }])} className="w-full mt-1 py-2 text-sm text-gray-500 font-semibold border border-dashed border-gray-300 rounded-lg hover:border-gray-400 hover:bg-gray-50 transition-colors">
-                          + Add sort rule
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* COLUMNS */}
-            <div className="relative" ref={activePopover === "columns" ? popoverRef : null}>
-              <button
-                onClick={() => setActivePopover(activePopover === "columns" ? null : "columns")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold transition-all border ${
-                  activePopover === "columns" ? "bg-gray-100 border-gray-300 text-gray-900" : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300"
-                }`}
-              >
-                <Columns size={14} strokeWidth={2} /> Columns
-              </button>
-
-              {activePopover === "columns" && (
-                <>
-                  <div className="fixed inset-0 bg-black/20 z-[90] sm:hidden backdrop-blur-sm" onClick={() => setActivePopover(null)} />
-                  <div className="fixed sm:absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 sm:top-full sm:left-0 sm:transform-none sm:translate-x-0 sm:translate-y-0 mt-0 sm:mt-2 w-[calc(100vw-2rem)] sm:w-52 bg-white border border-gray-200 rounded-xl shadow-2xl z-[100] p-3 animate-in fade-in zoom-in-95 duration-150">
-                    <p className="text-xs font-bold text-gray-900 mb-2 pb-2 border-b border-gray-100">Visible Columns</p>
-                    <div className="space-y-0.5">
-                      {allColumns.map((col) => (
-                        <label key={col.id} className="flex items-center gap-3 px-2 py-2 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors">
-                          <input
-                            type="checkbox"
-                            className="w-4 h-4 rounded border-gray-300 text-[#5C3030] focus:ring-[#5C3030]"
-                            checked={visibleColumns.includes(col.id)}
-                            onChange={(e) => {
-                              if (e.target.checked) setVisibleColumns([...visibleColumns, col.id]);
-                              else setVisibleColumns(visibleColumns.filter((id) => id !== col.id));
-                            }}
-                          />
-                          <span className="text-sm font-medium text-gray-700">{col.label}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* Active filter chips */}
-            {activeFilterCount > 0 && (
-              <div className="flex flex-wrap gap-1.5 ml-1 mt-1 sm:mt-0">
-                {activeFilterKeys.map((key) => {
-                  const field = filterFields.find((f) => f.key === key);
-                  if (!field || !filters[key] || filters[key].length === 0) return null;
-                  
-                  return filters[key].map(val => {
-                    const option = field.options.find((o) => o.value === val);
-                    return (
-                      <span key={`${key}-${val}`} className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#5C3030]/10 text-[#5C3030] text-xs font-semibold rounded-full border border-[#5C3030]/20">
-                        {field.label}: {option?.label || val}
-                        <button
-                          onClick={() => setFilters((prev) => ({ ...prev, [key]: prev[key].filter(v => v !== val) }))}
-                          className="hover:bg-[#5C3030]/20 rounded-full p-0.5 transition-colors"
-                        >
-                          <X size={10} strokeWidth={3} />
-                        </button>
-                      </span>
-                    )
-                  });
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* EXPORT */}
-          <div className="relative w-full sm:w-auto" ref={activePopover === "export" ? popoverRef : null}>
-            <Button variant="secondary" onClick={() => setActivePopover(activePopover === "export" ? null : "export")} className="w-full sm:w-auto !bg-white border-gray-200 shadow-sm hover:border-gray-300 whitespace-nowrap">
-              <Download size={14} className="mr-1.5" /> Export <ChevronDown size={12} className="ml-1.5 text-gray-400" />
-            </Button>
-
-            {activePopover === "export" && (
-              <>
-                <div className="fixed inset-0 bg-black/20 z-[90] sm:hidden backdrop-blur-sm" onClick={() => setActivePopover(null)} />
-                <div className="fixed sm:absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 sm:top-full sm:right-0 sm:left-auto sm:transform-none sm:translate-x-0 sm:translate-y-0 mt-0 sm:mt-2 w-[calc(100vw-2rem)] sm:w-80 bg-white border border-gray-200 rounded-xl shadow-2xl z-[100] p-4 animate-in fade-in zoom-in-95 duration-150">
-                  <div className="flex justify-between items-center mb-3 pb-3 border-b border-gray-100">
-                    <p className="text-sm font-bold text-gray-900">Export Data</p>
-                    <button onClick={() => setActivePopover(null)} className="sm:hidden text-gray-400 p-1"><X size={16} /></button>
-                  </div>
-
-                  <div className="mb-4">
-                    <label className="flex items-center gap-2.5 cursor-pointer">
-                      <div className="relative shrink-0">
-                        <input type="checkbox" checked={useCustomHeader} onChange={(e) => setUseCustomHeader(e.target.checked)} className="sr-only peer" />
-                        <div className="w-9 h-5 bg-gray-200 peer-checked:bg-[#5C3030] rounded-full transition-colors" />
-                        <div className="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4" />
-                      </div>
-                      <div>
-                        <span className="text-sm font-semibold text-gray-900">Custom Header</span>
-                        <p className="text-[11px] text-gray-400">Branded title band on export</p>
-                      </div>
-                    </label>
-                    {useCustomHeader && (
-                      <div className="mt-2.5 space-y-2">
-                        <input
-                          type="text"
-                          value={exportTitle}
-                          onChange={(e) => setExportTitle(e.target.value)}
-                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:border-[#5C3030] focus:ring-2 focus:ring-[#5C3030]/10 bg-gray-50 focus:bg-white transition-all"
-                          placeholder="E.g. Yuvak Directory 2026"
-                          autoFocus
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="border border-[#5C3030]/20 bg-[#5C3030]/[0.03] rounded-lg p-3 mb-3">
-                    <div className="flex items-start justify-between mb-2">
-                      <p className="text-[11px] text-gray-500 mt-0.5">Fetches all <span className="font-semibold text-[#5C3030]">{totalCount} records</span> with current filters</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => handleExport("excel")} className="flex-1 flex items-center justify-center gap-1.5 px-2.5 py-2 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors">
-                        <FileSpreadsheet size={14} className="shrink-0" /> Excel
-                      </button>
-                      <button onClick={() => handleExport("pdf")} className="flex-1 flex items-center justify-center gap-1.5 px-2.5 py-2 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors">
-                        <FileText size={14} className="shrink-0" /> PDF
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* 🛡️ Z-INDEX FIX: Table is z-10 so the z-[60] Toolbar popovers float perfectly over it */}
       <div className="bg-white border border-gray-200 rounded-b-md shadow-sm overflow-x-auto relative z-10 min-h-[400px] border-t-0">
         {isFetching && !isFetchingNextPage && !isError && (
           <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] z-10 flex items-center justify-center pointer-events-none">
@@ -717,17 +431,16 @@ export default function MemberDirectory() {
         <table className="w-full text-left text-sm whitespace-nowrap">
           <thead className="bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">
             <tr>
-              {visibleColumns.includes("internal_code") && <th className="px-4 py-3">ID</th>}
-              {visibleColumns.includes("name") && <th className="px-4 py-3">Name</th>}
-              {visibleColumns.includes("location") && <th className="px-4 py-3">Location</th>}
-              {visibleColumns.includes("role") && <th className="px-4 py-3">Role</th>}
+              {allColumns.filter(c => visibleColumns.includes(c.id)).map(col => (
+                <th key={col.id} className="px-4 py-3">{col.label}</th>
+              ))}
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {isError && (
               <tr>
-                <td colSpan={6} className="p-12 text-center">
+                <td colSpan={visibleColumns.length + 1} className="p-12 text-center">
                   <AlertTriangle className="mx-auto text-red-400 mb-3" size={32} strokeWidth={1.5} />
                   <h3 className="text-gray-900 font-bold mb-1">Failed to load records</h3>
                   <Button variant="secondary" size="sm" onClick={() => refetch()} className="mt-2"><RefreshCw size={14} className="mr-2" /> Try Again</Button>
@@ -736,7 +449,7 @@ export default function MemberDirectory() {
             )}
             {!isError && members.length === 0 && !isFetching && (
               <tr>
-                <td colSpan={6} className="p-12 text-center text-gray-400 text-sm">No members found matching your filters.</td>
+                <td colSpan={visibleColumns.length + 1} className="p-12 text-center text-gray-400 text-sm">No members found matching your filters.</td>
               </tr>
             )}
             {!isError && members.map((m) => (

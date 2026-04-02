@@ -3,7 +3,7 @@ import { ChevronDown, Check } from 'lucide-react';
 
 export default function Select({ 
   options, 
-  value, // string or array (if multiple is true)
+  value, 
   onChange, 
   placeholder = "Select...", 
   className = "", 
@@ -13,7 +13,6 @@ export default function Select({
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef(null);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (ref.current && !ref.current.contains(event.target)) setIsOpen(false);
@@ -22,7 +21,6 @@ export default function Select({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Determine display text
   let displayText = placeholder;
   if (multiple) {
     const selectedCount = Array.isArray(value) ? value.length : 0;
@@ -44,7 +42,6 @@ export default function Select({
       } else {
         onChange([...currentValues, optValue]);
       }
-      // Note: We deliberately do NOT call setIsOpen(false) here so they can select multiple
     } else {
       onChange(optValue);
       setIsOpen(false);
@@ -52,7 +49,8 @@ export default function Select({
   };
 
   return (
-    <div className={`relative ${className}`} ref={ref}>
+    // 🌟 FIX: Dynamically applies z-[99999] when open!
+    <div className={`relative ${isOpen ? 'z-[99999]' : 'z-10'} ${className}`} ref={ref}>
       <button
         type="button"
         disabled={disabled}
@@ -69,7 +67,7 @@ export default function Select({
       </button>
 
       {isOpen && !disabled && (
-        <div className="absolute z-[999] w-full mt-1 bg-white border border-gray-200 rounded-md shadow-xl max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-1 custom-scrollbar">
+        <div className="absolute z-[99999] w-full mt-1 bg-white border border-gray-200 rounded-md shadow-xl max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-1 custom-scrollbar">
           {options.length === 0 ? (
             <div className="px-3 py-2 text-sm text-gray-500 text-center">No options</div>
           ) : (

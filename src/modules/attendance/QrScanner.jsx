@@ -1,37 +1,82 @@
-import React, { useRef, useCallback } from 'react';
+import React, { useRef, useCallback, useState } from 'react';
 import { Scanner } from '@yudiel/react-qr-scanner';
 import { X, Activity, Flashlight, FlashlightOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
-  const [flashlightOn, setFlashlightOn] = React.useState(false);
+  const [flashlightOn, setFlashlightOn] = useState(false);
   const lastScannedCode = useRef(null);
   const isProcessing = useRef(false);
 
+  // ⚡ INSTANT FLASHLIGHT TOGGLE (Zero Lag)
+  // Manipulates the raw video track instead of forcing React to remount the camera
+  const toggleFlashlight = async () => {
+    try {
+      const videoElement = document.querySelector('video');
+      if (!videoElement || !videoElement.srcObject) {
+        toast.error("Camera is not ready yet.");
+        return;
+      }
+
+      const track = videoElement.srcObject.getVideoTracks()[0];
+      
+      // Check if browser/hardware supports torch
+      const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+      const settings = track.getSettings ? track.getSettings() : {};
+      
+      if (!capabilities.torch && !('torch' in settings)) {
+        toast.error("Flashlight not supported on this browser/device.");
+        return;
+      }
+
+      const newState = !flashlightOn;
+      await track.applyConstraints({
+        advanced: [{ torch: newState }]
+      });
+      
+      setFlashlightOn(newState);
+    } catch (error) {
+      console.error("Flashlight error:", error);
+      toast.error("Could not toggle flashlight.");
+      setFlashlightOn(false); // Reset state if hardware fails
+    }
+  };
+
   const handleScan = useCallback(async (result) => {
-    const rawCode = result[0]?.rawValue;
-    // ⚡ RAPID FIRE: Cooldown is now only 300ms instead of 1200ms
+    // Safely extract the code (handles different versions of the scanner library)
+    const rawCode = Array.isArray(result) ? result[0]?.rawValue : result?.text || result;
+    
     if (!rawCode || isProcessing.current || rawCode === lastScannedCode.current) return;
 
     isProcessing.current = true;
     lastScannedCode.current = rawCode;
 
-    const resultData = await onScan(rawCode);    
+    try {
+      // Await the parent's scan handler
+      const resultData = await onScan(rawCode);    
 
-    // Use a non-blocking toast instead of a screen-locking overlay
-    if (resultData.success) {
-      toast.success(`${resultData.message}`, { position: 'top-center', duration: 1500 });
-      // If it's a specific single-entry event, you can still close it, otherwise stay open!
-      if (eventName?.includes("Map Badge")) onClose(); 
-    } else {
-      toast.error(`${resultData.message}`, { position: 'top-center', duration: 2000 });
+      // Flexible validation: works if parent returns {success, message} OR boolean
+      if (resultData === true || resultData?.success) {
+        toast.success(resultData?.message || `Scanned Successfully!`, { position: 'top-center', duration: 1500 });
+        if (eventName?.includes("Map Badge")) onClose(); 
+      } else if (resultData === false || resultData?.success === false) {
+        toast.error(resultData?.message || 'Invalid or rejected code!', { position: 'top-center', duration: 2000 });
+      } else {
+        // Fallback if parent returns nothing
+        toast.success(`Scanned: ${rawCode}`, { position: 'top-center', duration: 1500 });
+      }
+
+    } catch (error) {
+      console.error("Processing error:", error);
+      toast.error('Error processing scan!', { position: 'top-center', duration: 2000 });
+    } finally {
+      // 🛡️ CRITICAL: Always unlock the scanner inside 'finally' even if onScan crashes
+      setTimeout(() => {
+        isProcessing.current = false;
+        // Prevent accidental double-scan of the exact same person for 1 second
+        setTimeout(() => { lastScannedCode.current = null; }, 1000); 
+      }, 300);
     }
-
-    // Unlock the scanner in just 300ms
-    setTimeout(() => {
-      isProcessing.current = false;
-      setTimeout(() => { lastScannedCode.current = null; }, 1000); // Prevent accidental double-scan of same person
-    }, 300);
   }, [onScan, eventName, onClose]);
 
   if (!isOpen) return null;
@@ -47,7 +92,7 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
         </div>
         
         <div className="flex items-center gap-3">
-          <button onClick={() => setFlashlightOn(!flashlightOn)} className="p-2 bg-white/10 hover:bg-white/20 border border-white/10 backdrop-blur-md rounded-md text-white transition-colors">
+          <button onClick={toggleFlashlight} className="p-2 bg-white/10 hover:bg-white/20 border border-white/10 backdrop-blur-md rounded-md text-white transition-colors">
             {flashlightOn ? <Flashlight size={18} strokeWidth={2} /> : <FlashlightOff size={18} strokeWidth={2} />}
           </button>
           <button onClick={onClose} className="p-2 bg-white/10 hover:bg-white/20 border border-white/10 backdrop-blur-md rounded-md text-white transition-colors">
@@ -59,11 +104,13 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
       <div className="flex-1 relative">
         <Scanner 
           onScan={handleScan}
-          scanDelay={100} // Scans up to 10 times a second
+          scanDelay={100} 
           allowMultiple={true}
-          components={{ audio: true, finder: false }} // Enabled audio for instant feedback
+          components={{ audio: true, finder: false }} 
           styles={{ container: { height: '100%' }, video: { objectFit: 'cover' } }}
-          constraints={{ facingMode: 'environment', advanced: flashlightOn ? [{ torch: true }] : undefined }}
+          // 🛡️ Static constraints: Removing the dynamic 'advanced' array from here
+          // prevents the camera from restarting when toggling the flashlight
+          constraints={{ facingMode: 'environment' }}
         />
 
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">

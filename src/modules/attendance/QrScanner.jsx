@@ -7,13 +7,11 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
   const [flashlightOn, setFlashlightOn] = useState(false);
   const lastScannedCode = useRef(null);
   const isProcessing = useRef(false);
-  const videoTrackRef = useRef(null); // holds the live MediaStreamTrack
+  const videoTrackRef = useRef(null);
 
-  // ── Grab the video track once camera starts ───────────────
-  // Scanner renders a <video> — we find it and store its track
+  // Grab the video track once camera starts for instant flashlight
   useEffect(() => {
     if (!isOpen) return;
-
     const findTrack = () => {
       const video = document.querySelector('video');
       if (video?.srcObject) {
@@ -25,31 +23,15 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
       }
       return false;
     };
-
-    // Poll until video element is ready (usually < 500ms)
-    const interval = setInterval(() => {
-      if (findTrack()) clearInterval(interval);
-    }, 200);
-
-    return () => {
-      clearInterval(interval);
-      videoTrackRef.current = null;
-    };
+    const interval = setInterval(() => { if (findTrack()) clearInterval(interval); }, 200);
+    return () => { clearInterval(interval); videoTrackRef.current = null; };
   }, [isOpen]);
 
-  // ── Torch toggle — no remount, instant ───────────────────
   const toggleFlashlight = useCallback(async () => {
     const track = videoTrackRef.current;
-    if (!track) {
-      toast.error("Camera not ready yet", { position: 'top-center' });
-      return;
-    }
-
+    if (!track) return toast.error("Camera not ready yet", { position: 'top-center' });
     const capabilities = track.getCapabilities?.() || {};
-    if (!capabilities.torch) {
-      toast.error("Flashlight not supported on this device", { position: 'top-center' });
-      return;
-    }
+    if (!capabilities.torch) return toast.error("Flashlight not supported", { position: 'top-center' });
 
     try {
       const next = !flashlightOn;
@@ -60,61 +42,49 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
     }
   }, [flashlightOn]);
 
-  // ── Scan handler ──────────────────────────────────────────
   const handleScan = useCallback(async (result) => {
-    const rawCode = result[0]?.rawValue;
+    // 🛡️ Bulletproof extraction: Handles v1 (string/object) and v2 (array) of the scanner library
+    if (!result) return;
+    const rawCode = Array.isArray(result) ? result[0]?.rawValue : (result?.text || result?.rawValue || result);
+    
     if (!rawCode || isProcessing.current || rawCode === lastScannedCode.current) return;
 
     isProcessing.current = true;
     lastScannedCode.current = rawCode;
 
-    // Visual feedback immediately — don't wait for DB
     const scanToastId = toast.loading('Checking...', { position: 'top-center' });
 
     try {
+      // Wait for the parent to process the database logic
       const resultData = await onScan(rawCode);
 
-      if (!resultData) {
-        // Parent didn't return anything — still show scanned code
-        toast.success(`Scanned: ${rawCode.slice(0, 20)}`, {
-          id: scanToastId,
-          position: 'top-center',
-          duration: 1500,
-        });
-      } else if (resultData.success) {
-        toast.success(resultData.message || 'Marked present ✓', {
-          id: scanToastId,
-          position: 'top-center',
-          duration: 1500,
-        });
+      // 🛡️ Force toast based on what the parent returns
+      if (resultData && resultData.success) {
+        toast.success(resultData.message || 'Successfully marked present ✓', { id: scanToastId, position: 'top-center', duration: 2000 });
         if (eventName?.includes("Map Badge")) onClose();
-      } else {
-        toast.error(resultData.message || 'Already marked or not found', {
-          id: scanToastId,
-          position: 'top-center',
-          duration: 2000,
-        });
+      } 
+      else if (resultData && resultData.success === false) {
+        toast.error(resultData.message || 'Already marked or not found', { id: scanToastId, position: 'top-center', duration: 2500 });
+      } 
+      else {
+        // If parent forgot to return anything, fallback to basic message
+        toast.success(`Scanned ID: ${rawCode.slice(0, 15)}`, { id: scanToastId, position: 'top-center', duration: 1500 });
       }
     } catch (err) {
-      toast.error('Scan failed — check connection', {
-        id: scanToastId,
-        position: 'top-center',
-        duration: 2000,
-      });
+      toast.error('Database connection error!', { id: scanToastId, position: 'top-center', duration: 2000 });
     }
 
-    // Unlock after 300ms, clear last code after 1s
+    // Unlock scanner quickly for rapid fire
     setTimeout(() => {
       isProcessing.current = false;
-      setTimeout(() => { lastScannedCode.current = null; }, 1000);
-    }, 300);
+      setTimeout(() => { lastScannedCode.current = null; }, 1500); // 1.5s cooldown for the EXACT same QR code
+    }, 400);
   }, [onScan, eventName, onClose]);
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-[9999] bg-black flex flex-col animate-in fade-in duration-100">
-      {/* Header */}
       <div className="absolute top-0 w-full px-5 py-4 flex justify-between items-center z-20 bg-gradient-to-b from-black/80 to-transparent">
         <div>
           <h2 className="font-bold text-base text-white">{eventName || "Rapid Scanner"}</h2>
@@ -124,37 +94,25 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={toggleFlashlight}
-            className={`p-2 border backdrop-blur-md rounded-md text-white transition-colors ${
-              flashlightOn
-                ? 'bg-yellow-400/30 border-yellow-400/50 text-yellow-300'
-                : 'bg-white/10 hover:bg-white/20 border-white/10'
-            }`}
-          >
+          <button onClick={toggleFlashlight} className={`p-2 border backdrop-blur-md rounded-md text-white transition-colors ${flashlightOn ? 'bg-yellow-400/30 border-yellow-400/50 text-yellow-300' : 'bg-white/10 hover:bg-white/20 border-white/10'}`}>
             {flashlightOn ? <Zap size={18} strokeWidth={2} fill="currentColor" /> : <ZapOff size={18} strokeWidth={2} />}
           </button>
-          <button
-            onClick={onClose}
-            className="p-2 bg-white/10 hover:bg-white/20 border border-white/10 backdrop-blur-md rounded-md text-white transition-colors"
-          >
+          <button onClick={onClose} className="p-2 bg-white/10 hover:bg-white/20 border border-white/10 backdrop-blur-md rounded-md text-white transition-colors">
             <X size={18} strokeWidth={2} />
           </button>
         </div>
       </div>
 
-      {/* Camera — no constraints prop so it never remounts */}
       <div className="flex-1 relative">
         <Scanner
-          onScan={handleScan}
+          onScan={handleScan}    // For v2.x of the library
+          onResult={handleScan}  // For v1.x of the library
           scanDelay={100}
           allowMultiple={true}
           components={{ audio: true, finder: false }}
           styles={{ container: { height: '100%' }, video: { objectFit: 'cover' } }}
           constraints={{ facingMode: 'environment' }}
         />
-
-        {/* Viewfinder overlay */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="w-64 h-64 border border-white/40 relative shadow-[0_0_0_4000px_rgba(0,0,0,0.4)]">
             <div className="absolute top-0 left-0 w-8 h-8 border-l-4 border-t-4 border-emerald-400" />

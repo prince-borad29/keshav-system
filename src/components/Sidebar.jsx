@@ -6,7 +6,8 @@ import {
   Folder,
   FilePlus,
   QrCode,
-  Tags
+  Tags,
+  File
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -93,9 +94,10 @@ export default function Sidebar({ isOpen, onClose }) {
               <NavItem to="/projects" icon={Folder} label="Projects" />
               <NavItem to="/registration" icon={FilePlus} label="Registration" />
               <NavItem to="/directory" icon={Database} label="Database" />
-              <NavItem to="/reports" icon={QrCode} label="QR Code" />
+              <NavItem to="/id" icon={QrCode} label="QR Code" />
               <NavItem to="/organization" icon={Shield} label="Organization" />
               <NavItem to="/settings" icon={Tags} label="Tags" />
+              <NavItem to="/reports" icon={File} label="Tags" />
               {/* <div className="pt-5 pb-2 px-3 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Modules</div> */}
             </>
           )}

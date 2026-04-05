@@ -42,44 +42,63 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
     }
   }, [flashlightOn]);
 
-  const handleScan = useCallback(async (result) => {
-    // 🛡️ Bulletproof extraction: Handles v1 (string/object) and v2 (array) of the scanner library
-    if (!result) return;
-    const rawCode = Array.isArray(result) ? result[0]?.rawValue : (result?.text || result?.rawValue || result);
-    
-    if (!rawCode || isProcessing.current || rawCode === lastScannedCode.current) return;
+const handleScan = useCallback(async (result) => {
+  if (!result) return;
+  const rawCode = Array.isArray(result) ? result[0]?.rawValue : (result?.text || result?.rawValue || result);
+  
+  if (!rawCode || isProcessing.current || rawCode === lastScannedCode.current) return;
 
-    isProcessing.current = true;
-    lastScannedCode.current = rawCode;
+  isProcessing.current = true;
+  lastScannedCode.current = rawCode;
 
-    const scanToastId = toast.loading('Checking...', { position: 'top-center' });
+  const scanToastId = toast.loading('Checking...', { 
+    position: 'top-center',
+    style: { zIndex: 10000 }  // ← ADD THIS: Above the modal
+  });
 
-    try {
-      // Wait for the parent to process the database logic
-      const resultData = await onScan(rawCode);
+  try {
+    const resultData = await onScan(rawCode);
 
-      // 🛡️ Force toast based on what the parent returns
-      if (resultData && resultData.success) {
-        toast.success(resultData.message || 'Successfully marked present ✓', { id: scanToastId, position: 'top-center', duration: 2000 });
-        if (eventName?.includes("Map Badge")) onClose();
-      } 
-      else if (resultData && resultData.success === false) {
-        toast.error(resultData.message || 'Already marked or not found', { id: scanToastId, position: 'top-center', duration: 2500 });
-      } 
-      else {
-        // If parent forgot to return anything, fallback to basic message
-        toast.success(`Scanned ID: ${rawCode.slice(0, 15)}`, { id: scanToastId, position: 'top-center', duration: 1500 });
-      }
-    } catch (err) {
-      toast.error('Database connection error!', { id: scanToastId, position: 'top-center', duration: 2000 });
+    if (resultData && resultData.success) {
+      toast.success(resultData.message || 'Successfully marked present ✓', { 
+        id: scanToastId, 
+        position: 'top-center', 
+        duration: 2000,
+        style: { zIndex: 10000 }  // ← ADD THIS
+      });
+      if (eventName?.includes("Map Badge")) onClose();
+    } 
+    else if (resultData && resultData.success === false) {
+      toast.error(resultData.message || 'Already marked or not found', { 
+        id: scanToastId, 
+        position: 'top-center', 
+        duration: 2500,
+        style: { zIndex: 10000 }  // ← ADD THIS
+      });
+    } 
+    else {
+      toast.success(`Scanned ID: ${rawCode.slice(0, 15)}`, { 
+        id: scanToastId, 
+        position: 'top-center', 
+        duration: 1500,
+        style: { zIndex: 10000 }  // ← ADD THIS
+      });
     }
+  } catch (err) {
+    toast.error('Database connection error!', { 
+      id: scanToastId, 
+      position: 'top-center', 
+      duration: 2000,
+      style: { zIndex: 10000 }
+    });
+  }
 
-    // Unlock scanner quickly for rapid fire
-    setTimeout(() => {
-      isProcessing.current = false;
-      setTimeout(() => { lastScannedCode.current = null; }, 1500); // 1.5s cooldown for the EXACT same QR code
-    }, 400);
-  }, [onScan, eventName, onClose]);
+  // Unlock scanner quickly for rapid fire
+  setTimeout(() => {
+    isProcessing.current = false;
+    setTimeout(() => { lastScannedCode.current = null; }, 1500);
+  }, 400);
+}, [onScan, eventName, onClose]);
 
   if (!isOpen) return null;
 

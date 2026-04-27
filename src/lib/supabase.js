@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+// Single main client instance with proper auth setup
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     autoRefreshToken: true,
@@ -11,6 +12,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   }
 });
 
+// Utility for timeouts
 export const withTimeout = async (promise, ms = 15000) => {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
@@ -23,6 +25,7 @@ export const withTimeout = async (promise, ms = 15000) => {
   });
 };
 
+// Ghost client for administrative operations (without auth persistence)
 export const ghostClient = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: false,

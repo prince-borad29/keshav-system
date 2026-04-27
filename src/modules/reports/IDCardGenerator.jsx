@@ -28,7 +28,7 @@ export default function IDCardGenerator() {
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  const designationOptions = ['Member', 'Nirdeshak', 'Nirikshak', 'Sanchalak', 'Sah Sanchalak', 'Sampark Karyakar', 'Utsahi Yuvak'];
+  const designationOptions = ['Nirdeshak', 'Nirikshak', 'Sanchalak', 'Sah Sanchalak', 'Sampark Karyakar', 'Yuvak'];
   const genderOptions = ['Yuvak', 'Yuvati'];
 
   useEffect(() => { fetchDropdowns(); }, []);

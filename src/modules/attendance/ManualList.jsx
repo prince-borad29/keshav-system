@@ -1,16 +1,20 @@
 import React, { useState } from 'react';
 import { Search, Check, Loader2, MapPin, X, Briefcase, Tag } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '../../lib/supabase';
+import { supabase, withTimeout } from '../../lib/supabase';
 import Badge from '../../components/ui/Badge';
+import AbsenceReasonModal from './AbsenceReasonModal';
 
-export default function ManualList({ event, project, onBack, mandalFilterId = null, mandalFilterName = null }) {
+export default function ManualList({ event, project, onBack, mandalFilterId = null, mandalFilterName = null, canMarkAttendance = true }) {
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all'); 
   const [desigFilter, setDesigFilter] = useState('');
+  const [absenceModalOpen, setAbsenceModalOpen] = useState(false);
+  const [selectedMemberForAbsence, setSelectedMemberForAbsence] = useState(null);
 
-  const designations = ['Member', 'Nirdeshak', 'Nirikshak', 'Sanchalak', 'Sah Sanchalak', 'Sampark Karyakar', 'Utsahi Yuvak'];
+  const designations = ['Nirdeshak', 'Nirikshak', 'Sanchalak', 'Sah Sanchalak', 'Sampark Karyakar', 'Yuvak', 'Yuvati'];
 
   // 1. Fetch Roster & Attendance
   const { data: attendees, isLoading } = useQuery({
@@ -36,14 +40,63 @@ export default function ManualList({ event, project, onBack, mandalFilterId = nu
     }
   });
 
-  // 2. Optimistic Mutation
+  // 2. Save Absence to Database
+  const saveAbsenceToDatabase = useMutation({
+    mutationFn: async ({ member, absenceCategoryId, absenceNotes }) => {
+      const user = (await supabase.auth.getUser()).data.user;
+      
+      const { error } = await withTimeout(
+        supabase.from('attendance').upsert(
+          {
+            event_id: event.id,
+            member_id: member.id,
+            status: 'absent',
+            absence_category_id: absenceCategoryId,
+            absence_notes: absenceNotes || null,
+            marked_by: user.id
+          },
+          { onConflict: 'event_id,member_id' }
+        )
+      );
+      if (error) throw error;
+    },
+    onMutate: async ({ member }) => {
+      await queryClient.cancelQueries({ queryKey: ['manual-attendance', event.id, project.id] });
+      const previousData = queryClient.getQueryData(['manual-attendance', event.id, project.id]);
+      
+      queryClient.setQueryData(['manual-attendance', event.id, project.id], old => {
+        if (!old) return old;
+        return old.map(m => m.id === member.id ? { ...m, is_present: false } : m);
+      });
+      return { previousData };
+    },
+    onSuccess: (data, { member }) => {
+      toast.success(`${member.name} marked absent successfully!`);
+      setAbsenceModalOpen(false);
+      setSelectedMemberForAbsence(null);
+    },
+    onError: (err, variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['manual-attendance', event.id, project.id], context.previousData);
+      }
+      toast.error('Failed to mark absent. Please try again.');
+    }
+  });
+
+  // 3. Handle Mark Absent Button Click
+  const handleClickMarkAbsent = (member) => {
+    setSelectedMemberForAbsence(member);
+    setAbsenceModalOpen(true);
+  };
+
+  // 4. Optimistic Mutation for Check-In
   const toggleAttendance = useMutation({
     mutationFn: async (member) => {
       const user = (await supabase.auth.getUser()).data.user;
       if (member.is_present) {
         await supabase.from('attendance').delete().match({ event_id: event.id, member_id: member.id });
       } else {
-        await supabase.from('attendance').insert({ event_id: event.id, member_id: member.id, marked_by: user.id });
+        await supabase.from('attendance').insert({ event_id: event.id, member_id: member.id, marked_by: user.id, status: 'present' });
       }
     },
     onMutate: async (member) => {
@@ -58,11 +111,11 @@ export default function ManualList({ event, project, onBack, mandalFilterId = nu
     },
     onError: (err, member, context) => {
       queryClient.setQueryData(['manual-attendance', event.id, project.id], context.previousData);
-      alert("Network sync failed.");
+      toast.error('Network sync failed. Please try again.');
     }
   });
 
-  // 3. Filtering
+  // 5. Filtering
   const filteredList = attendees?.filter(m => {
     const matchesSearch = `${m.name} ${m.surname} ${m.seat_number || ''}`.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' ? true : statusFilter === 'present' ? m.is_present : !m.is_present;
@@ -74,7 +127,8 @@ export default function ManualList({ event, project, onBack, mandalFilterId = nu
   const inputClass = "px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030] transition-colors";
 
   return (
-    <div className="flex flex-col bg-white rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)] border border-gray-200 overflow-hidden animate-in fade-in duration-200">
+    <>
+      <div className="flex flex-col bg-white rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)] border border-gray-200 overflow-hidden animate-in fade-in duration-200">
       
       {/* Header Controls */}
       <div className="p-3 border-b border-gray-100 space-y-3 bg-gray-50/50">
@@ -148,12 +202,18 @@ export default function ManualList({ event, project, onBack, mandalFilterId = nu
 
                 <button
                   onClick={() => {
-                     if (m.is_present && !confirm(`Mark ${m.name} as ABSENT?`)) return;
-                     toggleAttendance.mutate(m);
+                     if (m.is_present) {
+                       handleClickMarkAbsent(m);
+                     } else {
+                       toggleAttendance.mutate(m);
+                     }
                   }}
-                  disabled={isProcessing}
+                  disabled={!canMarkAttendance || isProcessing || saveAbsenceToDatabase.isPending}
+                  title={!canMarkAttendance ? 'You do not have permission to mark attendance' : ''}
                   className={`shrink-0 w-20 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider border transition-all ${
-                    m.is_present
+                    !canMarkAttendance
+                      ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                      : m.is_present
                       ? 'bg-white text-emerald-600 border-emerald-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200'
                       : 'bg-[#5C3030] text-white border-transparent hover:bg-[#4a2626] shadow-[0_1px_3px_rgba(0,0,0,0.02)]'
                   }`}
@@ -169,5 +229,24 @@ export default function ManualList({ event, project, onBack, mandalFilterId = nu
         Showing {filteredList.length} members
       </div>
     </div>
+
+    {/* Absence Reason Modal */}
+    <AbsenceReasonModal
+      isOpen={absenceModalOpen}
+      onClose={() => {
+        setAbsenceModalOpen(false);
+        setSelectedMemberForAbsence(null);
+      }}
+      member={selectedMemberForAbsence}
+      isSaving={saveAbsenceToDatabase.isPending}
+      onSave={async (absenceCategoryId, absenceNotes) => {
+        await saveAbsenceToDatabase.mutateAsync({
+          member: selectedMemberForAbsence,
+          absenceCategoryId,
+          absenceNotes
+        });
+      }}
+    />
+    </>
   );
 }

@@ -38,10 +38,7 @@ const MemberRow = React.memo(({ m, role, isAdmin, visibleColumns, onView, onEdit
     {visibleColumns.includes("designation") && <td className="px-4 py-3"><Badge variant="default">{m.designation}</Badge></td>}
     {visibleColumns.includes("email") && <td className="px-4 py-3 text-sm">{m.email || "-"}</td>}
     {visibleColumns.includes("gender") && <td className="px-4 py-3 text-sm">{m.gender || "-"}</td>}
-    {visibleColumns.includes("blood_group") && <td className="px-4 py-3 font-semibold text-red-500">{m.blood_group || "-"}</td>}
     {visibleColumns.includes("dob") && <td className="px-4 py-3 text-sm">{m.dob ? new Date(m.dob).toLocaleDateString() : "-"}</td>}
-    {visibleColumns.includes("education") && <td className="px-4 py-3 text-sm">{m.education || "-"}</td>}
-    {visibleColumns.includes("profession") && <td className="px-4 py-3 text-sm">{m.profession || "-"}</td>}
     {visibleColumns.includes("location") && (
       <td className="px-4 py-3">
         <div className="font-medium text-gray-700">{m.mandals?.name}</div>
@@ -52,7 +49,7 @@ const MemberRow = React.memo(({ m, role, isAdmin, visibleColumns, onView, onEdit
     <td className="px-4 py-3 text-right">
       <div className="flex justify-end gap-1">
         <button onClick={() => onView(m)} className="p-1.5 text-gray-400 hover:text-[#5C3030] hover:bg-gray-100 rounded-md transition-colors"><Eye size={16} strokeWidth={1.5} /></button>
-        {["admin", "sanchalak", "nirikshak"].includes(role) && (
+        {["admin", "sanchalak","nirdeshak", "nirikshak"].includes(role) && (
           <>
             <button onClick={() => onEdit(m)} className="p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"><Edit3 size={16} strokeWidth={1.5} /></button>
             {isAdmin && (
@@ -91,11 +88,7 @@ export default function MemberDirectory() {
     { id: "designation", label: "Designation" },
     { id: "email", label: "Email Address" },
     { id: "gender", label: "Gender" },
-    { id: "blood_group", label: "Blood Group" },
     { id: "dob", label: "Date of Birth" },
-    { id: "education", label: "Education" },
-    { id: "profession", label: "Profession" },
-    { id: "location", label: "Location (Mandal/Kshetra)" }
   ];
   
   // 🌟 YOUR REQUESTED DEFAULTS
@@ -400,7 +393,7 @@ export default function MemberDirectory() {
             {members.length < totalCount && <span className="ml-2 text-[#5C3030] font-semibold">· {members.length} loaded</span>}
           </p>
         </div>
-        {["admin", "sanchalak", "nirikshak"].includes(role) && (
+        {["admin", "sanchalak", "nirdeshak","nirikshak"].includes(role) && (
           <Button icon={Plus} onClick={() => { setSelectedMember(null); setIsFormOpen(true); }}>Add Member</Button>
         )}
       </div>

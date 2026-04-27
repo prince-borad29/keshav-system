@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
 import { Plus, Trash2, Edit3, Loader2, Tag as TagIcon } from 'lucide-react';
 import Button from '../../components/ui/Button';
@@ -56,7 +57,7 @@ export default function TagManager() {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
       resetForm();
     },
-    onError: (err) => alert("Error: " + err.message)
+    onError: (err) => toast.error('Error: ' + err.message)
   });
 
   const deleteMutation = useMutation({
@@ -65,14 +66,20 @@ export default function TagManager() {
       if (error) throw error;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tags'] }),
-    onError: (err) => alert("Error deleting tag: " + err.message)
+    onError: (err) => toast.error('Error deleting tag: ' + err.message)
   });
 
   // Handlers
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!formData.name.trim()) return alert("Tag name is required");
-    if (formData.category.length === 0) return alert("Please select at least one category");
+    if (!formData.name.trim()) {
+      toast.error('Tag name is required');
+      return;
+    }
+    if (formData.category.length === 0) {
+      toast.error('Please select at least one category');
+      return;
+    }
     saveMutation.mutate(formData);
   };
 
@@ -165,7 +172,7 @@ export default function TagManager() {
                   </div>
                   <div className="flex gap-1 transition-opacity shrink-0">
                     <button onClick={() => startEdit(tag)} className="p-1 text-gray-400 hover:text-[#5C3030] rounded-md transition-colors"><Edit3 size={14}/></button>
-                    <button onClick={() => { if(confirm("Delete tag?")) deleteMutation.mutate(tag.id); }} className="p-1 text-gray-400 hover:text-red-600 rounded-md transition-colors">
+                    <button onClick={() => { toast((t) => (<div className="flex gap-2 items-center"><span>Delete this tag?</span><button onClick={() => { toast.dismiss(t.id); deleteMutation.mutate(tag.id); }} className="px-3 py-1 bg-red-600 text-white text-xs rounded font-semibold hover:bg-red-700">Confirm</button></div>)); }} className="p-1 text-gray-400 hover:text-red-600 rounded-md transition-colors">
                       {deleteMutation.isPending && deleteMutation.variables === tag.id ? <Loader2 size={14} className="animate-spin"/> : <Trash2 size={14}/>}
                     </button>
                   </div>

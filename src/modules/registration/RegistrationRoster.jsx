@@ -6,6 +6,7 @@ import { supabase, withTimeout } from '../../lib/supabase';
 import toast from 'react-hot-toast';
 import { saveAs } from 'file-saver'; 
 import QrScanner from '../attendance/QrScanner';
+import MemberForm from '../members/MemberForm';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import Modal from '../../components/Modal';
@@ -23,8 +24,9 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [isMandalExportOpen, setIsMandalExportOpen] = useState(false);
+  const [isMemberFormOpen, setIsMemberFormOpen] = useState(false);
   
-  const defaultFilters = { kshetra_id: '', mandal_id: '', gender: '', designation: '', tag_id: '' };
+  const defaultFilters = { kshetra_id: '', mandal_id: '', gender: '', designation: '', tag_id: '', registration_status: '' };
   const [filters, setFilters] = useState(defaultFilters);
   const [draftFilters, setDraftFilters] = useState(defaultFilters);
   
@@ -75,26 +77,29 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       } 
       else if (role === 'nirikshak') {
         const { data } = await withTimeout(supabase.from('nirikshak_assignments').select('mandal_id').eq('nirikshak_id', profile.id));
-        ids = data?.map(d => d.mandal_id) || [];
-        if (profile.assigned_mandal_id) ids.push(profile.assigned_mandal_id);
+        const assignmentIds = data?.map(d => d.mandal_id) || [];
+        ids = [...new Set([...assignmentIds, ...(profile.assigned_mandal_id ? [profile.assigned_mandal_id] : [])])];
         canRegister = true;
       } 
       else if (role === 'nirdeshak' || role === 'project_admin') {
-        let kId = profile.assigned_kshetra_id || profile.kshetra_id;
-        if (!kId && profile.assigned_mandal_id) {
+        let kId = profile.assigned_kshetra_id;
+        
+        // Fallback: If assigned_kshetra_id is null for nirdeshak, try to infer from assigned_mandal_id
+        if (!kId && profile.assigned_mandal_id && role === 'nirdeshak') {
           const { data } = await withTimeout(supabase.from('mandals').select('kshetra_id').eq('id', profile.assigned_mandal_id).single());
           if (data) kId = data.kshetra_id;
         }
+        
         if (kId) {
           const { data } = await withTimeout(supabase.from('mandals').select('id').eq('kshetra_id', kId));
           ids = data?.map(m => m.id) || [];
         }
-
+        
         if (role === 'project_admin') {
           const { data: assignment } = await withTimeout(supabase.from('project_assignments').select('role').eq('project_id', project.id).eq('user_id', profile.id).maybeSingle());
           canRegister = assignment?.role === 'Coordinator';
         } else {
-          canRegister = true; 
+          canRegister = true;
         }
       }
       return { ids, canRegister };
@@ -134,12 +139,15 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         id, name, surname, internal_code, gender, designation, mobile,
         mandals!inner ( id, name, kshetra_id ),
         ${filters.tag_id ? 'member_tags!inner(tag_id),' : ''}
-        ${scopeData.canRegister ? `project_registrations ( project_id, external_qr )` : `project_registrations!inner ( project_id, external_qr )`}
+        ${scopeData.canRegister || isGlobal ? `project_registrations ( project_id, external_qr )` : `project_registrations!inner ( project_id, external_qr )`}
       `;
 
       let query = supabase.from('members').select(selectString);
 
-      if (!scopeData.canRegister) query = query.eq('project_registrations.project_id', project.id);
+      // When registration is closed: non-admins see only registered, admins see all
+      if (!project.registration_open && !isGlobal) {
+        query = query.eq('project_registrations.project_id', project.id);
+      }
       if (!isGlobal && profile?.gender) query = query.eq('gender', profile.gender);
       
       if (!isGlobal) {
@@ -174,7 +182,14 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         return { ...m, is_registered: !!reg, external_qr: reg?.external_qr || null };
       });
 
-      return { data: processed, nextPage: data.length === PAGE_SIZE ? pageParam + 1 : null };
+      const filteredProcessed = (() => {
+        if (!filters.registration_status) return processed;
+        if (filters.registration_status === 'registered') return processed.filter(m => m.is_registered);
+        if (filters.registration_status === 'unregistered') return processed.filter(m => !m.is_registered);
+        return processed;
+      })();
+
+      return { data: filteredProcessed, nextPage: data.length === PAGE_SIZE ? pageParam + 1 : null };
     },
     getNextPageParam: (lastPage) => lastPage.nextPage,
     enabled: !!scopeData,
@@ -212,9 +227,11 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       if (member.is_registered) {
         const { error } = await withTimeout(supabase.from('project_registrations').delete().match({ project_id: project.id, member_id: member.id }));
         if (error) throw error;
+        return { action: 'removed' };
       } else {
         const { error } = await withTimeout(supabase.from('project_registrations').insert({ project_id: project.id, member_id: member.id, registered_by: profile.id }));
         if (error) throw error;
+        return { action: 'added' };
       }
     },
     onMutate: async (member) => {
@@ -233,7 +250,14 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       });
       return { previousData };
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['registration-count', project.id] }),
+    onSuccess: (data, member) => {
+      queryClient.invalidateQueries({ queryKey: ['registration-count', project.id] });
+      if (data.action === 'added') {
+        toast.success(`${member.name} registered successfully!`);
+      } else {
+        toast.success(`${member.name} removed from registration`);
+      }
+    },
     onError: (err, member, context) => {
       if (context?.previousData) queryClient.setQueryData(['registration-list', project.id, scopeData, debouncedSearch, filters, sortConfig], context.previousData);
       toast.error(`Action failed: ${err.message}`);
@@ -403,6 +427,14 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     onError: (err) => toast.error(err.message)
   });
 
+  // Handler for adding new member (also registers them)
+  const handleMemberAdded = () => {
+    setIsMemberFormOpen(false);
+    queryClient.invalidateQueries(['registration-list', project.id]);
+    queryClient.invalidateQueries(['registration-count', project.id]);
+    toast.success('Member added and registered successfully!');
+  };
+
   const members = useMemo(() => membersPages?.pages.flatMap(page => page.data) || [], [membersPages]);
   const canRegister = scopeData?.canRegister;
   
@@ -454,6 +486,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           </div>
           
           <div className="flex items-center justify-end gap-1.5 shrink-0">
+            {canRegister && project.registration_open && <Button variant="secondary" size="sm" onClick={() => setIsMemberFormOpen(true)} className="!px-2 sm:!px-3"><Plus size={14} className="sm:mr-1.5"/> <span className="hidden sm:inline">Add Member</span></Button>}
             {isAdmin && <Button variant="secondary" size="sm" onClick={() => setIsBulkModalOpen(true)} className="!px-2 sm:!px-3 hidden sm:flex"><Layers size={14} className="mr-1.5"/> Bulk Add</Button>}
             <Button variant="secondary" size="sm" onClick={() => setIsExportModalOpen(true)} className="!px-2 sm:!px-3"><Download size={14} className="sm:mr-1.5"/> <span className="hidden sm:inline">Export</span></Button>
 
@@ -586,6 +619,17 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
 
               {drawerTab === 'filter' ? (
                 <div className="space-y-1 animate-in fade-in duration-200">
+                  {(canRegister || isGlobal) && (
+                    <FilterRow
+                      label="Registration"
+                      fieldKey="registration_status"
+                      value={draftFilters.registration_status}
+                      options={[
+                        { value: 'registered', label: 'Registered' },
+                        { value: 'unregistered', label: 'Unregistered' },
+                      ]}
+                    />
+                  )}
                   {isAdmin && <FilterRow label="Kshetra" fieldKey="kshetra_id" value={draftFilters.kshetra_id} options={dropdowns?.kshetras.map(k => ({value: k.id, label: k.name})) || []} />}
                   {['admin', 'nirdeshak', 'nirikshak', 'project_admin'].includes(role) && <FilterRow label="Mandal" fieldKey="mandal_id" value={draftFilters.mandal_id} options={dropdowns?.mandals.filter(m => !draftFilters.kshetra_id || m.kshetra_id === draftFilters.kshetra_id).map(m => ({value: m.id, label: m.name})) || []} />}
                   <FilterRow label="Designation" fieldKey="designation" value={draftFilters.designation} options={['Nirdeshak', 'Nirikshak', 'Sanchalak', 'Member', 'Sah Sanchalak', 'Sampark Karyakar'].map(d => ({value: d, label: d}))} />
@@ -827,6 +871,16 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       )}
 
       {scanningMember && <QrScanner isOpen={!!scanningMember} onClose={() => setScanningMember(null)} onScan={handleMapExternalQr} eventName={`Map Badge: ${scanningMember.name}`} />}
+
+      {/* --- ADD MEMBER FORM MODAL --- */}
+      <MemberForm 
+        isOpen={isMemberFormOpen} 
+        onClose={() => setIsMemberFormOpen(false)} 
+        onSuccess={() => handleMemberAdded()}
+        initialData={null}
+        projectId={project.id}
+        userId={profile.id}
+      />
     </div>
   );
 }

@@ -2,8 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import Button from '../../components/ui/Button';
 import Modal from '../../components/Modal';
+import Radio from '../../components/ui/Radio';
+import Select from '../../components/ui/Select';
 import { useAuth } from '../../contexts/AuthContext';
 import { AlertTriangle, Loader2 } from 'lucide-react';
+
+// Designation hierarchy (higher number = lower rank, can only assign lower)
+const DESIGNATION_HIERARCHY = {
+  'Nirdeshak': 1,
+  'Nirikshak': 2,
+  'Sanchalak': 3,
+  'Sah Sanchalak': 4,
+  'Sampark Karyakar': 5,
+  'Yuvak': 6,
+  'Yuvati': 6
+};
 
 const INITIAL_FORM = {
   name: '', father_name: '', surname: '', gender: 'Yuvak',
@@ -11,7 +24,7 @@ const INITIAL_FORM = {
   kshetra_id: '', mandal_id: '', internal_code: '', is_guest: false
 };
 
-export default function MemberForm({ isOpen, onClose, onSuccess, initialData = null }) {
+export default function MemberForm({ isOpen, onClose, onSuccess, initialData = null, projectId = null, userId = null }) {
   const { profile } = useAuth();
   
   const role = (profile?.role || '').toLowerCase();
@@ -19,6 +32,17 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
   const isNirdeshak = role === 'nirdeshak';
   const isNirikshak = role === 'nirikshak';
   const isSanchalak = role === 'sanchalak';
+  
+  // Get user's designation level for hierarchy filtering
+  const getUserDesignationLevel = () => {
+    if (isAdmin) return 0; // Admin can assign any designation
+    if (isNirdeshak) return 1;
+    if (isNirikshak) return 2;
+    if (isSanchalak) return 3;
+    return 7; // Regular user/member - can't assign designations
+  };
+  
+  const userLevel = getUserDesignationLevel();
 
   const [formData, setFormData] = useState(INITIAL_FORM);
   const [selectedTags, setSelectedTags] = useState([]); 
@@ -42,13 +66,25 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
         });
         fetchMemberTags(initialData.id);
       } else {
-        const defaults = { ...INITIAL_FORM, internal_code: `MEM-${Date.now().toString().slice(-6)}` };
-        if (!isAdmin && profile?.gender) defaults.gender = profile.gender;
-        if (isSanchalak) defaults.mandal_id = profile.assigned_mandal_id; 
-        else if (isNirdeshak) defaults.kshetra_id = profile.assigned_kshetra_id || profile.kshetra_id;
+        const initializeDefaults = async () => {
+          const defaults = { ...INITIAL_FORM, internal_code: `MEM-${Date.now().toString().slice(-6)}` };
+          if (!isAdmin && profile?.gender) defaults.gender = profile.gender;
+          if (isSanchalak) defaults.mandal_id = profile.assigned_mandal_id; 
+          else if (isNirdeshak) {
+            let kId = profile.assigned_kshetra_id;
+            // Fallback: If assigned_kshetra_id is null, try to infer from assigned_mandal_id
+            if (!kId && profile.assigned_mandal_id) {
+              const { data: mandalData } = await supabase.from('mandals').select('kshetra_id').eq('id', profile.assigned_mandal_id).single();
+              if (mandalData) kId = mandalData.kshetra_id;
+            }
+            if (kId) defaults.kshetra_id = kId;
+          }
+          
+          setFormData(defaults);
+          setSelectedTags([]);
+        };
         
-        setFormData(defaults);
-        setSelectedTags([]);
+        initializeDefaults();
       }
       fetchDropdowns();
     }
@@ -66,7 +102,12 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
 
       let mQuery = supabase.from('mandals').select('id, name, kshetra_id').order('name');
       if (isNirdeshak) {
-         const kId = profile.assigned_kshetra_id || profile.kshetra_id;
+         let kId = profile.assigned_kshetra_id;
+         // Fallback: If assigned_kshetra_id is null, try to infer from assigned_mandal_id
+         if (!kId && profile.assigned_mandal_id) {
+           const { data: mandalData } = await supabase.from('mandals').select('kshetra_id').eq('id', profile.assigned_mandal_id).single();
+           if (mandalData) kId = mandalData.kshetra_id;
+         }
          if (kId) mQuery = mQuery.eq('kshetra_id', kId);
       } 
       else if (isNirikshak) {
@@ -98,8 +139,37 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
     setError('');
 
     try {
-      if (!formData.name || !formData.surname || !formData.mandal_id) {
-        throw new Error("Name, Surname, and Mandal are required.");
+      // Validation: all required fields (except tags)
+      if (!formData.name?.trim()) {
+        throw new Error("First Name is required.");
+      }
+      if (!formData.father_name?.trim()) {
+        throw new Error("Father's Name is required.");
+      }
+      if (!formData.surname?.trim()) {
+        throw new Error("Surname is required.");
+      }
+      if (!formData.mobile?.trim()) {
+        throw new Error("Mobile Number is required.");
+      }
+      // Validate mobile format: 10 digits
+      if (!/^\d{10}$/.test(formData.mobile.trim())) {
+        throw new Error("Mobile Number must be 10 digits.");
+      }
+      if (!formData.dob) {
+        throw new Error("Date of Birth is required.");
+      }
+      if (!formData.address?.trim()) {
+        throw new Error("Address is required.");
+      }
+      if (!formData.mandal_id) {
+        throw new Error("Mandal (Local) is required.");
+      }
+      if (!formData.designation) {
+        throw new Error("Designation is required.");
+      }
+      if (!formData.gender) {
+        throw new Error("Gender is required.");
       }
 
       const payload = {
@@ -122,6 +192,16 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
       }
 
       if (memberId) {
+        // Auto-register for project if projectId is provided (new members only)
+        if (projectId && !initialData) {
+          const { error: regError } = await supabase.from('project_registrations').insert({
+            project_id: projectId,
+            member_id: memberId,
+            registered_by: userId
+          });
+          if (regError) throw regError;
+        }
+
         await supabase.from('member_tags').delete().eq('member_id', memberId);
         if (selectedTags.length > 0) {
           const tagInserts = selectedTags.map(tagId => ({ member_id: memberId, tag_id: tagId }));
@@ -150,19 +230,27 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2 sm:col-span-1">
               <label className={labelClass}>First Name <span className="text-red-500">*</span></label>
-              <input required className={inputClass} placeholder="First Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+              <input  className={inputClass} placeholder="First Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <label className={labelClass}>Father's Name <span className="text-red-500">*</span></label>
+              <input  className={inputClass} placeholder="Father's Name" value={formData.father_name} onChange={e => setFormData({...formData, father_name: e.target.value})} />
             </div>
             <div className="col-span-2 sm:col-span-1">
               <label className={labelClass}>Surname <span className="text-red-500">*</span></label>
-              <input required className={inputClass} placeholder="Last Name" value={formData.surname} onChange={e => setFormData({...formData, surname: e.target.value})} />
+              <input  className={inputClass} placeholder="Last Name" value={formData.surname} onChange={e => setFormData({...formData, surname: e.target.value})} />
             </div>
             <div className="col-span-2 sm:col-span-1">
-              <label className={labelClass}>Mobile Number</label>
-              <input type="tel" className={inputClass} placeholder="10-digit number" value={formData.mobile} onChange={e => setFormData({...formData, mobile: e.target.value})} />
+              <label className={labelClass}>Mobile Number <span className="text-red-500">*</span></label>
+              <input  type="tel" className={inputClass} placeholder="10-digit number" value={formData.mobile} onChange={e => setFormData({...formData, mobile: e.target.value})} />
             </div>
             <div className="col-span-2 sm:col-span-1">
-              <label className={labelClass}>Date of Birth</label>
-              <input type="date" className={inputClass} value={formData.dob} onChange={e => setFormData({...formData, dob: e.target.value})} />
+              <label className={labelClass}>Date of Birth <span className="text-red-500">*</span></label>
+              <input  type="date" className={inputClass} value={formData.dob} onChange={e => setFormData({...formData, dob: e.target.value})} />
+            </div>
+            <div className="col-span-2">
+              <label className={labelClass}>Address <span className="text-red-500">*</span></label>
+              <input  type="text" className={inputClass} placeholder="Address" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} />
             </div>
           </div>
           
@@ -172,43 +260,55 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
             {isAdmin && (
               <div className="col-span-2 sm:col-span-1">
                 <label className={labelClass}>Kshetra (Region)</label>
-                <select className={`${inputClass} appearance-none`} value={formData.kshetra_id} onChange={e => setFormData({...formData, kshetra_id: e.target.value, mandal_id: ''})}>
-                  <option value="">Select Kshetra...</option>
-                  {kshetras.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
-                </select>
+                <Select
+                  options={kshetras.map(k => ({ value: k.id, label: k.name }))}
+                  value={formData.kshetra_id}
+                  onChange={(val) => setFormData({...formData, kshetra_id: val, mandal_id: ''})}
+                  placeholder="Select Kshetra..."
+                />
               </div>
             )}
             {!isSanchalak && (
               <div className="col-span-2 sm:col-span-1">
                 <label className={labelClass}>Mandal (Local) <span className="text-red-500">*</span></label>
-                <select required className={`${inputClass} appearance-none`} value={formData.mandal_id} onChange={e => setFormData({...formData, mandal_id: e.target.value})}>
-                  <option value="">Select Mandal...</option>
-                  {(isAdmin && formData.kshetra_id ? mandals.filter(m => m.kshetra_id === formData.kshetra_id) : mandals).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
+                <Select
+                  options={(isAdmin && formData.kshetra_id ? mandals.filter(m => m.kshetra_id === formData.kshetra_id) : mandals).map(m => ({ value: m.id, label: m.name }))}
+                  value={formData.mandal_id}
+                  onChange={(val) => setFormData({...formData, mandal_id: val})}
+                  placeholder="Select Mandal..."
+                />
               </div>
             )}
             <div className="col-span-2 sm:col-span-1">
-              <label className={labelClass}>Designation</label>
-              <select className={`${inputClass} appearance-none`} value={formData.designation} onChange={e => setFormData({...formData, designation: e.target.value})}>
-                {['Member', 'Nirdeshak', 'Nirikshak', 'Sanchalak', 'Sah Sanchalak', 'Sampark Karyakar', 'Yuvak'].map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
+              <label className={labelClass}>Designation <span className="text-red-500">*</span></label>
+              <Select
+                options={[
+                  { label: 'Nirdeshak', value: 'Nirdeshak', level: 1 },
+                  { label: 'Nirikshak', value: 'Nirikshak', level: 2 },
+                  { label: 'Sanchalak', value: 'Sanchalak', level: 3 },
+                  { label: 'Sah Sanchalak', value: 'Sah Sanchalak', level: 4 },
+                  { label: 'Sampark Karyakar', value: 'Sampark Karyakar', level: 5 },
+                  { label: formData.gender === 'Yuvati' ? 'Yuvati' : 'Yuvak', value: formData.gender === 'Yuvati' ? 'Yuvati' : 'Yuvak', level: 6 }
+                ].filter(d => userLevel === 0 || d.level > userLevel)}
+                value={formData.designation}
+                onChange={(val) => setFormData({...formData, designation: val})}
+                placeholder="Select Designation..."
+              />
             </div>
 
             {isAdmin && (
               <div className="col-span-2 sm:col-span-1">
                 <label className={labelClass}>Gender <span className="text-red-500">*</span></label>
-                <div className="flex gap-2">
-                  {['Yuvak', 'Yuvati'].map(g => (
-                    <button
-                      key={g}
-                      type="button"
-                      onClick={() => setFormData({...formData, gender: g})}
-                      className={`flex-1 py-1.5 text-xs font-semibold rounded-md border transition-colors ${formData.gender === g ? 'bg-[#5C3030] text-white border-[#5C3030]' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'}`}
-                    >
-                      {g}
-                    </button>
-                  ))}
-                </div>
+                <Radio
+                  options={[
+                    { value: 'Yuvak', label: 'Yuvak' },
+                    { value: 'Yuvati', label: 'Yuvati' }
+                  ]}
+                  value={formData.gender}
+                  onChange={(val) => setFormData({...formData, gender: val})}
+                  direction="horizontal"
+                  required
+                />
               </div>
             )}
           </div>

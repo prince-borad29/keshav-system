@@ -21,16 +21,31 @@ export default function AttendanceDashboard({ preSelectedProject = null, preSele
     const fetchUserScope = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data: profile } = await supabase.from('user_profiles').select('role, gender, assigned_mandal_id').eq('id', user.id).single();
+      const { data: profile } = await supabase.from('user_profiles').select('role, gender, assigned_mandal_id, assigned_kshetra_id').eq('id', user.id).single();
       let scope = { role: profile.role, gender: profile.gender || null, mandalIds: [], kshetraId: null, isGlobal: profile.role === 'admin' };
       
       if (profile.role === 'sanchalak') scope.mandalIds = [profile.assigned_mandal_id];
       else if (profile.role === 'nirikshak') {
         const { data } = await supabase.from('nirikshak_assignments').select('mandal_id').eq('nirikshak_id', user.id);
         scope.mandalIds = data?.map(d => d.mandal_id) || [];
-      } else if (profile.role === 'nirdeshak' && profile.assigned_mandal_id) {
-         const { data: m } = await supabase.from('mandals').select('kshetra_id').eq('id', profile.assigned_mandal_id).single();
-         if(m) scope.kshetraId = m.kshetra_id;
+        if (profile.assigned_mandal_id && !scope.mandalIds.includes(profile.assigned_mandal_id)) {
+          scope.mandalIds.push(profile.assigned_mandal_id);
+        }
+      } else if (profile.role === 'nirdeshak') {
+         let kId = profile.assigned_kshetra_id;
+         
+         // Fallback: If assigned_kshetra_id is null, try to infer from assigned_mandal_id
+         if (!kId && profile.assigned_mandal_id) {
+           const { data: mandalData } = await supabase.from('mandals').select('kshetra_id').eq('id', profile.assigned_mandal_id).single();
+           if (mandalData) kId = mandalData.kshetra_id;
+         }
+         
+         // Fetch all mandals in the kshetra
+         if (kId) {
+           const { data: mandals } = await supabase.from('mandals').select('id').eq('kshetra_id', kId);
+           scope.mandalIds = mandals?.map(m => m.id) || [];
+           scope.kshetraId = kId;
+         }
       }
       setUserScope(scope);
     };
@@ -112,7 +127,7 @@ export default function AttendanceDashboard({ preSelectedProject = null, preSele
           <AttendanceSummary isVisible={showSummary} onClose={() => setShowSummary(false)} event={selectedEvent} project={selectedProject} userScope={userScope} onMandalClick={(id, name) => { setDrillDownMandal({id, name}); setShowSummary(false); }} />
 
           <div className="flex-1">
-            <ManualList event={selectedEvent} project={selectedProject} mandalFilterId={drillDownMandal?.id} mandalFilterName={drillDownMandal?.name} onBack={() => setDrillDownMandal(null)} />
+            <ManualList event={selectedEvent} project={selectedProject} mandalFilterId={drillDownMandal?.id} mandalFilterName={drillDownMandal?.name} onBack={() => setDrillDownMandal(null)} canMarkAttendance={userScope.role === 'admin' || userScope.role === 'sanchalak' || userScope.role === 'nirikshak'} />
           </div>
         </div>
       )}

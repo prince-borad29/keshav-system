@@ -1,214 +1,86 @@
-// ============================================================
-// reportExportEngine.js — Export to CSV, Excel (.xlsx), PDF
-// NaN-safe formatting for all export types
-// ============================================================
+// reportExportEngine.js
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-// ── Format cell for export (NaN-safe) ────────────────────────
-function formatExportCell(val, format) {
-  if (val === null || val === undefined || val === '') return '-';
-
-  switch (format) {
-    case 'number': {
-      const n = Number(val);
-      return isNaN(n) ? String(val) : n.toLocaleString('en-IN');
-    }
-    case 'currency': {
-      const n = Number(val);
-      return isNaN(n) ? String(val) : `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
-    }
-    case 'percentage': {
-      const n = Number(val);
-      return isNaN(n) ? String(val) : `${n.toFixed(1)}%`;
-    }
-    case 'date': {
-      const d = new Date(val);
-      return isNaN(d.getTime()) ? String(val) : d.toLocaleDateString('en-IN');
-    }
-    case 'datetime': {
-      const d = new Date(val);
-      return isNaN(d.getTime()) ? String(val) : d.toLocaleString('en-IN');
-    }
-    case 'boolean':
-      return val === true || val === 'true' ? 'Yes'
-        : val === false || val === 'false' ? 'No'
-        : String(val);
-    default:
-      return String(val);
-  }
-}
-
-// ── Get raw value for Excel (typed correctly) ────────────────
-function getExcelValue(val, format) {
-  if (val === null || val === undefined || val === '') return '';
-
-  if (format === 'number' || format === 'currency' || format === 'percentage') {
-    const n = Number(val);
-    // Only return as number if it's actually numeric
-    return isNaN(n) ? String(val) : n;
-  }
-
-  if (format === 'boolean') {
-    return val === true || val === 'true' ? 'Yes'
-      : val === false || val === 'false' ? 'No'
-      : String(val);
-  }
-
-  return String(val);
-}
-
-// Resolve export columns using columnConfigs
-export function resolveExportColumns(columns, columnConfigs) {
-  return columns
-    .filter(c => !columnConfigs?.[c.key]?.hidden)
-    .map(c => ({
-      ...c,
-      label: columnConfigs?.[c.key]?.label || c.label || c.key,
-      format: columnConfigs?.[c.key]?.format || 'text',
-    }));
-}
-
-// ════════════════════════════════════════════════════════════
-// CSV Export
-// ════════════════════════════════════════════════════════════
-export function exportCSV(data, columns, reportTitle) {
-  const headers = columns.map(c => c.label);
-  const rows = data.map(row =>
-    columns.map(c => formatExportCell(row[c.key], c.format))
-  );
-  const csvLines = [
-    headers.map(h => `"${h}"`).join(','),
-    ...rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')),
-  ];
-  const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-  triggerDownload(blob, `${sanitizeFilename(reportTitle)}.csv`);
-}
-
-// ════════════════════════════════════════════════════════════
-// Excel Export
-// ════════════════════════════════════════════════════════════
-export async function exportExcel(data, columns, reportTitle) {
-  const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs');
-
-  const wsData = [
-    columns.map(c => c.label),
-    ...data.map(row =>
-      columns.map(c => getExcelValue(row[c.key], c.format))
-    ),
-  ];
-
-  const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.aoa_to_sheet(wsData);
-
-  // Column widths
-  ws['!cols'] = columns.map(c => ({
-    wch: Math.max(c.label.length, 14),
-  }));
-
-  XLSX.utils.book_append_sheet(wb, ws, 'Report');
-  XLSX.writeFile(wb, `${sanitizeFilename(reportTitle)}.xlsx`);
-}
-
-// ════════════════════════════════════════════════════════════
-// PDF Export
-// ════════════════════════════════════════════════════════════
-export function exportPDF(data, columns, reportTitle, options = {}) {
-  const {
-    orientation = 'landscape',
-    primaryColor = [92, 48, 48],
-    fontSize = 8,
-    includeTimestamp = true,
-  } = options;
-
-  const doc = new jsPDF({ orientation, unit: 'mm' });
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const headers = columns.map(c => c.label);
-  const rows = data.map(row =>
-    columns.map(c => formatExportCell(row[c.key], c.format))
-  );
-  const timestamp = new Date().toLocaleString('en-IN', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
-
-  // Header banner
-  doc.setFillColor(...primaryColor);
-  doc.rect(0, 0, pageWidth, 18, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.text(reportTitle, 14, 12);
-
-  if (includeTimestamp) {
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`Generated: ${timestamp}`, pageWidth - 14, 12, { align: 'right' });
-  }
-
-  // Table
-  autoTable(doc, {
-    startY: 22,
-    head: [headers],
-    body: rows,
-    theme: 'grid',
-    headStyles: {
-      fillColor: primaryColor,
-      textColor: 255,
-      fontStyle: 'bold',
-      fontSize: fontSize + 1,
-    },
-    bodyStyles: {
-      fontSize,
-      textColor: [30, 30, 30],
-    },
-    alternateRowStyles: {
-      fillColor: [248, 246, 246],
-    },
-    styles: {
-      cellPadding: 2.5,
-      overflow: 'linebreak',
-    },
-    margin: { left: 14, right: 14 },
-    didDrawPage: (hookData) => {
-      const pageNum = hookData.pageNumber;
-      doc.setFontSize(7);
-      doc.setTextColor(150);
-      doc.text(
-        `Page ${pageNum} · ${reportTitle}`,
-        pageWidth / 2,
-        doc.internal.pageSize.getHeight() - 6,
-        { align: 'center' }
-      );
-    },
-  });
-
-  doc.save(`${sanitizeFilename(reportTitle)}.pdf`);
-}
-
-// ── Helpers ───────────────────────────────────────────────────
-function sanitizeFilename(name) {
+function sanitize(name) {
   return (name || 'Report').replace(/[^a-z0-9_\-\s]/gi, '').replace(/\s+/g, '_');
 }
 
-function triggerDownload(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.setAttribute('download', filename);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+function trigger(blob, filename) {
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.setAttribute('download', filename);
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
-// ── Dispatch ──────────────────────────────────────────────────
-export async function handleExport(format, data, columns, reportTitle) {
-  if (!data || data.length === 0) throw new Error('No data to export');
-  switch (format) {
-    case 'csv':   exportCSV(data, columns, reportTitle);         break;
-    case 'excel': await exportExcel(data, columns, reportTitle); break;
-    case 'pdf':   exportPDF(data, columns, reportTitle);         break;
-    default:      throw new Error(`Unknown format: ${format}`);
-  }
+function getExportRows(data) {
+  return (data || []).filter(r => !r._type || r._type === 'data');
+}
+
+export function exportCSV(data, columns, title) {
+  const rows   = getExportRows(data);
+  const header = columns.map(c => `"${c.label}"`).join(',');
+  const body   = rows.map(r => columns.map(c => `"${String(r[c.key] ?? '').replace(/"/g, '""')}"`).join(','));
+  trigger(new Blob([[header, ...body].join('\n')], { type: 'text/csv;charset=utf-8;' }), `${sanitize(title)}.csv`);
+}
+
+export async function exportExcel(data, columns, title) {
+  const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs');
+  const rows  = getExportRows(data);
+  const wsData = [
+    columns.map(c => c.label),
+    ...rows.map(row => columns.map(c => {
+      const v = row[c.key];
+      return c.type === 'number' ? (parseFloat(v) || 0) : String(v ?? '');
+    })),
+  ];
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols'] = columns.map(c => ({ wch: Math.max(c.label.length + 2, 14) }));
+  XLSX.utils.book_append_sheet(wb, ws, 'Report');
+  XLSX.writeFile(wb, `${sanitize(title)}.xlsx`);
+}
+
+export function exportPDF(data, columns, title) {
+  const rows  = getExportRows(data);
+  const doc   = new jsPDF({ orientation: 'landscape', unit: 'mm' });
+  const pageW = doc.internal.pageSize.getWidth();
+  const P     = [92, 48, 48];
+  const ts    = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+
+  doc.setFillColor(...P);
+  doc.rect(0, 0, pageW, 18, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(13); doc.setFont('helvetica', 'bold');
+  doc.text(title, 14, 12);
+  doc.setFontSize(7); doc.setFont('helvetica', 'normal');
+  doc.text(`Generated: ${ts}  ·  ${rows.length} rows`, pageW - 14, 12, { align: 'right' });
+
+  autoTable(doc, {
+    startY: 22,
+    head: [columns.map(c => c.label)],
+    body: rows.map(row => columns.map(c => String(row[c.key] ?? ''))),
+    theme: 'grid',
+    headStyles: { fillColor: P, textColor: 255, fontStyle: 'bold', fontSize: 8 },
+    bodyStyles: { fontSize: 7, textColor: [30, 30, 30] },
+    alternateRowStyles: { fillColor: [249, 247, 247] },
+    styles: { cellPadding: 2.5, overflow: 'linebreak' },
+    margin: { left: 10, right: 10 },
+    didDrawPage: ({ pageNumber }) => {
+      doc.setFontSize(6); doc.setTextColor(150);
+      doc.text(`Page ${pageNumber}  ·  ${title}`, pageW / 2, doc.internal.pageSize.getHeight() - 5, { align: 'center' });
+    },
+  });
+  doc.save(`${sanitize(title)}.pdf`);
+}
+
+export async function handleExport(format, data, columns, title) {
+  if (!data?.length) throw new Error('No data to export');
+  if (format === 'csv')         exportCSV(data, columns, title);
+  else if (format === 'excel') await exportExcel(data, columns, title);
+  else if (format === 'pdf')    exportPDF(data, columns, title);
 }

@@ -7,7 +7,7 @@ import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
 import Modal from "../../components/Modal";
 
-const initialSystemForm = { role: "sanchalak", email: "", password: "", full_name: "", member_id: null, gender: "Yuvak", assigned_mandal_id: "", assigned_mandals: [] };
+const initialSystemForm = { role: "sanchalak", email: "", password: "", full_name: "", member_id: null, gender: "Yuvak", assigned_mandal_id: "", assigned_kshetra_id: "", assigned_mandals: [] };
 const initialProjectForm = { user_id: null, member_id: null, member_data: null, project_id: "", role: "volunteer", scope_type: "Mandal", selected_kshetra: "" };
 
 export default function UserManager() {
@@ -36,7 +36,7 @@ export default function UserManager() {
     queryFn: async () => {
       // 🛡️ Wrapped in withTimeout
       const [usersRes, mandalsRes, projectsRes, kshetrasRes, assignmentsRes] = await Promise.all([
-        withTimeout(supabase.from("user_profiles").select(`id, full_name, email, role, gender, member_id, assigned_mandal_id, expires_at, members!user_profiles_member_id_fkey(name, surname), mandals!user_profiles_assigned_mandal_id_fkey(name)`).order("created_at", { ascending: false })),
+        withTimeout(supabase.from("user_profiles").select(`id, full_name, email, role, gender, member_id, assigned_mandal_id, assigned_kshetra_id, expires_at, members!user_profiles_member_id_fkey(name, surname), mandals!user_profiles_assigned_mandal_id_fkey(name)`).order("created_at", { ascending: false })),
         withTimeout(supabase.from("mandals").select("id, name, kshetra_id").order("name")),
         withTimeout(supabase.from("projects").select("id, name").eq("is_active", true)),
         withTimeout(supabase.from("kshetras").select("id, name").order("name")),
@@ -107,7 +107,18 @@ export default function UserManager() {
       if (m.designation === "Nirikshak") role = "nirikshak";
       if (m.designation === "Nirdeshak") role = "nirdeshak";
 
-      setSystemForm((prev) => ({ ...prev, member_id: m.id, full_name: fullName, email: m.mobile ? `${m.mobile}@keshav.app` : "", role, gender: m.gender || "Yuvak", assigned_mandal_id: m.mandal_id || "", assigned_mandals: m.mandal_id ? [m.mandal_id] : [] }));
+      const derivedKshetraId = mandals.find((mm) => mm.id === m.mandal_id)?.kshetra_id || "";
+      setSystemForm((prev) => ({
+        ...prev,
+        member_id: m.id,
+        full_name: fullName,
+        email: m.mobile ? `${m.mobile}@keshav.app` : "",
+        role,
+        gender: m.gender || "Yuvak",
+        assigned_mandal_id: m.mandal_id || "",
+        assigned_kshetra_id: derivedKshetraId,
+        assigned_mandals: m.mandal_id ? [m.mandal_id] : [],
+      }));
     } else if (isProjectModalOpen) {
       const existingUser = users.find((u) => u.member_id === m.id);
       if (existingUser) {
@@ -119,10 +130,59 @@ export default function UserManager() {
       }
     }
     setMemberResults([]);
-  }, [isSystemModalOpen, isProjectModalOpen, users]);
+  }, [isSystemModalOpen, isProjectModalOpen, users, mandals]);
+
+  // Keep assigned_kshetra_id in sync with assigned_mandal_id (prevents empty scope fields)
+  useEffect(() => {
+    if (!isSystemModalOpen) return;
+
+    // Global admins should not carry scope fields
+    if (systemForm.role === 'admin') {
+      if (systemForm.assigned_mandal_id || systemForm.assigned_kshetra_id || systemForm.assigned_mandals.length > 0) {
+        setSystemForm((prev) => ({ ...prev, assigned_mandal_id: '', assigned_kshetra_id: '', assigned_mandals: [] }));
+      }
+      return;
+    }
+
+    // For nirikshak, ensure we always have a primary assigned_mandal_id
+    if (systemForm.role === 'nirikshak' && !systemForm.assigned_mandal_id && systemForm.assigned_mandals.length > 0) {
+      setSystemForm((prev) => ({ ...prev, assigned_mandal_id: prev.assigned_mandals[0] }));
+      return;
+    }
+
+    if (!systemForm.assigned_mandal_id) {
+      if (systemForm.assigned_kshetra_id) {
+        setSystemForm((prev) => ({ ...prev, assigned_kshetra_id: '' }));
+      }
+      return;
+    }
+
+    const kId = mandals.find((m) => m.id === systemForm.assigned_mandal_id)?.kshetra_id || '';
+    if (kId && kId !== systemForm.assigned_kshetra_id) {
+      setSystemForm((prev) => ({ ...prev, assigned_kshetra_id: kId }));
+    }
+  }, [isSystemModalOpen, systemForm.role, systemForm.assigned_mandal_id, systemForm.assigned_mandals, systemForm.assigned_kshetra_id, mandals]);
 
   const systemMutation = useMutation({
     mutationFn: async () => {
+      const role = (systemForm.role || '').toLowerCase();
+
+      let assignedMandalId = systemForm.assigned_mandal_id || '';
+      if (role === 'nirikshak' && !assignedMandalId && systemForm.assigned_mandals.length > 0) {
+        assignedMandalId = systemForm.assigned_mandals[0];
+      }
+
+      const derivedKshetraId = assignedMandalId
+        ? (mandals.find((m) => m.id === assignedMandalId)?.kshetra_id || '')
+        : '';
+      const assignedKshetraId = systemForm.assigned_kshetra_id || derivedKshetraId;
+
+      // Enforce scope fields for non-admin roles to avoid downstream access issues
+      if (role !== 'admin') {
+        if (!assignedMandalId) throw new Error('Assigned Mandal is required for this role.');
+        if (!assignedKshetraId) throw new Error('Assigned Kshetra could not be determined. Please select a Mandal with a valid Kshetra.');
+      }
+
       if (!editingId) {
         const password = systemForm.password || Math.random().toString(36).slice(-8) + "Aa1@";
         
@@ -132,11 +192,17 @@ export default function UserManager() {
         );
         if (authError && !authError.message.includes("already registered")) throw authError;
         
-        await ghostClient.auth.signOut();
         const userId = auth?.user?.id || crypto.randomUUID();
 
         await withTimeout(supabase.from("user_profiles").insert({
-          id: userId, full_name: systemForm.full_name.trim(), role: systemForm.role, email: systemForm.email.trim(), gender: systemForm.gender, member_id: systemForm.member_id || null, assigned_mandal_id: systemForm.role === "sanchalak" ? systemForm.assigned_mandal_id || null : null,
+          id: userId,
+          full_name: systemForm.full_name.trim(),
+          role: systemForm.role,
+          email: systemForm.email.trim(),
+          gender: systemForm.gender,
+          member_id: systemForm.member_id || null,
+          assigned_mandal_id: role === 'admin' ? null : assignedMandalId,
+          assigned_kshetra_id: role === 'admin' ? null : assignedKshetraId,
         }));
 
         if (systemForm.role === "nirikshak" && systemForm.assigned_mandals.length > 0) {
@@ -145,7 +211,12 @@ export default function UserManager() {
         }
         setCreatedCredentials([{ name: systemForm.full_name, email: systemForm.email, password }]);
       } else {
-        await withTimeout(supabase.from("user_profiles").update({ role: systemForm.role, full_name: systemForm.full_name?.trim(), assigned_mandal_id: systemForm.role === "sanchalak" ? systemForm.assigned_mandal_id : null }).eq("id", editingId));
+        await withTimeout(supabase.from("user_profiles").update({
+          role: systemForm.role,
+          full_name: systemForm.full_name?.trim(),
+          assigned_mandal_id: role === 'admin' ? null : assignedMandalId,
+          assigned_kshetra_id: role === 'admin' ? null : assignedKshetraId,
+        }).eq("id", editingId));
         await withTimeout(supabase.from("nirikshak_assignments").delete().eq("nirikshak_id", editingId));
         if (systemForm.role === "nirikshak" && systemForm.assigned_mandals.length > 0) {
           const assignments = systemForm.assigned_mandals.map((mId) => ({ nirikshak_id: editingId, mandal_id: mId }));
@@ -177,7 +248,6 @@ export default function UserManager() {
           
           const { data: auth, error: authError } = await withTimeout(ghostClient.auth.signUp({ email, password }));
           if (authError) throw authError;
-          await ghostClient.auth.signOut();
           
           targetUserId = auth.user.id;
           await withTimeout(supabase.from("user_profiles").insert({ id: targetUserId, full_name: `${m.name} ${m.surname}`, email, role: "volunteer", gender: m.gender, member_id: m.id }));
@@ -214,7 +284,6 @@ export default function UserManager() {
 
         const { data: auth, error } = await withTimeout(ghostClient.auth.signUp({ email, password }));
         if (error) throw error;
-        await ghostClient.auth.signOut();
         
         const userId = auth.user.id;
         await withTimeout(supabase.from("user_profiles").insert({ id: userId, full_name: `Taker ${suffix}`, role: "taker", email, gender: takerForm.gender, expires_at: expiresAt }));
@@ -258,7 +327,17 @@ export default function UserManager() {
       const { data } = await withTimeout(supabase.from("nirikshak_assignments").select("mandal_id").eq("nirikshak_id", user.id));
       if (data) assignedMandals = data.map((d) => d.mandal_id);
     }
-    setSystemForm({ role: user.role, assigned_mandal_id: user.assigned_mandal_id || "", email: user.email, full_name: user.full_name, assigned_mandals: assignedMandals, member_id: user.member_id, gender: user.gender || "Yuvak", password: "" });
+    setSystemForm({
+      role: user.role,
+      assigned_mandal_id: user.assigned_mandal_id || "",
+      assigned_kshetra_id: user.assigned_kshetra_id || (mandals.find((m) => m.id === user.assigned_mandal_id)?.kshetra_id || ""),
+      email: user.email,
+      full_name: user.full_name,
+      assigned_mandals: assignedMandals,
+      member_id: user.member_id,
+      gender: user.gender || "Yuvak",
+      password: "",
+    });
     setSearchTerm(user.full_name);
     setIsSystemModalOpen(true);
   };
@@ -412,7 +491,7 @@ export default function UserManager() {
             </div>
           </div>
 
-          {systemForm.role === "sanchalak" && (
+          {(systemForm.role === "sanchalak" || systemForm.role === "nirdeshak") && (
              <div>
                <label className={labelClass}>Assigned Mandal</label>
                <select className={`${inputClass} appearance-none`} value={systemForm.assigned_mandal_id} onChange={(e) => setSystemForm({ ...systemForm, assigned_mandal_id: e.target.value })}>

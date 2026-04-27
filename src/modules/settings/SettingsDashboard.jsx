@@ -1,6 +1,7 @@
 import React from 'react';
 import { Settings } from 'lucide-react';
 import TagManager from './TagManager';
+import AbsenceCategoryManager from './AbsenceCategoryManager';
 
 export default function SettingsDashboard() {
   return (
@@ -15,8 +16,14 @@ export default function SettingsDashboard() {
       </div>
 
       {/* CONTENT */}
-      <div className="animate-in fade-in slide-in-from-bottom-2 duration-200">
-         <TagManager />
+      <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-200">
+        <div className="bg-white p-4 rounded-md border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+          <AbsenceCategoryManager />
+        </div>
+        
+        <div className="bg-white p-4 rounded-md border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+          <TagManager />
+        </div>
       </div>
       
     </div>

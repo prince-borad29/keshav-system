@@ -97,7 +97,7 @@ export default function Sidebar({ isOpen, onClose }) {
               <NavItem to="/id" icon={QrCode} label="QR Code" />
               <NavItem to="/organization" icon={Shield} label="Organization" />
               <NavItem to="/settings" icon={Tags} label="Tags" />
-              <NavItem to="/reports" icon={File} label="Tags" />
+              <NavItem to="/reports" icon={File} label="Reports" />
               {/* <div className="pt-5 pb-2 px-3 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Modules</div> */}
             </>
           )}

@@ -139,7 +139,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         id, name, surname, internal_code, gender, designation, mobile,
         mandals!inner ( id, name, kshetra_id ),
         ${filters.tag_id ? 'member_tags!inner(tag_id),' : ''}
-        ${scopeData.canRegister || isGlobal ? `project_registrations ( project_id, external_qr )` : `project_registrations!inner ( project_id, external_qr )`}
+        ${project.registration_open && (scopeData.canRegister || isGlobal) ? `project_registrations ( project_id, external_qr )` : `project_registrations!inner ( project_id, external_qr )`}
       `;
 
       let query = supabase.from('members').select(selectString);

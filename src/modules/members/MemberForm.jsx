@@ -20,7 +20,7 @@ const DESIGNATION_HIERARCHY = {
 
 const INITIAL_FORM = {
   name: '', father_name: '', surname: '', gender: 'Yuvak',
-  dob: '', mobile: '', address: '', designation: 'Yuvak',
+  dob: '', mobile: '', designation: 'Yuvak',
   kshetra_id: '', mandal_id: '', internal_code: '', is_guest: false
 };
 
@@ -59,8 +59,7 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
         setFormData({
           ...initialData,
           kshetra_id: initialData.mandals?.kshetra_id || '', 
-          dob: initialData.dob || '',
-          address: initialData.address || '',            
+          dob: initialData.dob || '',           
           father_name: initialData.father_name || '',   
           mobile: initialData.mobile || '',             
         });
@@ -156,12 +155,9 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
       if (!/^\d{10}$/.test(formData.mobile.trim())) {
         throw new Error("Mobile Number must be 10 digits.");
       }
-      if (!formData.dob) {
-        throw new Error("Date of Birth is required.");
-      }
-      if (!formData.address?.trim()) {
-        throw new Error("Address is required.");
-      }
+      // if (!formData.dob) {
+      //   throw new Error("Date of Birth is required.");
+      // }
       if (!formData.mandal_id) {
         throw new Error("Mandal (Local) is required.");
       }
@@ -175,7 +171,7 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
       const payload = {
         name: formData.name, father_name: formData.father_name, surname: formData.surname,
         gender: formData.gender, dob: formData.dob || null, mobile: formData.mobile,
-        address: formData.address, designation: formData.designation, 
+        designation: formData.designation, 
         mandal_id: formData.mandal_id, 
         internal_code: formData.internal_code, is_guest: formData.is_guest, updated_at: new Date()
       };
@@ -228,29 +224,27 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
 
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
+             <div className="col-span-2 sm:col-span-1">
+              <label className={labelClass}>Surname <span className="text-red-500">*</span></label>
+              <input  className={inputClass} placeholder="Surname" value={formData.surname} onChange={e => setFormData({...formData, surname: e.target.value})} />
+            </div>
             <div className="col-span-2 sm:col-span-1">
-              <label className={labelClass}>First Name <span className="text-red-500">*</span></label>
-              <input  className={inputClass} placeholder="First Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+              <label className={labelClass}>Name <span className="text-red-500">*</span></label>
+              <input  className={inputClass} placeholder="Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
             </div>
             <div className="col-span-2 sm:col-span-1">
               <label className={labelClass}>Father's Name <span className="text-red-500">*</span></label>
               <input  className={inputClass} placeholder="Father's Name" value={formData.father_name} onChange={e => setFormData({...formData, father_name: e.target.value})} />
             </div>
             <div className="col-span-2 sm:col-span-1">
-              <label className={labelClass}>Surname <span className="text-red-500">*</span></label>
-              <input  className={inputClass} placeholder="Last Name" value={formData.surname} onChange={e => setFormData({...formData, surname: e.target.value})} />
-            </div>
-            <div className="col-span-2 sm:col-span-1">
               <label className={labelClass}>Mobile Number <span className="text-red-500">*</span></label>
               <input  type="tel" className={inputClass} placeholder="10-digit number" value={formData.mobile} onChange={e => setFormData({...formData, mobile: e.target.value})} />
             </div>
             <div className="col-span-2 sm:col-span-1">
-              <label className={labelClass}>Date of Birth <span className="text-red-500">*</span></label>
+              <label className={labelClass}>Date of Birth 
+                {/* <span className="text-red-500">*</span> */}
+                </label>
               <input  type="date" className={inputClass} value={formData.dob} onChange={e => setFormData({...formData, dob: e.target.value})} />
-            </div>
-            <div className="col-span-2">
-              <label className={labelClass}>Address <span className="text-red-500">*</span></label>
-              <input  type="text" className={inputClass} placeholder="Address" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} />
             </div>
           </div>
           

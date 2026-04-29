@@ -65,10 +65,6 @@ export default function MemberProfile({ member, isOpen, onClose }) {
             <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1.5"><User size={12}/> Gender</label>
             <p className="text-sm font-semibold text-gray-900">{member.gender}</p>
           </div>
-          <div className="col-span-2">
-            <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1.5"><MapPin size={12}/> Address</label>
-            <p className="text-sm font-medium text-gray-700">{member.address || "No address provided"}</p>
-          </div>
         </div>
 
         <div className="h-px bg-gray-100 w-full" />

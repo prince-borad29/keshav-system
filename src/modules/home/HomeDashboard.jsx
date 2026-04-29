@@ -18,7 +18,6 @@ export default function HomeDashboard() {
   const role = (profile?.role || "").toLowerCase();
   const isAdmin = role === "admin";
 
-  // Grab the ID however it's named in your DB
   const profileId = profile?.id ?? profile?.user_id ?? profile?.uuid;
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -75,7 +74,8 @@ export default function HomeDashboard() {
 
       let regQuery = supabase
         .from("projects")
-        .select("id, name, type, allowed_gender")
+        // 🛡️ Added 'registration_open' so the destination page has all required properties
+        .select("id, name, type, allowed_gender, registration_open") 
         .eq("is_active", true)
         .eq("registration_open", true)
         .order("created_at", { ascending: false });
@@ -103,11 +103,10 @@ export default function HomeDashboard() {
 
       return { primaryEvent, primaryProject, openRegistrations: validRegs, recentProjects: validRecent };
     },
-    enabled: !!profileId, // uses profileId which checks all possible field names
+    enabled: !!profileId,
     staleTime: 1000 * 60 * 2,
   });
 
-  // Profile exists but we can't find its ID field — show error instead of infinite spinner
   if (profile && !profileId) {
     return (
       <div className="p-12 text-center bg-amber-50 rounded-md border border-amber-200 mt-10 max-w-lg mx-auto">
@@ -245,7 +244,8 @@ export default function HomeDashboard() {
                 {openRegistrations.map((p) => (
                   <div
                     key={p.id}
-                    onClick={() => navigate("/registration")}
+                    // 🛡️ Pass the actual project object directly via router state
+                    onClick={() => navigate("/registration", { state: { autoSelectProject: p } })}
                     className="p-4 flex items-center justify-between hover:bg-gray-50 cursor-pointer transition-colors group"
                   >
                     <div className="flex items-center gap-3">

@@ -400,6 +400,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       let query = supabase.from('members').select('id');
       if (bulkConfig.type === 'designation') query = query.eq('designation', bulkConfig.value);
       if (bulkConfig.type === 'tag') query = query.eq('member_tags.tag_id', bulkConfig.value).select('id, member_tags!inner(tag_id)');
+      if (bulkConfig.type === 'mandal') query = query.eq('mandal_id', bulkConfig.value);
 
       const { data: membersToAdd, error: memError } = await withTimeout(query, 15000);
       if (memError) throw memError;
@@ -486,7 +487,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           </div>
           
           <div className="flex items-center justify-end gap-1.5 shrink-0">
-            {canRegister && project.registration_open && <Button variant="secondary" size="sm" onClick={() => setIsMemberFormOpen(true)} className="!px-2 sm:!px-3"><Plus size={14} className="sm:mr-1.5"/> <span className="hidden sm:inline">Add Member</span></Button>}
+            {canRegister && (project.registration_open || isAdmin) && <Button variant="secondary" size="sm" onClick={() => setIsMemberFormOpen(true)} className="!px-2 sm:!px-3"><Plus size={14} className="sm:mr-1.5"/> <span className="hidden sm:inline">Add Member</span></Button>}
             {isAdmin && <Button variant="secondary" size="sm" onClick={() => setIsBulkModalOpen(true)} className="!px-2 sm:!px-3 hidden sm:flex"><Layers size={14} className="mr-1.5"/> Bulk Add</Button>}
             <Button variant="secondary" size="sm" onClick={() => setIsExportModalOpen(true)} className="!px-2 sm:!px-3"><Download size={14} className="sm:mr-1.5"/> <span className="hidden sm:inline">Export</span></Button>
 
@@ -568,7 +569,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
                     </button>
                   )}
 
-                  {canRegister && project.registration_open ? (
+                  {canRegister && (project.registration_open || isAdmin) ? (
                     <Button size="sm" variant={m.is_registered ? "secondary" : "primary"} onClick={() => toggleRegistration.mutate(m)} disabled={isProcessing} className="w-16 sm:w-24 text-[10px] sm:text-xs !px-0 h-7 sm:h-8">
                       {isProcessing ? <Loader2 size={12} className="animate-spin text-gray-400"/> : m.is_registered ? "Remove" : <span className="flex items-center gap-1"><Plus size={12} className="hidden sm:block"/> Add</span>}
                     </Button>
@@ -846,19 +847,21 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
                 <select className="w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030]" value={bulkConfig.type} onChange={e => setBulkConfig({ type: e.target.value, value: '' })}>
                   <option value="designation">By Designation</option>
                   <option value="tag">By Tag</option>
+                  <option value="mandal">By Mandal</option>
                 </select>
               </div>
               <div>
                 <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5">Select Value</label>
                 <select required className="w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030]" value={bulkConfig.value} onChange={e => setBulkConfig({...bulkConfig, value: e.target.value})}>
                   <option value="">Select...</option>
-                  {bulkConfig.type === 'designation' 
-                    ? ['Nirdeshak', 'Nirikshak', 'Sanchalak', 'Member', 'Sah Sanchalak', 'Sampark Karyakar'].map(d => <option key={d} value={d}>{d}</option>)
-                    : dropdowns?.tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)
-                  }
+                  {bulkConfig.type === 'designation' && ['Nirdeshak', 'Nirikshak', 'Sanchalak', 'Member', 'Sah Sanchalak', 'Sampark Karyakar'].map(d => <option key={d} value={d}>{d}</option>)}
+                  {bulkConfig.type === 'tag' && dropdowns?.tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  {bulkConfig.type === 'mandal' && dropdowns?.mandals.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                 </select>
               </div>
             </div>
+
+            
             
             <div className="pt-4 border-t border-gray-100 flex justify-end gap-2">
               <Button variant="secondary" type="button" onClick={() => setIsBulkModalOpen(false)}>Cancel</Button>

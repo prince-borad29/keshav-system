@@ -531,7 +531,6 @@ export default function UserManager() {
               <label className={labelClass}>User / Member</label>
               {!editingId ? (
                 <div className="relative">
-                  {/* 🛡️ X Clear Button */}
                   <input className={`${inputClass} pr-9`} placeholder="Search database..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                   {searchTerm && !isSearching && (
                     <button type="button" onClick={() => setSearchTerm("")} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-700 transition-colors">
@@ -561,21 +560,35 @@ export default function UserManager() {
               </select>
             </div>
           </div>
-          <div className="bg-gray-50 p-4 rounded-md border border-gray-200">
-            <label className={labelClass}>Data Scope</label>
-            <select className={`${inputClass} appearance-none`} value={projectForm.scope_type} onChange={(e) => setProjectForm({ ...projectForm, scope_type: e.target.value })}>
-              <option value="Mandal">Mandal Level</option>
-              <option value="Kshetra">Kshetra Level</option>
-              <option value="Global">Global</option>
-            </select>
+          
+          {/* 🌟 NEW: Added the Project Role dropdown here! */}
+          <div className="bg-gray-50 p-4 rounded-md border border-gray-200 grid grid-cols-2 gap-4">
+            <div>
+              <label className={labelClass}>Project Role</label>
+              <select className={`${inputClass} appearance-none`} value={projectForm.role} onChange={(e) => setProjectForm({ ...projectForm, role: e.target.value })}>
+                <option value="volunteer">Volunteer</option>
+                <option value="editor">Editor</option>
+                <option value="coordinator">Coordinator</option>
+                <option value="project_admin">Project Admin</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Data Scope</label>
+              <select className={`${inputClass} appearance-none`} value={projectForm.scope_type} onChange={(e) => setProjectForm({ ...projectForm, scope_type: e.target.value })}>
+                <option value="Mandal">Mandal Level</option>
+                <option value="Kshetra">Kshetra Level</option>
+                <option value="Global">Global</option>
+              </select>
+            </div>
           </div>
+
           <div className="pt-4 border-t border-gray-100 flex justify-end gap-2">
             <Button variant="secondary" onClick={resetForms} type="button">Cancel</Button>
             <Button type="submit" disabled={projectStaffMutation.isPending}>{projectStaffMutation.isPending ? <Loader2 className="animate-spin" size={16}/> : 'Save Assignment'}</Button>
           </div>
         </form>
       </Modal>
-
+      
       <Modal isOpen={isFieldModalOpen} onClose={resetForms} title="Generate Temp Takers">
         <form onSubmit={(e) => { e.preventDefault(); takerMutation.mutate(); }} className="space-y-4">
           <div className="grid grid-cols-3 gap-4">

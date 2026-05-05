@@ -15,14 +15,14 @@ export default function AttendanceDashboard({ preSelectedProject = null, preSele
   const [showSummary, setShowSummary] = useState(false);
   const [drillDownMandal, setDrillDownMandal] = useState(null);
   const [IsScannerOpen,setIsScannerOpen] = useState(false);
-  const [userScope, setUserScope] = useState({ role: '', gender: '', mandalIds: [], kshetraId: null, isGlobal: false });
+  const [userScope, setUserScope] = useState({ userId: null, role: '', gender: '', mandalIds: [], kshetraId: null, isGlobal: false });
 
   useEffect(() => {
     const fetchUserScope = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       const { data: profile } = await supabase.from('user_profiles').select('role, gender, assigned_mandal_id, assigned_kshetra_id').eq('id', user.id).single();
-      let scope = { role: profile.role, gender: profile.gender || null, mandalIds: [], kshetraId: null, isGlobal: profile.role === 'admin' };
+      let scope = { userId: user.id, role: profile.role, gender: profile.gender || null, mandalIds: [], kshetraId: null, isGlobal: profile.role === 'admin' };
       
       if (profile.role === 'sanchalak') scope.mandalIds = [profile.assigned_mandal_id];
       else if (profile.role === 'nirikshak') {
@@ -34,13 +34,11 @@ export default function AttendanceDashboard({ preSelectedProject = null, preSele
       } else if (profile.role === 'nirdeshak') {
          let kId = profile.assigned_kshetra_id;
          
-         // Fallback: If assigned_kshetra_id is null, try to infer from assigned_mandal_id
          if (!kId && profile.assigned_mandal_id) {
            const { data: mandalData } = await supabase.from('mandals').select('kshetra_id').eq('id', profile.assigned_mandal_id).single();
            if (mandalData) kId = mandalData.kshetra_id;
          }
          
-         // Fetch all mandals in the kshetra
          if (kId) {
            const { data: mandals } = await supabase.from('mandals').select('id').eq('kshetra_id', kId);
            scope.mandalIds = mandals?.map(m => m.id) || [];
@@ -70,6 +68,17 @@ export default function AttendanceDashboard({ preSelectedProject = null, preSele
     enabled: !!selectedProject && !selectedEvent
   });
 
+  // 🛡️ NEW: Dynamically fetch Project Assignment
+  const { data: projectAssignment } = useQuery({
+    queryKey: ['project-role', selectedProject?.id, userScope?.userId],
+    queryFn: async () => {
+      if (!selectedProject || !userScope?.userId) return null;
+      const { data } = await supabase.from('project_assignments').select('role').eq('project_id', selectedProject.id).eq('user_id', userScope.userId).maybeSingle();
+      return data?.role || null;
+    },
+    enabled: !!selectedProject && !!userScope?.userId
+  });
+
   const handleBack = () => {
     if (isScanning) { setIsScanning(false); return; }
     if (onBack) onBack();
@@ -80,6 +89,12 @@ export default function AttendanceDashboard({ preSelectedProject = null, preSele
   if (isScanning) {
     return <ScannerView eventName={selectedEvent?.name} onBack={() => setIsScanning(false)} />;
   }
+
+  // 🛡️ NEW: Calculate unified permissions
+  const normalizedProjRole = (projectAssignment || '').toLowerCase().trim();
+  const canMarkAttendance = 
+    ['admin', 'taker', 'sanchalak', 'nirikshak', 'nirdeshak'].includes(userScope.role) || 
+    ['coordinator', 'editor', 'project_admin'].includes(normalizedProjRole);
 
   return (
     <div className="space-y-6 pb-10">
@@ -120,14 +135,24 @@ export default function AttendanceDashboard({ preSelectedProject = null, preSele
             </div>
             <div className="flex gap-2">
               <Button variant="secondary" onClick={() => setShowSummary(true)} className="!px-3"><BarChart2 size={16} strokeWidth={2}/></Button>
-              <Button icon={QrCode} onClick={() => setIsScannerOpen(true)}>Scan</Button>
+              {canMarkAttendance && (
+                <Button icon={QrCode} onClick={() => setIsScannerOpen(true)}>Scan</Button>
+              )}
             </div>
           </div>
 
           <AttendanceSummary isVisible={showSummary} onClose={() => setShowSummary(false)} event={selectedEvent} project={selectedProject} userScope={userScope} onMandalClick={(id, name) => { setDrillDownMandal({id, name}); setShowSummary(false); }} />
 
           <div className="flex-1">
-            <ManualList event={selectedEvent} project={selectedProject} mandalFilterId={drillDownMandal?.id} mandalFilterName={drillDownMandal?.name} onBack={() => setDrillDownMandal(null)} canMarkAttendance={userScope.role === 'admin' || userScope.role === 'sanchalak' || userScope.role === 'nirikshak'} />
+            <ManualList 
+              event={selectedEvent} 
+              project={selectedProject} 
+              mandalFilterId={drillDownMandal?.id} 
+              mandalFilterName={drillDownMandal?.name} 
+              onBack={() => setDrillDownMandal(null)} 
+              // 🛡️ Pass down the unified permission flag!
+              canMarkAttendance={canMarkAttendance} 
+            />
           </div>
         </div>
       )}

@@ -15,6 +15,7 @@ import {
   Trash2,
   SortAsc,
   Plus,
+  RefreshCw
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import toast from "react-hot-toast";
@@ -25,7 +26,6 @@ import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-// 🛡️ MEMORY-SAFE TIMEOUT: Guaranteed to never freeze the app.
 const fetchWithTimeout = async (promise, ms = 5000) => {
   let timeoutId;
   const timeoutPromise = new Promise((_, reject) => {
@@ -36,7 +36,6 @@ const fetchWithTimeout = async (promise, ms = 5000) => {
   );
 };
 
-// ⚡ OPTIMIZED ROW
 const MemberRow = React.memo(
   ({ member, isPresent, isSyncing, canMark, onMark }) => {
     return (
@@ -120,12 +119,7 @@ export default function Attendance({
   const QUERY_KEY = useMemo(() => ["attendance", eventId], [eventId]);
 
   const isAdmin = (profile?.role || "").toLowerCase() === "admin";
-  const canMark = useMemo(() => {
-    if (propReadOnly) return false;
-    const role = (profile?.role || "").toLowerCase().trim();
-    return ["admin", "taker", "project_admin"].includes(role);
-  }, [profile?.role, propReadOnly]);
-
+  
   const [initLoading, setInitLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -133,6 +127,7 @@ export default function Attendance({
   const [event, setEvent] = useState(null);
   const [project, setProject] = useState(null);
   const [members, setMembers] = useState([]);
+  const [projectAssignment, setProjectAssignment] = useState(null); // 🛡️ NEW: Track Project Role
   const [scopePermissions, setScopePermissions] = useState({
     mandalIds: [],
     kshetraId: null,
@@ -159,9 +154,15 @@ export default function Attendance({
   const [sortConfig, setSortConfig] = useState(defaultSortConfig);
   const [draftSortConfig, setDraftSortConfig] = useState(defaultSortConfig);
 
-  // ============================================================================
-  // 1. SINGLE SOURCE OF TRUTH
-  // ============================================================================
+  // 🛡️ DYNAMIC PERMISSION CHECK
+  const canMark = useMemo(() => {
+    if (propReadOnly) return false;
+    const sysRole = (profile?.role || "").toLowerCase().trim();
+    if (["admin", "taker", "sanchalak", "nirikshak", "nirdeshak"].includes(sysRole)) return true;
+    if (["coordinator", "editor", "project_admin"].includes(projectAssignment)) return true;
+    return false;
+  }, [profile?.role, propReadOnly, projectAssignment]);
+
   const { data: attendanceData = [], isLoading: attendanceLoading } = useQuery({
     queryKey: QUERY_KEY,
     queryFn: async () => {
@@ -183,9 +184,6 @@ export default function Attendance({
     return map;
   }, [attendanceData]);
 
-  // ============================================================================
-  // 2. WEBSOCKET SYNC
-  // ============================================================================
   useEffect(() => {
     if (!eventId) return;
 
@@ -226,9 +224,6 @@ export default function Attendance({
     };
   }, [eventId, queryClient, QUERY_KEY]);
 
-  // ============================================================================
-  // 3. STRICT SERVER-FIRST MARKING (No Freezing, No Queues)
-  // ============================================================================
   const [activelySyncing, setActivelySyncing] = useState(new Set());
 
   const markAttendance = useCallback(async (memberId) => {
@@ -242,18 +237,16 @@ export default function Attendance({
     try {
       let result;
       if (isPresent) {
-        // Pure Supabase call. No timeout hacks needed anymore.
         result = await supabase.from("attendance").delete().eq("event_id", eventId).eq("member_id", memberId);
       } else {
         result = await supabase.from("attendance").upsert(
-          { event_id: eventId, member_id: memberId, scanned_at: now },
+          { event_id: eventId, member_id: memberId, scanned_at: now, marked_by: profile.id },
           { onConflict: 'event_id,member_id', ignoreDuplicates: true }
         );
       }
 
       if (result.error) throw result.error;
 
-      // Update Cache
       queryClient.setQueryData(QUERY_KEY, (oldData) => {
         if (!oldData) return [];
         if (isPresent) return oldData.filter(a => a.member_id !== memberId);
@@ -273,11 +266,8 @@ export default function Attendance({
         return next;
       });
     }
-  }, [canMark, eventId, presentMap, queryClient, QUERY_KEY, activelySyncing]);
+  }, [canMark, eventId, presentMap, queryClient, QUERY_KEY, activelySyncing, profile?.id]);
 
-  // ============================================================================
-  // DATA LOADING & STANDARD UI LOGIC
-  // ============================================================================
   const handleScan = useCallback(
     async (code) => {
       if (!canMark) return { success: false, message: "Read Only" };
@@ -333,39 +323,59 @@ export default function Attendance({
         const cleanRole = (profile?.role || "").toLowerCase().trim();
         let allowedMandalIds = [];
         let allowedKshetraId = null;
+        let isGlobalScope = cleanRole === "admin" || cleanRole === "taker";
+        let fetchedProjectRole = null;
 
-        if (cleanRole === "sanchalak") {
-          const mId = profile.assigned_mandal_id || profile.mandal_id;
-          if (mId) allowedMandalIds = [mId];
-        } else if (cleanRole === "nirikshak") {
-          const { data: assigns } = await supabase
-            .from("nirikshak_assignments")
-            .select("mandal_id")
-            .eq("nirikshak_id", profile.id);
-          if (assigns) allowedMandalIds = assigns.map((a) => a.mandal_id);
-          const profileMandal = profile.assigned_mandal_id || profile.mandal_id;
-          if (profileMandal) allowedMandalIds.push(profileMandal);
-          allowedMandalIds = [...new Set(allowedMandalIds)];
-        } else if (cleanRole === "nirdeshak" || cleanRole === "project_admin") {
-          allowedKshetraId = profile.assigned_kshetra_id || profile.kshetra_id;
-          if (
-            !allowedKshetraId &&
-            (profile.assigned_mandal_id || profile.mandal_id)
-          ) {
-            const mId = profile.assigned_mandal_id || profile.mandal_id;
-            const { data: mData } = await supabase
-              .from("mandals")
-              .select("kshetra_id")
-              .eq("id", mId)
-              .single();
-            if (mData) allowedKshetraId = mData.kshetra_id;
+        // 🛡️ 1. Fetch Explicit Project Assignments first
+        const { data: assignment } = await supabase
+          .from("project_assignments")
+          .select("role, data_scope, scope_mandal_ids")
+          .eq("project_id", projectId)
+          .eq("user_id", profile.id)
+          .maybeSingle();
+
+        if (assignment) {
+          fetchedProjectRole = (assignment.role || "").toLowerCase().trim();
+          const dScope = (assignment.data_scope || "").toLowerCase().trim();
+
+          if (dScope === "global") isGlobalScope = true;
+          if (dScope === "kshetra") allowedKshetraId = profile.assigned_kshetra_id || profile.kshetra_id;
+          if (dScope === "mandal") {
+            if (assignment.scope_mandal_ids?.length > 0) {
+              allowedMandalIds.push(...assignment.scope_mandal_ids);
+            } else {
+              allowedMandalIds.push(profile.assigned_mandal_id || profile.mandal_id);
+            }
           }
         }
+        
+        if (isMounted) setProjectAssignment(fetchedProjectRole); // Unlock UI
+
+        // 🛡️ 2. Fallback to System Role Scope if not already global
+        if (!isGlobalScope) {
+          if (cleanRole === "sanchalak") {
+            allowedMandalIds.push(profile.assigned_mandal_id || profile.mandal_id);
+          } else if (cleanRole === "nirikshak") {
+            const { data: assigns } = await supabase.from("nirikshak_assignments").select("mandal_id").eq("nirikshak_id", profile.id);
+            if (assigns) allowedMandalIds.push(...assigns.map((a) => a.mandal_id));
+            allowedMandalIds.push(profile.assigned_mandal_id || profile.mandal_id);
+          } else if (cleanRole === "nirdeshak" || cleanRole === "project_admin") {
+            if (!allowedKshetraId) allowedKshetraId = profile.assigned_kshetra_id || profile.kshetra_id;
+            if (!allowedKshetraId) {
+              const mId = profile.assigned_mandal_id || profile.mandal_id;
+              const { data: mData } = await supabase.from("mandals").select("kshetra_id").eq("id", mId).single();
+              if (mData) allowedKshetraId = mData.kshetra_id;
+            }
+          }
+        }
+
+        allowedMandalIds = [...new Set(allowedMandalIds.filter(Boolean))];
 
         if (isMounted)
           setScopePermissions({
             mandalIds: allowedMandalIds,
             kshetraId: allowedKshetraId,
+            isGlobal: isGlobalScope
           });
 
         const { data: regData, error: regError } = await supabase
@@ -397,12 +407,10 @@ export default function Attendance({
 
         const userGender = profile?.gender;
         const initialRoster = rawRoster.filter((m) => {
-          if (cleanRole === "admin" || cleanRole === "taker") return true;
+          if (isGlobalScope) return true;
           if (userGender && m.gender !== userGender) return false;
-          if (cleanRole === "sanchalak" || cleanRole === "nirikshak")
-            return allowedMandalIds.includes(m.mandal_id);
-          if (cleanRole === "nirdeshak" || cleanRole === "project_admin")
-            return allowedKshetraId && m.kshetra_id === allowedKshetraId;
+          if (allowedKshetraId && m.kshetra_id === allowedKshetraId) return true;
+          if (allowedMandalIds.includes(m.mandal_id)) return true;
           return false;
         });
 
@@ -539,7 +547,7 @@ export default function Attendance({
     gender: profile?.gender,
     mandalIds: scopePermissions.mandalIds,
     kshetraId: scopePermissions.kshetraId,
-    isGlobal: isAdmin,
+    isGlobal: scopePermissions.isGlobal,
   };
   const activeFilterCount = Object.values(advFilters).filter(
     (v) => v !== "",

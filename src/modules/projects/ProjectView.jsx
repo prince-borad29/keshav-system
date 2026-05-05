@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom'; // 🛡️ Added useParams
+import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Calendar, Plus, Clock, Edit3, Trash2, Star, QrCode, Loader2, Shield, AlertTriangle } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase, withTimeout } from '../../lib/supabase'; // 🛡️ Added withTimeout
-import toast from 'react-hot-toast'; // 🛡️ Added toast
+import { supabase, withTimeout } from '../../lib/supabase';
+import toast from 'react-hot-toast';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import Modal from '../../components/Modal';
@@ -12,7 +12,7 @@ import ProjectStaff from './ProjectStaff';
 import { useAuth } from "../../contexts/AuthContext"; 
 
 export default function ProjectView() {
-  const { projectId } = useParams(); // 🛡️ Extract ID from URL
+  const { projectId } = useParams(); 
   const navigate = useNavigate();
   const { profile } = useAuth(); 
   const queryClient = useQueryClient();
@@ -23,9 +23,9 @@ export default function ProjectView() {
   const [activeTab, setActiveTab] = useState('events'); 
   const [isEventFormOpen, setIsEventFormOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
-  const [eventToDelete, setEventToDelete] = useState(null); // 🛡️ Replaces confirm()
+  const [eventToDelete, setEventToDelete] = useState(null);
 
-  // 1. Fetch Project Details (Required since we only have ID from URL)
+  // 1. Fetch Project Details
   const { data: project, isLoading: loadingProject } = useQuery({
     queryKey: ['project', projectId],
     queryFn: async () => {
@@ -74,11 +74,15 @@ export default function ProjectView() {
 
   const isPast = (date) => new Date(date) < new Date().setHours(0,0,0,0);
 
-  // Capabilities
-  const isCoordinator = projectRole === 'Coordinator';
+  // 🛡️ CAPABILITIES FIX: Normalize the string to catch different casing/naming from the DB
+  const normalizedProjectRole = (projectRole || '').toLowerCase().trim();
+  
+  const isCoordinator = normalizedProjectRole === 'coordinator' || normalizedProjectRole === 'project_admin';
+  const isEditor = normalizedProjectRole === 'editor' || normalizedProjectRole === 'volunteer';
+  
   const canManageEvents = isAdmin || isCoordinator;
-  const canMarkAttendance = isAdmin || isCoordinator || projectRole === 'Editor' || projectRole === 'volunteer';
-  const canManageStaff = isAdmin || (isCoordinator && !isProjectAdminAppRole);
+  const canMarkAttendance = isAdmin || isCoordinator || isEditor;
+  const canManageStaff = isAdmin;
 
   if (loadingProject) return <div className="p-12 text-center text-gray-400"><Loader2 className="animate-spin inline mr-2" size={24} /> Loading project...</div>;
   if (!project) return <div className="p-12 text-center text-gray-400">Project not found.</div>;
@@ -154,7 +158,6 @@ export default function ProjectView() {
                     {canManageEvents && (
                       <div className="flex gap-1 ml-2 border-l border-gray-200 pl-2">
                         <button onClick={() => { setSelectedEvent(event); setIsEventFormOpen(true); }} className="p-1.5 text-gray-400 hover:text-gray-900 rounded-md hover:bg-gray-100 transition-colors"><Edit3 size={16} strokeWidth={1.5}/></button>
-                        {/* 🛡️ Replaced confirm() with Modal state */}
                         <button onClick={() => setEventToDelete(event)} className="p-1.5 text-gray-400 hover:text-red-600 rounded-md hover:bg-red-50 transition-colors"><Trash2 size={16} strokeWidth={1.5}/></button>
                       </div>
                     )}
@@ -173,7 +176,7 @@ export default function ProjectView() {
 
       <EventForm isOpen={isEventFormOpen} onClose={() => setIsEventFormOpen(false)} onSuccess={() => queryClient.invalidateQueries(['events', project.id])} projectId={project.id} initialData={selectedEvent} />
 
-      {/* 🛡️ Delete Confirmation Modal */}
+      {/* Delete Confirmation Modal */}
       <Modal isOpen={!!eventToDelete} onClose={() => setEventToDelete(null)} title="Confirm Deletion">
         <div className="space-y-4">
           <div className="bg-red-50 text-red-800 p-4 rounded-md border border-red-100 flex gap-3">

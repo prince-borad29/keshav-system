@@ -1,17 +1,17 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Loader2, User, Plus, MapPin, Lock, ArrowLeft, Users, QrCode, Database, Check, Download, Layers, X, FileText, FileSpreadsheet, Filter, Settings, Trash2, SortAsc, ChevronDown } from 'lucide-react';
+import { Search, Loader2, User, Plus, MapPin, Lock, ArrowLeft, Users, QrCode, Database, Check, Download, Layers, X, FileText, FileSpreadsheet, Filter, Settings, Trash2, SortAsc, ChevronDown, BarChart2, Shield } from 'lucide-react';
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useInView } from 'react-intersection-observer';
 import { supabase, withTimeout } from '../../lib/supabase';
 import toast from 'react-hot-toast';
 import { saveAs } from 'file-saver'; 
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import QrScanner from '../attendance/QrScanner';
 import MemberForm from '../members/MemberForm';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import Modal from '../../components/Modal';
-
-const PAGE_SIZE = 20;
 
 export default function RegistrationRoster({ project, onBack, isAdmin, profile }) { 
   const queryClient = useQueryClient();
@@ -26,6 +26,9 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
   const [isMandalExportOpen, setIsMandalExportOpen] = useState(false);
   const [isMemberFormOpen, setIsMemberFormOpen] = useState(false);
   
+  const [showSummary, setShowSummary] = useState(false);
+  const [summaryGroupBy, setSummaryGroupBy] = useState('kshetra');
+
   const defaultFilters = { kshetra_id: '', mandal_id: '', gender: '', designation: '', tag_id: '', registration_status: '' };
   const [filters, setFilters] = useState(defaultFilters);
   const [draftFilters, setDraftFilters] = useState(defaultFilters);
@@ -37,12 +40,12 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState('filter');
 
-  // 🛡️ Updated export state to support multiple mandals
   const [exportFilters, setExportFilters] = useState({ kshetra_id: '', mandal_ids: [], gender: '', designation: '', tag_id: '' });
   const [bulkConfig, setBulkConfig] = useState({ type: 'designation', value: '' });
 
   const role = (profile?.role || '').toLowerCase();
   const isGlobal = role === 'admin';
+  const canViewSummary = isGlobal || role === 'nirdeshak' || role === 'project_admin';
 
   useEffect(() => {
     let isActive = true;
@@ -68,8 +71,9 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     queryFn: async () => {
       let ids = [];
       let canRegister = false;
+      let kshetraId = null;
 
-      if (isGlobal) return { ids: [], canRegister: true };
+      if (isGlobal) return { ids: [], canRegister: true, kshetraId: null };
 
       if (role === 'sanchalak') {
         ids = [profile.assigned_mandal_id];
@@ -84,12 +88,13 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       else if (role === 'nirdeshak' || role === 'project_admin') {
         let kId = profile.assigned_kshetra_id;
         
-        // Fallback: If assigned_kshetra_id is null for nirdeshak, try to infer from assigned_mandal_id
         if (!kId && profile.assigned_mandal_id && role === 'nirdeshak') {
           const { data } = await withTimeout(supabase.from('mandals').select('kshetra_id').eq('id', profile.assigned_mandal_id).single());
           if (data) kId = data.kshetra_id;
         }
         
+        kshetraId = kId;
+
         if (kId) {
           const { data } = await withTimeout(supabase.from('mandals').select('id').eq('kshetra_id', kId));
           ids = data?.map(m => m.id) || [];
@@ -97,12 +102,13 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         
         if (role === 'project_admin') {
           const { data: assignment } = await withTimeout(supabase.from('project_assignments').select('role').eq('project_id', project.id).eq('user_id', profile.id).maybeSingle());
-          canRegister = assignment?.role === 'Coordinator';
+          const assignedRole = (assignment?.role || '').toLowerCase().trim();
+          canRegister = assignedRole === 'coordinator' || assignedRole === 'editor';
         } else {
           canRegister = true;
         }
       }
-      return { ids, canRegister };
+      return { ids, canRegister, kshetraId };
     },
     enabled: !!profile,
     staleTime: 1000 * 60 * 30
@@ -121,6 +127,86 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     refetchInterval: 5000 
   });
 
+  // 🛡️ UNBLOCKED DROPDOWNS: Now fetches for Nirdeshaks opening the summary too
+  const { data: dropdowns } = useQuery({
+    queryKey: ['admin-dropdowns'],
+    queryFn: async () => {
+      const [tRes, kRes, mRes] = await Promise.all([
+        withTimeout(supabase.from('tags').select('id, name').order('name')),
+        withTimeout(supabase.from('kshetras').select('id, name').order('name')),
+        withTimeout(supabase.from('mandals').select('id, name, kshetra_id').order('name'))
+      ]);
+      return { tags: tRes.data || [], kshetras: kRes.data || [], mandals: mRes.data || [] };
+    },
+    enabled: isExportModalOpen || isBulkModalOpen || isFilterOpen || showSummary,
+    staleTime: 1000 * 60 * 30
+  });
+
+  const { data: summaryData, isLoading: summaryLoading } = useQuery({
+    queryKey: ['registration-summary', project.id],
+    queryFn: async () => {
+      const { data, error } = await withTimeout(supabase
+        .from('project_registrations')
+        .select(`member_id, members!inner(mandal_id, mandals(id, name, kshetra_id, kshetras(name)))`)
+        .eq('project_id', project.id));
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: showSummary && canViewSummary,
+    staleTime: 1000 * 60 * 5
+  });
+
+  const filteredSummary = useMemo(() => {
+    if (!summaryData) return [];
+    if (isAdmin) return summaryData;
+    return summaryData.filter(r => r.members.mandals?.kshetra_id === scopeData?.kshetraId);
+  }, [summaryData, isAdmin, scopeData?.kshetraId]);
+
+  // 🛡️ PRE-FILL SUMMARY STATS WITH ZEROS
+  const summaryStats = useMemo(() => {
+    const groups = {};
+    let total = 0;
+
+    if (dropdowns) {
+      if (summaryGroupBy === 'mandal' || !isAdmin) {
+        let targetMandals = dropdowns.mandals;
+        if (!isAdmin && scopeData?.kshetraId) {
+          targetMandals = targetMandals.filter(m => m.kshetra_id === scopeData.kshetraId);
+        } else if (!isAdmin && scopeData?.ids?.length > 0) {
+          targetMandals = targetMandals.filter(m => scopeData.ids.includes(m.id));
+        }
+        targetMandals.forEach(m => {
+          groups[m.name] = { name: m.name, count: 0 };
+        });
+      } else {
+        dropdowns.kshetras.forEach(k => {
+          groups[k.name] = { name: k.name, count: 0 };
+        });
+      }
+    }
+
+    if (filteredSummary && filteredSummary.length > 0) {
+      filteredSummary.forEach(r => {
+         const m = r.members;
+         let groupName = (summaryGroupBy === 'mandal' || !isAdmin) 
+            ? m.mandals?.name || 'Unknown' 
+            : m.mandals?.kshetras?.name || 'Unknown';
+         
+         if (!groups[groupName]) groups[groupName] = { name: groupName, count: 0 };
+         groups[groupName].count++;
+         total++;
+      });
+    }
+    
+    return { 
+      total, 
+      list: Object.values(groups).sort((a,b) => {
+        if (b.count !== a.count) return b.count - a.count; 
+        return a.name.localeCompare(b.name); 
+      }) 
+    };
+  }, [filteredSummary, summaryGroupBy, isAdmin, dropdowns, scopeData]);
+
   const { 
     data: membersPages, 
     fetchNextPage, 
@@ -135,19 +221,21 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       if (!scopeData) return { data: [] };
       if (!isGlobal && scopeData.ids.length === 0) return { data: [] };
 
+      const forceInner = filters.registration_status === 'registered' || (!project.registration_open && !isGlobal);
+      
       let selectString = `
         id, name, surname, internal_code, gender, designation, mobile,
         mandals!inner ( id, name, kshetra_id ),
         ${filters.tag_id ? 'member_tags!inner(tag_id),' : ''}
-        ${project.registration_open && (scopeData.canRegister || isGlobal) ? `project_registrations ( project_id, external_qr )` : `project_registrations!inner ( project_id, external_qr )`}
+        ${forceInner ? `project_registrations!inner ( project_id, external_qr )` : `project_registrations ( project_id, external_qr )`}
       `;
 
       let query = supabase.from('members').select(selectString);
 
-      // When registration is closed: non-admins see only registered, admins see all
-      if (!project.registration_open && !isGlobal) {
+      if (forceInner) {
         query = query.eq('project_registrations.project_id', project.id);
       }
+
       if (!isGlobal && profile?.gender) query = query.eq('gender', profile.gender);
       
       if (!isGlobal) {
@@ -169,9 +257,11 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         query = query.order(sort.column, { ascending: sort.ascending });
       });
 
-      const from = pageParam * PAGE_SIZE;
+      const currentPageSize = filters.registration_status === 'unregistered' ? 100 : 20;
+      const from = pageParam * currentPageSize;
+      
       const { data, error } = await withTimeout(
-        query.range(from, from + PAGE_SIZE - 1).order('id', { ascending: true }).abortSignal(signal),
+        query.range(from, from + currentPageSize - 1).order('id', { ascending: true }).abortSignal(signal),
         8000
       );
 
@@ -183,13 +273,11 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       });
 
       const filteredProcessed = (() => {
-        if (!filters.registration_status) return processed;
-        if (filters.registration_status === 'registered') return processed.filter(m => m.is_registered);
         if (filters.registration_status === 'unregistered') return processed.filter(m => !m.is_registered);
         return processed;
       })();
 
-      return { data: filteredProcessed, nextPage: data.length === PAGE_SIZE ? pageParam + 1 : null };
+      return { data: filteredProcessed, nextPage: data.length === currentPageSize ? pageParam + 1 : null };
     },
     getNextPageParam: (lastPage) => lastPage.nextPage,
     enabled: !!scopeData,
@@ -199,20 +287,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
   useEffect(() => {
     if (inView && hasNextPage && !isFetchingNextPage && !isFetching && !isError) fetchNextPage();
   }, [inView, hasNextPage, isFetchingNextPage, isFetching, isError, fetchNextPage]);
-
-  const { data: dropdowns } = useQuery({
-    queryKey: ['admin-dropdowns'],
-    queryFn: async () => {
-      const [tRes, kRes, mRes] = await Promise.all([
-        withTimeout(supabase.from('tags').select('id, name').order('name')),
-        withTimeout(supabase.from('kshetras').select('id, name').order('name')),
-        withTimeout(supabase.from('mandals').select('id, name, kshetra_id').order('name'))
-      ]);
-      return { tags: tRes.data || [], kshetras: kRes.data || [], mandals: mRes.data || [] };
-    },
-    enabled: isAdmin && (isExportModalOpen || isBulkModalOpen || isFilterOpen),
-    staleTime: 1000 * 60 * 30
-  });
 
   const sortableColumns = [
     { value: 'name', label: 'First Name' },
@@ -252,6 +326,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     },
     onSuccess: (data, member) => {
       queryClient.invalidateQueries({ queryKey: ['registration-count', project.id] });
+      queryClient.invalidateQueries({ queryKey: ['registration-summary', project.id] });
       if (data.action === 'added') {
         toast.success(`${member.name} registered successfully!`);
       } else {
@@ -280,7 +355,100 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
     } catch (err) { return { success: false, type: 'error', message: "Database Error" }; }
   };
 
-  // --- 🚀 BULLETPROOF EXPORT ENGINE ---
+  const exportMasterSummary = () => {
+    const loadingToast = toast.loading("Generating Master Report...");
+    setTimeout(() => {
+      try {
+        const doc = new jsPDF();
+        doc.setFontSize(18);
+        doc.setTextColor(92, 48, 48); 
+        doc.text(`${project.name} - Registration Master`, 14, 20);
+        
+        doc.setFontSize(10);
+        doc.setTextColor(100, 100, 100);
+        doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 28);
+        
+        let grandTotalReg = 0;
+        const kshetraMandalSummary = {}; 
+        
+        // 🛡️ PRE-FILL PDF WITH ZEROS
+        if (dropdowns) {
+          let targetKshetras = dropdowns.kshetras;
+          let targetMandals = dropdowns.mandals;
+          
+          if (!isAdmin && scopeData?.kshetraId) {
+            targetKshetras = targetKshetras.filter(k => k.id === scopeData.kshetraId);
+            targetMandals = targetMandals.filter(m => m.kshetra_id === scopeData.kshetraId);
+          }
+          
+          targetKshetras.forEach(k => {
+            kshetraMandalSummary[k.name] = { total: 0, mandals: {} };
+            targetMandals.filter(m => m.kshetra_id === k.id).forEach(m => {
+              kshetraMandalSummary[k.name].mandals[m.name] = 0;
+            });
+          });
+        }
+
+        filteredSummary.forEach(r => {
+          const m = r.members;
+          const kName = m.mandals?.kshetras?.name || 'Unknown Kshetra';
+          const mName = m.mandals?.name || 'Unknown Mandal';
+
+          if (!kshetraMandalSummary[kName]) {
+            kshetraMandalSummary[kName] = { total: 0, mandals: {} };
+          }
+          if (!kshetraMandalSummary[kName].mandals[mName]) {
+             kshetraMandalSummary[kName].mandals[mName] = 0;
+          }
+
+          kshetraMandalSummary[kName].total++;
+          kshetraMandalSummary[kName].mandals[mName]++;
+          grandTotalReg++;
+        });
+
+        if (isAdmin) {
+            const summaryRows = Object.keys(kshetraMandalSummary).sort().map(kName => {
+              const d = kshetraMandalSummary[kName];
+              return [kName, d.total.toString()];
+            });
+    
+            autoTable(doc, {
+              startY: 35,
+              head: [['Kshetra Name', 'Registered Members']],
+              body: summaryRows,
+              foot: [['GRAND TOTAL', grandTotalReg.toString()]],
+              theme: 'grid',
+              headStyles: { fillColor: [92, 48, 48], textColor: 255, fontSize: 10 },
+              footStyles: { fillColor: [240, 240, 240], textColor: [92, 48, 48], fontSize: 10, fontStyle: 'bold' },
+            });
+        }
+
+        Object.keys(kshetraMandalSummary).sort().forEach((kName, index) => {
+          const mData = kshetraMandalSummary[kName].mandals;
+          const mRows = Object.keys(mData).sort().map(mName => [mName, mData[mName].toString()]);
+          
+          let startY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 15 : 35;
+          if (startY > 250) { doc.addPage(); startY = 20; }
+
+          autoTable(doc, {
+            startY: startY,
+            head: [[`${kName} - Mandal Breakdown`, 'Count']],
+            body: mRows,
+            theme: 'grid',
+            headStyles: { fillColor: [240, 240, 240], textColor: [92, 48, 48], fontSize: 10, fontStyle: 'bold' },
+            bodyStyles: { fontSize: 9 },
+          });
+        });
+
+        doc.save(`Registration_Master_${project.name.replace(/\s+/g, '_')}.pdf`);
+        toast.success("PDF Downloaded!", { id: loadingToast });
+      } catch (err) {
+        console.error(err);
+        toast.error("Failed to generate PDF.", { id: loadingToast });
+      }
+    }, 50);
+  };
+
   const handleExport = async (format) => {
     const loadingToast = toast.loading("Generating report...");
     try {
@@ -289,11 +457,9 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         .eq('project_id', project.id)
         .order('members(name)', { ascending: true });
 
-      // Apply Base Scope
       if (!isGlobal && profile?.gender) query = query.eq('members.gender', profile.gender);
       if (!isGlobal && scopeData?.ids?.length > 0) query = query.in('members.mandal_id', scopeData.ids);
 
-      // 🛡️ Apply Admin Filters (Natively on Mandal ID instead of relying on joins)
       if (isAdmin) {
         if (exportFilters.mandal_ids.length > 0) {
           query = query.in('members.mandal_id', exportFilters.mandal_ids);
@@ -319,7 +485,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         return;
       }
 
-      // 🛡️ DYNAMIC HEADERS & COLUMNS
       const kshetraName = exportFilters.kshetra_id ? dropdowns?.kshetras.find(k => k.id === exportFilters.kshetra_id)?.name : null;
       const showKshetraCol = !exportFilters.kshetra_id && exportFilters.mandal_ids.length === 0;
       const showMandalCol = exportFilters.mandal_ids.length !== 1;
@@ -423,23 +588,23 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
       toast.success(`Successfully registered ${count} members!`);
       queryClient.invalidateQueries(['registration-list']);
       queryClient.invalidateQueries(['registration-count']);
+      queryClient.invalidateQueries(['registration-summary']);
       setIsBulkModalOpen(false);
     },
     onError: (err) => toast.error(err.message)
   });
 
-  // Handler for adding new member (also registers them)
   const handleMemberAdded = () => {
     setIsMemberFormOpen(false);
     queryClient.invalidateQueries(['registration-list', project.id]);
     queryClient.invalidateQueries(['registration-count', project.id]);
+    queryClient.invalidateQueries(['registration-summary', project.id]);
     toast.success('Member added and registered successfully!');
   };
 
   const members = useMemo(() => membersPages?.pages.flatMap(page => page.data) || [], [membersPages]);
   const canRegister = scopeData?.canRegister;
   
-  // Calculate Export Modal cascade options
   const exportAvailableMandals = dropdowns?.mandals.filter(m => !exportFilters.kshetra_id || m.kshetra_id === exportFilters.kshetra_id) || [];
   
   const inputClass = "w-full px-3 py-2 bg-white border border-gray-200 rounded-md outline-none text-sm text-gray-900 focus:border-[#5C3030] transition-colors appearance-none";
@@ -471,7 +636,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
   return (
     <div className="space-y-4 pb-10">
       
-      {/* Sticky Header */}
       <div className="bg-white p-3 sm:p-4 rounded-md border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)] sticky top-0 z-10 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-y-2 gap-x-4">
           <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -489,6 +653,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           <div className="flex items-center justify-end gap-1.5 shrink-0">
             {canRegister && (project.registration_open || isAdmin) && <Button variant="secondary" size="sm" onClick={() => setIsMemberFormOpen(true)} className="!px-2 sm:!px-3"><Plus size={14} className="sm:mr-1.5"/> <span className="hidden sm:inline">Add Member</span></Button>}
             {isAdmin && <Button variant="secondary" size="sm" onClick={() => setIsBulkModalOpen(true)} className="!px-2 sm:!px-3 hidden sm:flex"><Layers size={14} className="mr-1.5"/> Bulk Add</Button>}
+            {canViewSummary && <Button variant="secondary" size="sm" onClick={() => setShowSummary(true)} className="!px-2 sm:!px-3"><BarChart2 size={14} className="sm:mr-1.5"/> <span className="hidden sm:inline">Summary</span></Button>}
             <Button variant="secondary" size="sm" onClick={() => setIsExportModalOpen(true)} className="!px-2 sm:!px-3"><Download size={14} className="sm:mr-1.5"/> <span className="hidden sm:inline">Export</span></Button>
 
             <div className="flex items-center gap-1.5 text-[10px] sm:text-xs font-semibold text-gray-600 bg-gray-50 px-2 sm:px-2.5 py-1.5 sm:py-1.5 rounded-md border border-gray-200 ml-1">
@@ -497,7 +662,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
           </div>
         </div>
         
-        {/* Search & Filter Toolbar */}
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
@@ -524,7 +688,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         </div>
       </div>
 
-      {/* Member List */}
       <div className="bg-white border border-gray-200 rounded-md shadow-[0_1px_3px_rgba(0,0,0,0.02)] divide-y divide-gray-100 relative min-h-[300px]">
         {(isFetching && !isFetchingNextPage) && (
          <div className="absolute inset-0 bg-white/60 z-10 flex items-center justify-center pointer-events-none backdrop-blur-[1px]">
@@ -591,7 +754,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         )}
       </div>
 
-      {/* --- SLIDE OUT FILTER & SORT DRAWER --- */}
       {isFilterOpen && (
         <>
           <div className="fixed inset-0 bg-black/20 z-40 transition-opacity backdrop-blur-sm" onClick={() => setIsFilterOpen(false)} />
@@ -727,6 +889,66 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         </>
       )}
 
+      {/* --- REGISTRATION SUMMARY MODAL --- */}
+      {canViewSummary && (
+        <Modal isOpen={showSummary} onClose={() => setShowSummary(false)} title="Registration Summary">
+          <div className="space-y-5">
+            {summaryLoading ? (
+              <div className="py-12 text-center text-gray-400"><Loader2 className="animate-spin inline mr-2" size={20}/> Calculating...</div>
+            ) : (
+              <>
+                <div className="bg-[#5C3030] text-white p-4 rounded-md shadow-sm text-center flex items-center justify-between">
+                  <div className="text-left">
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-white/80">Total Registered</div>
+                    <div className="text-sm font-medium text-white/90 mt-0.5">{isAdmin ? "All Kshetras" : "Your Kshetra"}</div>
+                  </div>
+                  <div className="text-4xl font-bold font-inter">{summaryStats.total}</div>
+                </div>
+
+                {isAdmin && (
+                  <div className="flex bg-gray-100 p-1 rounded-md border border-gray-200">
+                    <button onClick={() => setSummaryGroupBy('mandal')} className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center justify-center gap-1.5 ${summaryGroupBy === 'mandal' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                      <MapPin size={14} strokeWidth={1.5}/> Mandal
+                    </button>
+                    <button onClick={() => setSummaryGroupBy('kshetra')} className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center justify-center gap-1.5 ${summaryGroupBy === 'kshetra' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                      <Layers size={14} strokeWidth={1.5}/> Kshetra
+                    </button>
+                  </div>
+                )}
+
+                <div className="border border-gray-200 rounded-md overflow-hidden shadow-sm max-h-60 overflow-y-auto">
+                  <table className="w-full text-left text-sm relative">
+                    <thead className="bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-widest sticky top-0 shadow-sm z-10">
+                      <tr>
+                        <th className="px-3 py-2.5">{(summaryGroupBy === 'mandal' || !isAdmin) ? 'Mandal' : 'Kshetra'}</th>
+                        <th className="px-3 py-2.5 text-right">Count</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white">
+                      {summaryStats.list.length === 0 ? (
+                        <tr><td colSpan={2} className="p-6 text-center text-gray-400 text-sm">No registrations yet.</td></tr>
+                      ) : summaryStats.list.map(row => (
+                        <tr key={row.name} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-3 py-2.5 font-medium text-gray-900">{row.name}</td>
+                          <td className="px-3 py-2.5 text-right font-inter font-bold text-emerald-700">{row.count}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="pt-2 border-t border-gray-100 flex justify-end gap-2">
+                  <Button variant="secondary" onClick={() => setShowSummary(false)}>Close</Button>
+                  <Button onClick={exportMasterSummary} className="flex items-center gap-2">
+                     <Shield size={14}/> Export Master Report
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </Modal>
+      )}
+
       {/* --- EXPORT MODAL --- */}
       <Modal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} title="Export Report">
         <div className="space-y-5">
@@ -744,7 +966,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
                   </select>
                 </div>
                 
-                {/* 🛡️ Multi-Mandal Selection Accordion */}
                 <div>
                   <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5">Mandals</label>
                   <div className="border border-gray-200 rounded-md bg-white overflow-hidden transition-all">
@@ -832,7 +1053,7 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         </div>
       </Modal>
 
-      {/* --- BULK ADD MODAL (Admin Only) --- */}
+      {/* --- BULK ADD MODAL --- */}
       {isAdmin && (
         <Modal isOpen={isBulkModalOpen} onClose={() => setIsBulkModalOpen(false)} title="Bulk Register">
           <form onSubmit={(e) => { e.preventDefault(); bulkRegisterMutation.mutate(); }} className="space-y-4">
@@ -861,8 +1082,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
               </div>
             </div>
 
-            
-            
             <div className="pt-4 border-t border-gray-100 flex justify-end gap-2">
               <Button variant="secondary" type="button" onClick={() => setIsBulkModalOpen(false)}>Cancel</Button>
               <Button type="submit" disabled={bulkRegisterMutation.isPending || !bulkConfig.value}>
@@ -875,7 +1094,6 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
 
       {scanningMember && <QrScanner isOpen={!!scanningMember} onClose={() => setScanningMember(null)} onScan={handleMapExternalQr} eventName={`Map Badge: ${scanningMember.name}`} />}
 
-      {/* --- ADD MEMBER FORM MODAL --- */}
       <MemberForm 
         isOpen={isMemberFormOpen} 
         onClose={() => setIsMemberFormOpen(false)} 

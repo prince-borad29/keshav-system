@@ -51,7 +51,7 @@ export default function ProjectView() {
   const { data: events, isLoading: loadingEvents } = useQuery({
     queryKey: ['events', projectId],
     queryFn: async () => {
-      const { data, error } = await withTimeout(supabase.from('events').select('*').eq('project_id', projectId).order('date', { ascending: true }));
+      const { data, error } = await withTimeout(supabase.from('events').select('*').eq('project_id', projectId).order('date', { ascending: false }));
       if (error) throw error;
       return data;
     },

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
+import { validators, validateForm, sanitizeInput, normalizeInput } from '../../lib/validators';
 import Button from '../../components/ui/Button';
 import Modal from '../../components/Modal';
 import Radio from '../../components/ui/Radio';
@@ -138,42 +139,41 @@ export default function MemberForm({ isOpen, onClose, onSuccess, initialData = n
     setError('');
 
     try {
-      // Validation: all required fields (except tags)
-      if (!formData.name?.trim()) {
-        throw new Error("First Name is required.");
-      }
-      if (!formData.father_name?.trim()) {
-        throw new Error("Father's Name is required.");
-      }
-      if (!formData.surname?.trim()) {
-        throw new Error("Surname is required.");
-      }
-      if (!formData.mobile?.trim()) {
-        throw new Error("Mobile Number is required.");
-      }
-      // Validate mobile format: 10 digits
-      if (!/^\d{10}$/.test(formData.mobile.trim())) {
-        throw new Error("Mobile Number must be 10 digits.");
-      }
-      // if (!formData.dob) {
-      //   throw new Error("Date of Birth is required.");
-      // }
-      if (!formData.mandal_id) {
-        throw new Error("Mandal (Local) is required.");
-      }
-      if (!formData.designation) {
-        throw new Error("Designation is required.");
-      }
-      if (!formData.gender) {
-        throw new Error("Gender is required.");
+      // 🔐 SECURITY: Comprehensive validation schema
+      const validationSchema = {
+        name: (val) => validators.name(val),
+        father_name: (val) => validators.name(val),
+        surname: (val) => validators.name(val),
+        mobile: (val) => validators.phone(val),
+        designation: (val) => validators.designation(val),
+        gender: (val) => validators.gender(val),
+        mandal_id: (val) => !val ? 'Mandal is required' : null,
+      };
+
+      // Skip DOB validation if not provided (optional field)
+      if (formData.dob) {
+        validationSchema.dob = (val) => validators.dateNotTooOld(val);
       }
 
+      const { isValid, errors } = validateForm(formData, validationSchema);
+      
+      if (!isValid) {
+        throw new Error(Object.values(errors)[0]);
+      }
+
+      // 🔐 SECURITY: Sanitize all text inputs to prevent XSS
       const payload = {
-        name: formData.name, father_name: formData.father_name, surname: formData.surname,
-        gender: formData.gender, dob: formData.dob || null, mobile: formData.mobile,
-        designation: formData.designation, 
-        mandal_id: formData.mandal_id, 
-        internal_code: formData.internal_code, is_guest: formData.is_guest, updated_at: new Date()
+        name: normalizeInput(formData.name),
+        father_name: normalizeInput(formData.father_name),
+        surname: normalizeInput(formData.surname),
+        gender: formData.gender,
+        dob: formData.dob || null,
+        mobile: formData.mobile.replace(/\D/g, ''), // Store only digits
+        designation: formData.designation,
+        mandal_id: formData.mandal_id,
+        internal_code: sanitizeInput(formData.internal_code),
+        is_guest: formData.is_guest,
+        updated_at: new Date()
       };
 
       let memberId = initialData?.id;

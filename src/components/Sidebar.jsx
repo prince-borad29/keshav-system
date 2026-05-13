@@ -11,9 +11,11 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+import { useQueryClient } from '@tanstack/react-query';
 
 export default function Sidebar({ isOpen, onClose }) {
   const { profile } = useAuth();
+  const queryClient = useQueryClient();
   
   const role = profile?.role;
   const isAdmin = role === 'admin';
@@ -38,11 +40,23 @@ export default function Sidebar({ isOpen, onClose }) {
 
   const handleLogout = async () => {
     try {
+      // Clear React Query cache of all user-specific data before signing out
+      queryClient.clear();
+      
+      // Sign out from Supabase
       await supabase.auth.signOut();
+      
+      // Clear all browser storage
       localStorage.clear(); 
       sessionStorage.clear();
+      
+      // Redirect to login
       window.location.replace('/login'); 
     } catch (error) {
+      // Even if logout fails, clear data and redirect
+      queryClient.clear();
+      localStorage.clear();
+      sessionStorage.clear();
       window.location.replace('/login');
     }
   };

@@ -1,6 +1,7 @@
 import React, { lazy, Suspense, Component, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Loader2, WifiOff } from "lucide-react";
+import { Toaster } from 'react-hot-toast';
 import { useAuth } from "./contexts/AuthContext";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
@@ -157,6 +158,26 @@ export default function App() {
           </Routes>
         </Suspense>
         <ReactQueryDevtools initialIsOpen={false} />
+        <Toaster 
+          position="top-center"
+          reverseOrder={false}
+          gutter={8}
+          toastOptions={{
+            duration: 1500,
+            style: {
+              background: '#fff',
+              color: '#000',
+              borderRadius: '0.5rem',
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+            },
+            success: {
+              duration: 1500,
+            },
+            error: {
+              duration: 1500,
+            },
+          }}
+        />
       </QueryClientProvider>
     </GlobalErrorBoundary>
   );

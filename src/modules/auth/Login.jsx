@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, Lock, Mail, AlertCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { validators, validateForm } from '../../lib/validators';
+import { checkRateLimit, resetRateLimit } from '../../lib/rateLimiter';
 import { useAuth } from '../../contexts/AuthContext';
 import Button from '../../components/ui/Button';
 
@@ -26,13 +28,45 @@ useEffect(() => {
   setLoading(true);
 
   try {
+    // 🔐 SECURITY: Check rate limits to prevent brute force attacks
+    // Use IP address or email as identifier (email is more unique)
+    const clientIdentifier = formData.email.toLowerCase().trim();
+    const rateLimitCheck = checkRateLimit(clientIdentifier, 'login');
+    
+    if (!rateLimitCheck.allowed) {
+      setLoading(false);
+      const retryMinutes = Math.ceil(rateLimitCheck.retryAfter / 60);
+      return setError(
+        `Too many login attempts. Please try again in ${retryMinutes} minute${retryMinutes !== 1 ? 's' : ''}.`
+      );
+    }
+
+    // 🔐 SECURITY: Validate email and password format
+    const validationSchema = {
+      email: (val) => validators.email(val),
+      password: (val) => {
+        if (!val) return 'Password is required';
+        if (val.length < 6) return 'Invalid credentials';
+        return null;
+      },
+    };
+
+    const { isValid, errors } = validateForm(formData, validationSchema);
+    if (!isValid) {
+      setLoading(false);
+      return setError(Object.values(errors)[0]);
+    }
+
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: formData.email,
+      email: formData.email.trim().toLowerCase(),
       password: formData.password,
     });
 
-    console.log('[LOGIN] result:', data, error); // add this
+    console.log('[LOGIN] result:', data, error);
     if (error) throw error;
+    
+    // 🔐 SECURITY: Reset rate limit on successful login
+    resetRateLimit(clientIdentifier, 'login');
   } catch (err) {
     setError(err.message === "Invalid login credentials"
       ? "Incorrect email or password."

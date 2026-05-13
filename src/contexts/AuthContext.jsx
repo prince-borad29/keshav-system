@@ -8,36 +8,45 @@ export const useAuth = () => useContext(AuthContext);
 const PROFILE_CACHE_KEY = 'keshav_profile_cache';
 const PROFILE_CACHE_TTL = 1000 * 60 * 30;
 
+// 🔐 SECURITY FIX: Use sessionStorage (cleared on browser close) instead of localStorage
+// Only cache non-sensitive fields: id, email. NEVER cache: role, assigned_mandal_id, assigned_kshetra_id
 const saveProfileCache = (profile) => {
   try {
-    localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({
-      profile,
+    // Only store non-sensitive fields
+    const sanitized = {
+      id: profile.id,
+      email: profile.email,
       cachedAt: Date.now(),
-    }));
+    };
+    sessionStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(sanitized));
   } catch (_) {}
 };
 
 const loadProfileCache = (userId) => {
   try {
-    const raw = localStorage.getItem(PROFILE_CACHE_KEY);
+    const raw = sessionStorage.getItem(PROFILE_CACHE_KEY);
     if (!raw) return null;
-    const { profile, cachedAt } = JSON.parse(raw);
+    const { id, email, cachedAt } = JSON.parse(raw);
     if (Date.now() - cachedAt > PROFILE_CACHE_TTL) {
-      localStorage.removeItem(PROFILE_CACHE_KEY);
+      sessionStorage.removeItem(PROFILE_CACHE_KEY);
       return null;
     }
-    if (profile?.id !== userId) {
-      localStorage.removeItem(PROFILE_CACHE_KEY);
+    if (id !== userId) {
+      sessionStorage.removeItem(PROFILE_CACHE_KEY);
       return null;
     }
-    return profile;
+    // Return only non-sensitive cached data (signals to fetch full profile)
+    return { id, email };
   } catch (_) {
     return null;
   }
 };
 
 const clearProfileCache = () => {
-  try { localStorage.removeItem(PROFILE_CACHE_KEY); } catch (_) {}
+  try { 
+    sessionStorage.removeItem(PROFILE_CACHE_KEY);
+    localStorage.removeItem(PROFILE_CACHE_KEY); // Also clear old localStorage if exists
+  } catch (_) {}
 };
 
 export default function AuthProvider({ children }) {

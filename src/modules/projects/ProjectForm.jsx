@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "../../lib/supabase";
+import { validators, validateForm, sanitizeInput } from "../../lib/validators";
 import Button from "../../components/ui/Button";
 import Modal from "../../components/Modal";
 import { AlertTriangle, Loader2, Tag } from "lucide-react";
@@ -56,8 +57,32 @@ export default function ProjectForm({ isOpen, onClose, onSuccess, initialData = 
     setError("");
 
     try {
-      if (!formData.name) throw new Error("Project Name is required.");
-      const payload = { ...formData };
+      // 🔐 SECURITY: Comprehensive validation
+      const validationSchema = {
+        name: (val) => {
+          const error = validators.text(val, 2, 100);
+          return error || (val.trim() ? null : 'Project Name is required');
+        },
+        description: (val) => validators.textarea(val, 0, 500),
+        type: (val) => !val ? 'Project Type is required' : null,
+        allowed_gender: (val) => !val ? 'Allowed Gender is required' : null,
+      };
+
+      const { isValid, errors } = validateForm(formData, validationSchema);
+      if (!isValid) {
+        throw new Error(Object.values(errors)[0]);
+      }
+
+      // 🔐 SECURITY: Sanitize all inputs
+      const payload = {
+        name: sanitizeInput(formData.name),
+        description: sanitizeInput(formData.description),
+        type: formData.type,
+        allowed_gender: formData.allowed_gender,
+        is_active: formData.is_active,
+        registration_open: formData.registration_open,
+      };
+
       let projectId = initialData?.id;
       
       if (projectId) {

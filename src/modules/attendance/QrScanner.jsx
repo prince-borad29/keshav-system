@@ -29,16 +29,16 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
 
   const toggleFlashlight = useCallback(async () => {
     const track = videoTrackRef.current;
-    if (!track) return toast.error("Camera not ready yet", { position: 'top-center' });
+    if (!track) return toast.error("Camera not ready yet", { position: 'top-center', duration: 2000 });
     const capabilities = track.getCapabilities?.() || {};
-    if (!capabilities.torch) return toast.error("Flashlight not supported", { position: 'top-center' });
+    if (!capabilities.torch) return toast.error("Flashlight not supported", { position: 'top-center', duration: 2000 });
 
     try {
       const next = !flashlightOn;
       await track.applyConstraints({ advanced: [{ torch: next }] });
       setFlashlightOn(next);
     } catch (err) {
-      toast.error("Could not toggle flashlight", { position: 'top-center' });
+      toast.error("Could not toggle flashlight", { position: 'top-center', duration: 2000 });
     }
   }, [flashlightOn]);
 
@@ -51,59 +51,57 @@ const handleScan = useCallback(async (result) => {
   isProcessing.current = true;
   lastScannedCode.current = rawCode;
 
-  const scanToastId = toast.loading('Checking...', { 
-    position: 'top-center',
-    style: { zIndex: 10000 }  // ← ADD THIS: Above the modal
-  });
-
   try {
     const resultData = await onScan(rawCode);
+    console.log('[QrScanner] Scan result:', resultData);
 
-    if (resultData && resultData.success) {
+    // Handle success case - attendance marked
+    if (resultData?.success === true) {
       toast.success(resultData.message || 'Successfully marked present ✓', { 
-        id: scanToastId, 
-        position: 'top-center', 
-        duration: 2000,
-        style: { zIndex: 10000 }  // ← ADD THIS
-      });
-      if (eventName?.includes("Map Badge")) onClose();
-    } 
-    else if (resultData && resultData.success === false) {
-      toast.error(resultData.message || 'Already marked or not found', { 
-        id: scanToastId, 
-        position: 'top-center', 
-        duration: 2500,
-        style: { zIndex: 10000 }  // ← ADD THIS
-      });
-    } 
-    else {
-      toast.success(`Scanned ID: ${rawCode.slice(0, 15)}`, { 
-        id: scanToastId, 
         position: 'top-center', 
         duration: 1500,
-        style: { zIndex: 10000 }  // ← ADD THIS
+        style: { zIndex: 10000 }
+      });
+      if (eventName?.includes("Map Badge")) {
+        setTimeout(() => onClose(), 500);
+      }
+    } 
+    // Handle error cases - already marked, not in roster, etc
+    else if (resultData?.success === false) {
+      const errorMessage = resultData.message || 'Already marked or not found';
+      toast.error(errorMessage, { 
+        position: 'top-center', 
+        duration: 1500,
+        style: { zIndex: 10000 }
+      });
+    } 
+    // Fallback - shouldn't normally happen
+    else {
+      toast.error('Unable to process scan. Please try again.', { 
+        position: 'top-center', 
+        duration: 1500,
+        style: { zIndex: 10000 }
       });
     }
   } catch (err) {
-    toast.error('Database connection error!', { 
-      id: scanToastId, 
+    console.error('[QrScanner] Error:', err);
+    toast.error('Network error - check your connection', { 
       position: 'top-center', 
-      duration: 2000,
+      duration: 1500,
       style: { zIndex: 10000 }
     });
   }
 
-  // Unlock scanner quickly for rapid fire
-  setTimeout(() => {
-    isProcessing.current = false;
-    setTimeout(() => { lastScannedCode.current = null; }, 1500);
-  }, 400);
+  // Unlock scanner instantly for rapid fire scanning
+  isProcessing.current = false;
+  setTimeout(() => { lastScannedCode.current = null; }, 800);
 }, [onScan, eventName, onClose]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-black flex flex-col animate-in fade-in duration-100">
+    <div className="fixed inset-0 z-[9999] bg-black flex flex.
+    -col animate-in fade-in duration-100">
       <div className="absolute top-0 w-full px-5 py-4 flex justify-between items-center z-20 bg-gradient-to-b from-black/80 to-transparent">
         <div>
           <h2 className="font-bold text-base text-white">{eventName || "Rapid Scanner"}</h2>

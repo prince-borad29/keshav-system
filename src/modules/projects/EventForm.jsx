@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { supabase, withTimeout } from '../../lib/supabase'; // 🛡️ Imported withTimeout
-import toast from 'react-hot-toast'; // 🛡️ Imported toast
+import { supabase, withTimeout } from '../../lib/supabase';
+import { validators, validateForm, sanitizeInput } from '../../lib/validators';
+import toast from 'react-hot-toast';
 import Button from '../../components/ui/Button';
 import Modal from '../../components/Modal';
-import { Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 
 const INITIAL_FORM = { name: '', date: '', is_primary: false };
 
 export default function EventForm({ isOpen, onClose, onSuccess, projectId, initialData = null }) {
   const [formData, setFormData] = useState(INITIAL_FORM);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (isOpen) {
@@ -19,9 +21,37 @@ export default function EventForm({ isOpen, onClose, onSuccess, projectId, initi
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError('');
     setLoading(true);
     try {
-      const payload = { project_id: projectId, ...formData };
+      // 🔐 SECURITY: Validate inputs
+      const validationSchema = {
+        name: (val) => {
+          const error = validators.text(val, 2, 100);
+          return error || (!val.trim() ? 'Event Name is required' : null);
+        },
+        date: (val) => {
+          if (!val) return 'Date is required';
+          const selected = new Date(val);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          // Allow today and future dates for events
+          return null;
+        },
+      };
+
+      const { isValid, errors } = validateForm(formData, validationSchema);
+      if (!isValid) {
+        throw new Error(Object.values(errors)[0]);
+      }
+
+      // 🔐 SECURITY: Sanitize input
+      const payload = { 
+        project_id: projectId, 
+        name: sanitizeInput(formData.name),
+        date: formData.date,
+        is_primary: formData.is_primary 
+      };
       
       // 🛡️ Wrapped in withTimeout
       let query;
@@ -31,13 +61,14 @@ export default function EventForm({ isOpen, onClose, onSuccess, projectId, initi
         query = supabase.from('events').insert(payload);
       }
       
-      const { error } = await withTimeout(query);
-      if (error) throw error;
+      const { error: queryError } = await withTimeout(query);
+      if (queryError) throw queryError;
       
       toast.success(initialData?.id ? "Event updated!" : "Event created!");
       onSuccess();
       onClose();
     } catch (err) {
+      setError(err.message || 'An error occurred');
       toast.error(err.message); // 🛡️ Replaced alert()
     } finally {
       setLoading(false);
@@ -50,6 +81,11 @@ export default function EventForm({ isOpen, onClose, onSuccess, projectId, initi
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={initialData ? 'Edit Event' : 'Add Event'}>
       <form onSubmit={handleSubmit} className="space-y-4">
+        {error && (
+          <div className="bg-red-50 text-red-700 p-3 rounded-md flex items-start gap-2 text-xs font-semibold border border-red-100">
+            <AlertTriangle size={14} className="shrink-0 mt-0.5"/> {error}
+          </div>
+        )}
         <div>
           <label className={labelClass}>Event Name *</label>
           <input required className={inputClass} placeholder="e.g. Day 1 Registration" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />

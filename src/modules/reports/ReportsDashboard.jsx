@@ -740,6 +740,34 @@ export default function ReportsDashboard() {
     return { rows, isGrouped };
   }, [rawData, filters, sorts, groupBy, visCols, aggConfig]);
 
+  // 🔐 SECURITY: Validate SQL query to prevent injection and unauthorized access
+  const validateSqlQuery = useCallback((query, table) => {
+    if (!query || !table) return false;
+    
+    // Only allow SELECT columns from the specified table
+    const queryUpper = query.toUpperCase().trim();
+    
+    // Prevent dangerous operations
+    const dangerousPatterns = [
+      /DELETE|DROP|INSERT|UPDATE|ALTER|CREATE|TRUNCATE|EXEC|EXECUTE|SCRIPT/i,
+      /;.*$/m, // Multiple statements separated by semicolon
+      /--/, // SQL comments
+      /\/\*/, // Multi-line comments
+    ];
+    
+    if (dangerousPatterns.some(pattern => pattern.test(query))) {
+      return false;
+    }
+    
+    // Allowed tables based on role-based access
+    const adminOnlyTables = ['users', 'user_profiles', 'project_assignments'];
+    if (!profile?.role?.toLowerCase().includes('admin') && adminOnlyTables.includes(table)) {
+      return false;
+    }
+    
+    return true;
+  }, [profile?.role]);
+
   // Run
   const run = useCallback(async (typeIdOverride, projectIdOverride) => {
     const tid = typeIdOverride || reportTypeId;
@@ -783,6 +811,11 @@ export default function ReportsDashboard() {
     if (!selectString.trim()) return toast.error('Enter a query');
     if (!baseTable) return toast.error('Select a table');
 
+    // 🔐 SECURITY: Validate query to prevent SQL injection
+    if (!validateSqlQuery(selectString, baseTable)) {
+      return toast.error('Invalid query. Only SELECT is allowed. No comments, multiple statements, or unauthorized tables.');
+    }
+
     setIsRunning(true);
     try {
       // Extract columns from the query (handles both SQL and PostgREST syntax)
@@ -821,7 +854,7 @@ export default function ReportsDashboard() {
     } finally {
       setIsRunning(false);
     }
-  }, [selectString, baseTable]);
+  }, [selectString, baseTable, validateSqlQuery]);
 
   // Change report type
   const handleTypeChange = (tid) => {

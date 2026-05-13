@@ -280,30 +280,37 @@ export default function Attendance({
           m.external_qr === cleanCode,
       );
 
-      if (!member)
-        return { success: false, message: "Not in Roster", type: "error" };
-      if (presentMap.has(member.id))
+      if (!member) {
+        console.log('[Attendance] Member not found for code:', cleanCode);
+        return { success: false, message: "❌ Not in Roster" };
+      }
+      
+      if (presentMap.has(member.id)) {
+        console.log('[Attendance] Member already checked in:', member.name);
         return {
           success: false,
-          message: "Already Checked In",
-          type: "warning",
+          message: `⚠️ ${member.name} Already Marked Present`,
         };
-      if (activelySyncing.has(member.id))
+      }
+      
+      if (activelySyncing.has(member.id)) {
+        console.log('[Attendance] Member currently syncing:', member.name);
         return {
           success: false,
-          message: "Currently Saving...",
-          type: "warning",
+          message: "⏳ Saving...",
         };
+      }
 
       const success = await markAttendance(member.id);
 
       if (success) {
-        return { success: true, message: `${member.name} Checked In!` };
+        console.log('[Attendance] Successfully marked:', member.name);
+        return { success: true, message: `✓ ${member.name} Marked Present` };
       } else {
+        console.log('[Attendance] Failed to mark:', member.name);
         return {
           success: false,
-          message: "Network Error - Scan Again",
-          type: "error",
+          message: "🔄 Network Error - Try Again",
         };
       }
     },

@@ -13,6 +13,13 @@ import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import Modal from '../../components/Modal';
 
+// 🔐 SECURITY: HTML escape function to prevent XSS injection
+const escapeHTML = (text) => {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+};
+
 export default function RegistrationRoster({ project, onBack, isAdmin, profile }) { 
   const queryClient = useQueryClient();
   const { ref: loadMoreRef, inView } = useInView();
@@ -528,16 +535,17 @@ export default function RegistrationRoster({ project, onBack, isAdmin, profile }
         doc.write('<html><head><title>Registration Report</title>');
         doc.write('<style>body{font-family:sans-serif; padding:20px; color:#111827;} table{border-collapse:collapse; width:100%; font-size:12px; margin-top:20px;} th,td{border:1px solid #e5e7eb; padding:10px; text-align:left;} th{background-color:#f9fafb; color:#374151;}</style>');
         doc.write('</head><body>');
-        doc.write(`<h2 style="color:#5C3030; margin-bottom:5px;">${project.name}</h2>`);
-        doc.write(`<p style="color:#6b7280; font-size:14px; margin-top:0;">${subtitle} &bull; Total: ${cleanData.length}</p>`);
+        // 🔐 SECURITY FIX: Properly escape HTML to prevent XSS injection
+        doc.write(`<h2 style="color:#5C3030; margin-bottom:5px;">${escapeHTML(project.name)}</h2>`);
+        doc.write(`<p style="color:#6b7280; font-size:14px; margin-top:0;">${escapeHTML(subtitle)} &bull; Total: ${cleanData.length}</p>`);
         
         doc.write('<table><thead><tr>');
-        Object.keys(cleanData[0]).forEach(h => doc.write(`<th>${h}</th>`));
+        Object.keys(cleanData[0]).forEach(h => doc.write(`<th>${escapeHTML(String(h))}</th>`));
         doc.write('</tr></thead><tbody>');
         
         cleanData.forEach(row => {
           doc.write('<tr>');
-          Object.values(row).forEach(val => doc.write(`<td>${val}</td>`));
+          Object.values(row).forEach(val => doc.write(`<td>${escapeHTML(String(val))}</td>`));
           doc.write('</tr>');
         });
         

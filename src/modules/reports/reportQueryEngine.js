@@ -356,6 +356,36 @@ async function fetchInactiveMembers() {
     }));
 }
 
+async function fetchAbsenceRecords() {
+  const { data: absences, error: absenceErr } = await supabase
+    .from('absence_records')
+    .select('event_id,member_id,category_id,notes,recorded_by,created_at,absence_categories(label),events(id,name,date,project_id,projects(name)),members(internal_code,name,surname,gender,designation,mandals(name,kshetras(name))),user_profiles(full_name)')
+    .limit(10000);
+  if (absenceErr) throw absenceErr;
+
+  return (absences || []).map(rec => {
+    const m = rec.members;
+    const e = rec.events;
+    const ac = rec.absence_categories;
+    const up = rec.user_profiles;
+    return {
+      member_code:     m?.internal_code || '',
+      member_name:     `${m?.name || ''} ${m?.surname || ''}`.trim(),
+      gender:          m?.gender || '',
+      mandal_name:     m?.mandals?.name || '',
+      kshetra_name:    m?.mandals?.kshetras?.name || '',
+      designation:     m?.designation || '',
+      project_name:    e?.projects?.name || '',
+      event_name:      e?.name || '',
+      event_date:      e?.date || '',
+      reason_category: ac?.label || '',
+      notes:           rec.notes || '',
+      recorded_by:     up?.full_name || '',
+      created_at:      rec.created_at || '',
+    };
+  });
+}
+
 export async function runReport(reportTypeId, params = {}) {
   switch (reportTypeId) {
     case 'member_directory':          return fetchMemberDirectory();
@@ -363,6 +393,7 @@ export async function runReport(reportTypeId, params = {}) {
     case 'attendance_by_member':      return fetchAttendanceByMember();
     case 'attendance_by_event':       return fetchAttendanceByEvent();
     case 'project_member_attendance': return fetchProjectMemberAttendance(params);
+    case 'absence_records':           return fetchAbsenceRecords();
     case 'mandal_summary':            return fetchMandalSummary();
     case 'kshetra_summary':           return fetchKshetraSummary();
     case 'inactive_members':          return fetchInactiveMembers();

@@ -38,13 +38,10 @@ const fetchWithTimeout = async (promise, ms = 5000) => {
 };
 
 const MemberRow = React.memo(
-  ({ member, isPresent, isSyncing, canMark, onMark }) => {
+  ({ member, isPresent, isSyncing, canMark, onMark, onMarkAbsence }) => {
     return (
       <div
-        onClick={() => canMark && !isSyncing && onMark(member.id)}
         className={`p-3 rounded-md border flex items-center justify-between transition-colors duration-75 ${
-          canMark && !isSyncing ? "cursor-pointer active:scale-[0.98]" : ""
-        } ${
           isSyncing
             ? "bg-amber-50 border-amber-200 opacity-90"
             : isPresent
@@ -52,7 +49,10 @@ const MemberRow = React.memo(
               : "bg-white border-gray-200 hover:border-gray-300 shadow-[0_1px_3px_rgba(0,0,0,0.02)]"
         }`}
       >
-        <div className="flex items-center gap-3 overflow-hidden pr-3 pointer-events-none">
+        <div 
+          onClick={() => canMark && !isSyncing && onMark(member.id)}
+          className={`flex items-center gap-3 overflow-hidden pr-3 flex-1 ${canMark && !isSyncing ? "cursor-pointer" : ""}`}
+        >
           <div
             className={`w-9 h-9 rounded-md flex items-center justify-center font-inter font-bold text-xs shrink-0 border transition-colors ${
               isSyncing
@@ -86,6 +86,18 @@ const MemberRow = React.memo(
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {!isPresent && canMark && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onMarkAbsence(member.id);
+              }}
+              className="p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 rounded-md transition-colors border border-transparent hover:border-red-200"
+              title="Mark absence with reason"
+            >
+              <X size={14} strokeWidth={2.5} />
+            </button>
+          )}
           {member.mobile_number && (
             <a
               href={`tel:${member.mobile_number}`}
@@ -282,6 +294,14 @@ export default function Attendance({
     }
   }, [canMark, eventId, presentMap, queryClient, QUERY_KEY, activelySyncing, profile?.id, members, memberMarkingAbsent]);
 
+  const handleMarkAbsence = useCallback((memberId) => {
+    const member = members.find(m => m.id === memberId);
+    if (member) {
+      setMemberMarkingAbsent(member);
+      setAbsenceModalOpen(true);
+    }
+  }, [members]);
+
   const handleAbsenceReasonSave = useCallback(async (categoryId, notes) => {
     if (!memberMarkingAbsent || !eventId) return;
 
@@ -289,15 +309,23 @@ export default function Attendance({
     const memberId = memberMarkingAbsent.id;
     
     try {
-      // For now, we just record that the member is marked absent
-      // In future, could save absence category and notes to a separate table
-      const now = new Date().toISOString();
-      
       setActivelySyncing(prev => new Set(prev).add(memberId));
       
-      // Mark as "not present" (absence) in attendance by not creating an attendance record
-      // This is tracked by absence_reason in a separate table if needed
-      // For now, just close the modal and optionally save the reason to local storage or log
+      // Save absence record to database
+      const { error: absenceError } = await supabase
+        .from('absence_records')
+        .upsert(
+          {
+            event_id: eventId,
+            member_id: memberId,
+            category_id: categoryId,
+            notes: notes || null,
+            recorded_by: profile.id
+          },
+          { onConflict: 'event_id,member_id', ignoreDuplicates: false }
+        );
+
+      if (absenceError) throw absenceError;
       
       toast.success(`${memberMarkingAbsent.name} marked absent with reason`);
       
@@ -316,7 +344,7 @@ export default function Attendance({
         return next;
       });
     }
-  }, [memberMarkingAbsent, eventId, setActivelySyncing]);
+  }, [memberMarkingAbsent, eventId, profile?.id]);
 
   const handleScan = useCallback(
     async (code) => {
@@ -814,7 +842,8 @@ export default function Attendance({
             isPresent={presentMap.has(m.id)}
             isSyncing={activelySyncing.has(m.id)}
             canMark={canMark}
-            onMark={() => markAttendance(m.id, !presentMap.has(m.id))}
+            onMark={() => markAttendance(m.id, false)}
+            onMarkAbsence={() => handleMarkAbsence(m.id)}
           />
         ))}
       </div>

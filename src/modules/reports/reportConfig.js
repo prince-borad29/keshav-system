@@ -5,6 +5,7 @@ export const REPORT_TYPES = [
   { id: 'attendance_by_member',      label: 'Attendance by Member',          icon: 'UserCheck',     description: 'Per-member attendance across projects' },
   { id: 'attendance_by_event',       label: 'Attendance by Event',           icon: 'Calendar',      description: 'Per-event present vs registered' },
   { id: 'project_member_attendance', label: 'Project × Member Attendance',   icon: 'BarChart2',     description: 'Select a project → member attendance %' },
+  { id: 'absence_records',           label: 'Absence Records',               icon: 'AlertCircle',   description: 'Members marked absent with reasons' },
   { id: 'mandal_summary',            label: 'Mandal Summary',                icon: 'MapPin',        description: 'Member & attendance stats per mandal' },
   { id: 'kshetra_summary',           label: 'Kshetra Summary',               icon: 'Map',           description: 'Stats rolled up per kshetra' },
   { id: 'inactive_members',          label: 'Inactive Members',              icon: 'UserX',         description: 'Members with zero registrations' },
@@ -98,6 +99,21 @@ export const REPORT_COLUMNS = {
     { key: 'kshetra_name',  label: 'Kshetra',     type: 'text' },
     { key: 'designation',   label: 'Designation', type: 'text' },
   ],
+  absence_records: [
+    { key: 'member_code',      label: 'Member ID',     type: 'text'   },
+    { key: 'member_name',      label: 'Member Name',   type: 'text'   },
+    { key: 'gender',           label: 'Gender',        type: 'text'   },
+    { key: 'mandal_name',      label: 'Mandal',        type: 'text'   },
+    { key: 'kshetra_name',     label: 'Kshetra',       type: 'text'   },
+    { key: 'designation',      label: 'Designation',   type: 'text'   },
+    { key: 'project_name',     label: 'Project',       type: 'text'   },
+    { key: 'event_name',       label: 'Event',         type: 'text'   },
+    { key: 'event_date',       label: 'Event Date',    type: 'date'   },
+    { key: 'reason_category',  label: 'Absence Reason', type: 'text'  },
+    { key: 'notes',            label: 'Notes',         type: 'text'   },
+    { key: 'recorded_by',      label: 'Recorded By',   type: 'text'   },
+    { key: 'created_at',       label: 'Recorded Date', type: 'date'   },
+  ],
 };
 
 export const AGG_FUNCTIONS = [
@@ -118,6 +134,8 @@ export const DB_SCHEMA = {
   events:               ['id','project_id','name','date','is_primary','created_at'],
   project_registrations:['project_id','member_id','exam_level','seat_number','registered_at'],
   attendance:           ['id','event_id','member_id','scanned_at'],
+  absence_records:      ['id','event_id','member_id','category_id','notes','recorded_by','created_at','updated_at'],
+  absence_categories:   ['id','label','is_active','created_at'],
   tags:                 ['id','name','category','color'],
   user_profiles:        ['id','email','full_name','gender','role','assigned_kshetra_id','assigned_mandal_id'],
 };

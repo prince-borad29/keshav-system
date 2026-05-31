@@ -13,6 +13,7 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
   const [rawRegs, setRawRegs] = useState([]);
   const [presentSet, setPresentSet] = useState(new Set());
   const [groupBy, setGroupBy] = useState('mandal'); 
+  const [absenceRecords, setAbsenceRecords] = useState(new Map()); // member_id -> { reason, notes }
 
   const [data, setData] = useState([]);
   const [absentList, setAbsentList] = useState([]); 
@@ -37,13 +38,15 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
             }
         }
 
-        const [regRes, attRes] = await Promise.all([
+        const [regRes, attRes, absRes] = await Promise.all([
            regQuery,
-           supabase.from('attendance').select('id, member_id').eq('event_id', event.id)
+           supabase.from('attendance').select('id, member_id').eq('event_id', event.id),
+           supabase.from('absence_records').select('member_id, absence_categories(label), notes').eq('event_id', event.id)
         ]);
 
         if (regRes.error) throw regRes.error;
         if (attRes.error) throw attRes.error;
+        if (absRes.error) throw absRes.error;
 
         if (isMounted) {
           setRawRegs(regRes.data || []);
@@ -54,6 +57,16 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
             attendanceIdMap.current.set(a.id, a.member_id); 
           });
           setPresentSet(newSet);
+          
+          // Build absence records map
+          const absenceMap = new Map();
+          absRes.data?.forEach(abs => {
+            absenceMap.set(abs.member_id, {
+              reason: abs.absence_categories?.label || 'Not specified',
+              notes: abs.notes || ''
+            });
+          });
+          setAbsenceRecords(absenceMap);
         }
       } catch (err) {
         console.error("Summary Error:", err);
@@ -85,14 +98,23 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
         groups[groupName].present++;
         totalPres++;
       } else {
-        absents.push({ name: `${m.name} ${m.surname}`, mobile: m.mobile || '-', mandal: m.mandals?.name || '-', kshetra: m.mandals?.kshetras?.name || '-', id: m.internal_code || '-' });
+        const absenceInfo = absenceRecords.get(r.member_id);
+        absents.push({ 
+          name: `${m.name} ${m.surname}`, 
+          mobile: m.mobile || '-', 
+          mandal: m.mandals?.name || '-', 
+          kshetra: m.mandals?.kshetras?.name || '-', 
+          id: m.internal_code || '-',
+          reason: absenceInfo?.reason || 'Not recorded',
+          notes: absenceInfo?.notes || ''
+        });
       }
     });
 
     setData(Object.values(groups).sort((a, b) => b.present - a.present));
     setAbsentList(absents.sort((a, b) => a.name.localeCompare(b.name)));
     setTotals({ present: totalPres, registered: totalReg });
-  }, [rawRegs, presentSet, groupBy]);
+  }, [rawRegs, presentSet, groupBy, absenceRecords]);
 
   const getPct = (curr, total) => total > 0 ? Math.round((curr / total) * 100) : 0;
 
@@ -140,7 +162,14 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
           if (isPres) {
             kshetraSummary[kName].present++;
           } else {
-            kshetraAbsentees[kName].push({ name: `${m.name} ${m.surname}`, mobile: m.mobile || '-', mandal: mName });
+            const absenceInfo = absenceRecords.get(r.member_id);
+            kshetraAbsentees[kName].push({ 
+              name: `${m.name} ${m.surname}`, 
+              mobile: m.mobile || '-', 
+              mandal: mName,
+              memberId: r.member_id,
+              reason: absenceInfo?.reason || 'Not recorded'
+            });
           }
         });
 
@@ -170,10 +199,10 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
           
           autoTable(doc, {
             startY: doc.lastAutoTable.finalY + 15,
-            head: [[`${kName} - Absent Members (${absentees.length})`, 'Mobile Number', 'Mandal']],
+            head: [[`${kName} - Absent Members (${absentees.length})`, 'Mobile Number', 'Mandal', 'Absence Reason']],
             body: absentees.length > 0 
-                  ? absentees.sort((a,b) => a.name.localeCompare(b.name)).map(p => [p.name, p.mobile, p.mandal])
-                  : [['No absentees in this Kshetra.', '-', '-']],
+                  ? absentees.sort((a,b) => a.name.localeCompare(b.name)).map(p => [p.name, p.mobile, p.mandal, p.reason || 'Not recorded'])
+                  : [['No absentees in this Kshetra.', '-', '-', '-']],
             theme: 'grid',
             headStyles: { fillColor: [240, 240, 240], textColor: [92, 48, 48], fontSize: 10, fontStyle: 'bold' },
             bodyStyles: { fontSize: 9 },
@@ -234,12 +263,13 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
         const doc = createBasePDF(`${event.name} - Absent List`, `Total Absent: ${absentList.length}`);
         
         const head = userScope.isGlobal 
-          ? [['Name', 'Internal ID', 'Mobile', 'Mandal', 'Kshetra']] 
-          : [['Name', 'Internal ID', 'Mobile', 'Mandal']];
+          ? [['Name', 'Internal ID', 'Mobile', 'Mandal', 'Kshetra', 'Absence Reason']] 
+          : [['Name', 'Internal ID', 'Mobile', 'Mandal', 'Absence Reason']];
 
         const body = absentList.map(row => {
           const rowData = [row.name, row.id, row.mobile, row.mandal];
           if (userScope.isGlobal) rowData.push(row.kshetra);
+          rowData.push(row.reason || 'Not recorded');
           return rowData;
         });
 
@@ -267,12 +297,16 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
       try {
         const cleanData = rawRegs.map(r => {
           const m = r.members;
+          const isPresent = presentSet.has(r.member_id);
+          const absenceInfo = absenceRecords.get(r.member_id);
           const obj = {
             ID: m.internal_code || '-',
             Name: `${m.name} ${m.surname}`,
             Mobile: m.mobile || '-',
             Mandal: m.mandals?.name || '-',
-            Status: presentSet.has(r.member_id) ? 'Present' : 'Absent'
+            Status: isPresent ? 'Present' : 'Absent',
+            'Absence Reason': isPresent ? '-' : (absenceInfo?.reason || 'Not recorded'),
+            'Absence Notes': isPresent ? '-' : (absenceInfo?.notes || '')
           };
           if (userScope.isGlobal) obj.Kshetra = m.mandals?.kshetras?.name || '-';
           return obj;

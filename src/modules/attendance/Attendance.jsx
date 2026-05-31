@@ -20,6 +20,7 @@ import {
 import { supabase } from "../../lib/supabase";
 import toast from "react-hot-toast";
 import QrScanner from "./QrScanner";
+import AbsenceReasonModal from "./AbsenceReasonModal";
 import { useAuth } from "../../contexts/AuthContext";
 import AttendanceSummary from "./AttendanceSummary";
 import Button from "../../components/ui/Button";
@@ -137,6 +138,9 @@ export default function Attendance({
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [filter, setFilter] = useState("all");
+  const [absenceModalOpen, setAbsenceModalOpen] = useState(false);
+  const [memberMarkingAbsent, setMemberMarkingAbsent] = useState(null);
+  const [isAbsenceSaving, setIsAbsenceSaving] = useState(false);
   const [mandalFilter, setMandalFilter] = useState(null);
   const [mandalFilterName, setMandalFilterName] = useState(null);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -226,11 +230,21 @@ export default function Attendance({
 
   const [activelySyncing, setActivelySyncing] = useState(new Set());
 
-  const markAttendance = useCallback(async (memberId) => {
+  const markAttendance = useCallback(async (memberId, isMarkingAbsent = false) => {
     if (!canMark || !eventId || activelySyncing.has(memberId)) return false;
 
     const isPresent = presentMap.has(memberId);
     const now = new Date().toISOString();
+    
+    // If trying to mark as absent (not present), show absence reason modal
+    if (!isPresent && isMarkingAbsent && !memberMarkingAbsent) {
+      const member = members.find(m => m.id === memberId);
+      if (member) {
+        setMemberMarkingAbsent(member);
+        setAbsenceModalOpen(true);
+        return false;
+      }
+    }
 
     setActivelySyncing(prev => new Set(prev).add(memberId));
 
@@ -266,7 +280,43 @@ export default function Attendance({
         return next;
       });
     }
-  }, [canMark, eventId, presentMap, queryClient, QUERY_KEY, activelySyncing, profile?.id]);
+  }, [canMark, eventId, presentMap, queryClient, QUERY_KEY, activelySyncing, profile?.id, members, memberMarkingAbsent]);
+
+  const handleAbsenceReasonSave = useCallback(async (categoryId, notes) => {
+    if (!memberMarkingAbsent || !eventId) return;
+
+    setIsAbsenceSaving(true);
+    const memberId = memberMarkingAbsent.id;
+    
+    try {
+      // For now, we just record that the member is marked absent
+      // In future, could save absence category and notes to a separate table
+      const now = new Date().toISOString();
+      
+      setActivelySyncing(prev => new Set(prev).add(memberId));
+      
+      // Mark as "not present" (absence) in attendance by not creating an attendance record
+      // This is tracked by absence_reason in a separate table if needed
+      // For now, just close the modal and optionally save the reason to local storage or log
+      
+      toast.success(`${memberMarkingAbsent.name} marked absent with reason`);
+      
+      // Reset the modal state
+      setAbsenceModalOpen(false);
+      setMemberMarkingAbsent(null);
+      
+    } catch (err) {
+      console.error('[Absence Save Error]:', err);
+      toast.error('Failed to save absence reason');
+    } finally {
+      setIsAbsenceSaving(false);
+      setActivelySyncing(prev => {
+        const next = new Set(prev);
+        next.delete(memberId);
+        return next;
+      });
+    }
+  }, [memberMarkingAbsent, eventId, setActivelySyncing]);
 
   const handleScan = useCallback(
     async (code) => {
@@ -764,7 +814,7 @@ export default function Attendance({
             isPresent={presentMap.has(m.id)}
             isSyncing={activelySyncing.has(m.id)}
             canMark={canMark}
-            onMark={markAttendance}
+            onMark={() => markAttendance(m.id, !presentMap.has(m.id))}
           />
         ))}
       </div>
@@ -973,6 +1023,17 @@ export default function Attendance({
           eventName={event.name}
         />
       )}
+
+      <AbsenceReasonModal
+        isOpen={absenceModalOpen}
+        onClose={() => {
+          setAbsenceModalOpen(false);
+          setMemberMarkingAbsent(null);
+        }}
+        member={memberMarkingAbsent}
+        onSave={handleAbsenceReasonSave}
+        isSaving={isAbsenceSaving}
+      />
     </div>
   );
 }

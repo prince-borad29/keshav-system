@@ -140,7 +140,7 @@ export default function Attendance({
   const [event, setEvent] = useState(null);
   const [project, setProject] = useState(null);
   const [members, setMembers] = useState([]);
-  const [projectAssignment, setProjectAssignment] = useState(null); // 🛡️ NEW: Track Project Role
+  const [projectAssignment, setProjectAssignment] = useState(null); 
   const [scopePermissions, setScopePermissions] = useState({
     mandalIds: [],
     kshetraId: null,
@@ -170,7 +170,6 @@ export default function Attendance({
   const [sortConfig, setSortConfig] = useState(defaultSortConfig);
   const [draftSortConfig, setDraftSortConfig] = useState(defaultSortConfig);
 
-  // 🛡️ DYNAMIC PERMISSION CHECK
   const canMark = useMemo(() => {
     if (propReadOnly) return false;
     const sysRole = (profile?.role || "").toLowerCase().trim();
@@ -184,10 +183,12 @@ export default function Attendance({
     queryFn: async () => {
       const { data, error } = await supabase
         .from("attendance")
-        .select("id, member_id, scanned_at")
+        .select("id, member_id, scanned_at, status")
         .eq("event_id", eventId);
       if (error) throw error;
-      return data || [];
+      
+      // 🛡️ Ensure we only pull 'present' statuses (or legacy nulls) into the green checkmark view
+      return (data || []).filter(a => a.status !== 'absent');
     },
     enabled: !!eventId,
     staleTime: 60000,
@@ -216,11 +217,14 @@ export default function Attendance({
         (payload) => {
           queryClient.setQueryData(QUERY_KEY, (oldData) => {
             if (!oldData) return [];
-            if (payload.eventType === "INSERT") {
+            
+            // 🛡️ If a record is inserted/updated as 'absent', strip it out of the Present Map
+            if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
+              if (payload.new.status === 'absent') {
+                return oldData.filter((a) => a.member_id !== payload.new.member_id);
+              }
               if (oldData.some((a) => a.member_id === payload.new.member_id))
-                return oldData.map((a) =>
-                  a.member_id === payload.new.member_id ? payload.new : a,
-                );
+                return oldData.map((a) => a.member_id === payload.new.member_id ? payload.new : a);
               return [...oldData, payload.new];
             }
             if (payload.eventType === "DELETE") {
@@ -248,7 +252,6 @@ export default function Attendance({
     const isPresent = presentMap.has(memberId);
     const now = new Date().toISOString();
     
-    // If trying to mark as absent (not present), show absence reason modal
     if (!isPresent && isMarkingAbsent && !memberMarkingAbsent) {
       const member = members.find(m => m.id === memberId);
       if (member) {
@@ -266,7 +269,7 @@ export default function Attendance({
         result = await supabase.from("attendance").delete().eq("event_id", eventId).eq("member_id", memberId);
       } else {
         result = await supabase.from("attendance").upsert(
-          { event_id: eventId, member_id: memberId, scanned_at: now, marked_by: profile.id },
+          { event_id: eventId, member_id: memberId, scanned_at: now, marked_by: profile.id, status: 'present' }, // 🛡️ Status explicitly passed
           { onConflict: 'event_id,member_id', ignoreDuplicates: true }
         );
       }
@@ -311,16 +314,18 @@ export default function Attendance({
     try {
       setActivelySyncing(prev => new Set(prev).add(memberId));
       
-      // Save absence record to database
+      // 🛡️ THE FIX: Match ManualList.jsx by saving to 'attendance' table.
+      // Project Admins have full access to this table so this eliminates the 403 error.
       const { error: absenceError } = await supabase
-        .from('absence_records')
+        .from('attendance')
         .upsert(
           {
             event_id: eventId,
             member_id: memberId,
-            category_id: categoryId,
-            notes: notes || null,
-            recorded_by: profile.id
+            status: 'absent',
+            absence_category_id: categoryId,
+            absence_notes: notes || null,
+            marked_by: profile.id
           },
           { onConflict: 'event_id,member_id', ignoreDuplicates: false }
         );
@@ -329,7 +334,12 @@ export default function Attendance({
       
       toast.success(`${memberMarkingAbsent.name} marked absent with reason`);
       
-      // Reset the modal state
+      // Clear the green checkmark if they previously had one before being marked absent
+      queryClient.setQueryData(QUERY_KEY, (oldData) => {
+        if (!oldData) return [];
+        return oldData.filter(a => a.member_id !== memberId);
+      });
+
       setAbsenceModalOpen(false);
       setMemberMarkingAbsent(null);
       
@@ -344,7 +354,7 @@ export default function Attendance({
         return next;
       });
     }
-  }, [memberMarkingAbsent, eventId, profile?.id]);
+  }, [memberMarkingAbsent, eventId, profile?.id, queryClient, QUERY_KEY]);
 
   const handleScan = useCallback(
     async (code) => {
@@ -359,12 +369,10 @@ export default function Attendance({
       );
 
       if (!member) {
-        console.log('[Attendance] Member not found for code:', cleanCode);
         return { success: false, message: "❌ Not in Roster" };
       }
       
       if (presentMap.has(member.id)) {
-        console.log('[Attendance] Member already checked in:', member.name);
         return {
           success: false,
           message: `⚠️ ${member.name} Already Marked Present`,
@@ -372,7 +380,6 @@ export default function Attendance({
       }
       
       if (activelySyncing.has(member.id)) {
-        console.log('[Attendance] Member currently syncing:', member.name);
         return {
           success: false,
           message: "⏳ Saving...",
@@ -382,10 +389,8 @@ export default function Attendance({
       const success = await markAttendance(member.id);
 
       if (success) {
-        console.log('[Attendance] Successfully marked:', member.name);
         return { success: true, message: `✓ ${member.name} Marked Present` };
       } else {
-        console.log('[Attendance] Failed to mark:', member.name);
         return {
           success: false,
           message: "🔄 Network Error - Try Again",
@@ -411,7 +416,6 @@ export default function Attendance({
         let isGlobalScope = cleanRole === "admin" || cleanRole === "taker";
         let fetchedProjectRole = null;
 
-        // 🛡️ 1. Fetch Explicit Project Assignments first
         const { data: assignment } = await supabase
           .from("project_assignments")
           .select("role, data_scope, scope_mandal_ids")
@@ -434,9 +438,8 @@ export default function Attendance({
           }
         }
         
-        if (isMounted) setProjectAssignment(fetchedProjectRole); // Unlock UI
+        if (isMounted) setProjectAssignment(fetchedProjectRole); 
 
-        // 🛡️ 2. Fallback to System Role Scope if not already global
         if (!isGlobalScope) {
           if (cleanRole === "sanchalak") {
             allowedMandalIds.push(profile.assigned_mandal_id || profile.mandal_id);

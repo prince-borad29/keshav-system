@@ -30,8 +30,13 @@ export default function AbsenceReasonModal({ isOpen, onClose, member, onSave, is
       setSelectedCategory('');
       setNotes('');
       setError('');
+      return;
     }
-  }, [isOpen]);
+
+    setSelectedCategory(member?.absence_category_id || member?.category_id || '');
+    setNotes(member?.absence_notes || member?.notes || '');
+    setError('');
+  }, [isOpen, member]);
 
   const handleSave = async () => {
     if (!selectedCategory) {

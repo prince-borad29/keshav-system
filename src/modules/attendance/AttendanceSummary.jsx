@@ -38,11 +38,11 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
             }
         }
 
-        const [regRes, attRes, absRes] = await Promise.all([
-           regQuery,
-           supabase.from('attendance').select('id, member_id').eq('event_id', event.id),
-           supabase.from('absence_records').select('member_id, absence_categories(label), notes').eq('event_id', event.id)
-        ]);
+          const [regRes, attRes, absRes] = await Promise.all([
+            regQuery,
+            supabase.from('attendance').select('id, member_id, status').eq('event_id', event.id),
+            supabase.from('absence_records').select('member_id, absence_categories(label), notes').eq('event_id', event.id)
+          ]);
 
         if (regRes.error) throw regRes.error;
         if (attRes.error) throw attRes.error;
@@ -53,8 +53,10 @@ export default function AttendanceSummary({ event, project, userScope, onMandalC
           const newSet = new Set();
           attendanceIdMap.current.clear();
           attRes.data?.forEach(a => {
-            newSet.add(a.member_id);
-            attendanceIdMap.current.set(a.id, a.member_id); 
+            if (a.status !== 'absent') {
+              newSet.add(a.member_id);
+              attendanceIdMap.current.set(a.id, a.member_id);
+            }
           });
           setPresentSet(newSet);
           

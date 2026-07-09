@@ -28,12 +28,16 @@ export default function ManualList({ event, project, onBack, mandalFilterId = nu
       if (error) throw error;
 
       const { data: attData } = await supabase.from('attendance').select('member_id').eq('event_id', event.id);
+      const { data: absData } = await supabase.from('absence_records').select('member_id, category_id, notes').eq('event_id', event.id);
       const attMap = new Set(attData?.map(a => a.member_id));
+      const absMap = new Map(absData?.map(a => [a.member_id, a]) || []);
 
       const processed = regData.map(reg => ({
         ...reg.members,
         seat_number: reg.seat_number,
         is_present: attMap.has(reg.member_id),
+        absence_category_id: absMap.get(reg.member_id)?.category_id || '',
+        absence_notes: absMap.get(reg.member_id)?.notes || '',
       })).sort((a, b) => a.name.localeCompare(b.name));
 
       return processed;
@@ -45,15 +49,18 @@ export default function ManualList({ event, project, onBack, mandalFilterId = nu
     mutationFn: async ({ member, absenceCategoryId, absenceNotes }) => {
       const user = (await supabase.auth.getUser()).data.user;
       
+      await withTimeout(
+        supabase.from('attendance').delete().eq('event_id', event.id).eq('member_id', member.id)
+      );
+
       const { error } = await withTimeout(
-        supabase.from('attendance').upsert(
+        supabase.from('absence_records').upsert(
           {
             event_id: event.id,
             member_id: member.id,
-            status: 'absent',
-            absence_category_id: absenceCategoryId,
-            absence_notes: absenceNotes || null,
-            marked_by: user.id
+            category_id: absenceCategoryId,
+            notes: absenceNotes || null,
+            recorded_by: user.id,
           },
           { onConflict: 'event_id,member_id' }
         )
@@ -95,8 +102,10 @@ export default function ManualList({ event, project, onBack, mandalFilterId = nu
       const user = (await supabase.auth.getUser()).data.user;
       if (member.is_present) {
         await supabase.from('attendance').delete().match({ event_id: event.id, member_id: member.id });
+        await supabase.from('absence_records').delete().match({ event_id: event.id, member_id: member.id });
       } else {
         await supabase.from('attendance').insert({ event_id: event.id, member_id: member.id, marked_by: user.id, status: 'present' });
+        await supabase.from('absence_records').delete().match({ event_id: event.id, member_id: member.id });
       }
     },
     onMutate: async (member) => {

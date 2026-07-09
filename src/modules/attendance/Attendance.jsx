@@ -132,6 +132,7 @@ export default function Attendance({
   const QUERY_KEY = useMemo(() => ["attendance", eventId], [eventId]);
 
   const isAdmin = (profile?.role || "").toLowerCase() === "admin";
+  const profileReady = !!profile?.id && profile?.role !== undefined;
   
   const [initLoading, setInitLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(true);
@@ -195,11 +196,29 @@ export default function Attendance({
     refetchOnWindowFocus: true,
   });
 
+  const { data: absenceData = [] } = useQuery({
+    queryKey: ['absence-records', eventId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('absence_records')
+        .select('member_id, category_id, notes')
+        .eq('event_id', eventId);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!eventId,
+    staleTime: 60000,
+  });
+
   const presentMap = useMemo(() => {
     const map = new Map();
     attendanceData.forEach((a) => map.set(a.member_id, a.scanned_at));
     return map;
   }, [attendanceData]);
+
+  const absenceMap = useMemo(() => {
+    return new Map(absenceData.map((a) => [a.member_id, a]));
+  }, [absenceData]);
 
   useEffect(() => {
     if (!eventId) return;
@@ -300,10 +319,15 @@ export default function Attendance({
   const handleMarkAbsence = useCallback((memberId) => {
     const member = members.find(m => m.id === memberId);
     if (member) {
-      setMemberMarkingAbsent(member);
+      const existingAbsence = absenceMap.get(memberId);
+      setMemberMarkingAbsent({
+        ...member,
+        absence_category_id: existingAbsence?.category_id || '',
+        absence_notes: existingAbsence?.notes || '',
+      });
       setAbsenceModalOpen(true);
     }
-  }, [members]);
+  }, [members, absenceMap]);
 
   const handleAbsenceReasonSave = useCallback(async (categoryId, notes) => {
     if (!memberMarkingAbsent || !eventId) return;
@@ -314,20 +338,19 @@ export default function Attendance({
     try {
       setActivelySyncing(prev => new Set(prev).add(memberId));
       
-      // 🛡️ THE FIX: Match ManualList.jsx by saving to 'attendance' table.
-      // Project Admins have full access to this table so this eliminates the 403 error.
+      await supabase.from('attendance').delete().eq('event_id', eventId).eq('member_id', memberId);
+
       const { error: absenceError } = await supabase
-        .from('attendance')
+        .from('absence_records')
         .upsert(
           {
             event_id: eventId,
             member_id: memberId,
-            status: 'absent',
-            absence_category_id: categoryId,
-            absence_notes: notes || null,
-            marked_by: profile.id
+            category_id: categoryId,
+            notes: notes || null,
+            recorded_by: profile.id,
           },
-          { onConflict: 'event_id,member_id', ignoreDuplicates: false }
+          { onConflict: 'event_id,member_id' }
         );
 
       if (absenceError) throw absenceError;
@@ -543,11 +566,11 @@ export default function Attendance({
         if (isMounted) setInitLoading(false);
       }
     };
-    if (projectId && eventId && profile?.id) loadMetadata();
+    if (projectId && eventId && profileReady) loadMetadata();
     return () => {
       isMounted = false;
     };
-  }, [projectId, eventId, profile?.id, loadRosterData]);
+  }, [projectId, eventId, profileReady, loadRosterData]);
 
   const { data: dropdowns } = useQuery({
     queryKey: ["admin-dropdowns-attendance"],

@@ -19,9 +19,10 @@ export default function HomeDashboard() {
   const isAdmin = role === "admin";
 
   const profileId = profile?.id ?? profile?.user_id ?? profile?.uuid;
+  const profileReady = !!profileId && profile?.role !== undefined;
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ["home-dashboard", profileId],
+    queryKey: ["home-dashboard", profileId, role, profile?.gender ?? null],
     queryFn: async () => {
       let allowedProjectIds = [];
 
@@ -103,7 +104,7 @@ export default function HomeDashboard() {
 
       return { primaryEvent, primaryProject, openRegistrations: validRegs, recentProjects: validRecent };
     },
-    enabled: !!profileId,
+    enabled: profileReady,
     staleTime: 1000 * 60 * 2,
   });
 
@@ -241,7 +242,7 @@ export default function HomeDashboard() {
               </div>
             ) : (
               <div className="divide-y divide-gray-100">
-                {openRegistrations.map((p) => (
+                {openRegistrations?.map((p) => (
                   <div
                     key={p.id}
                     // 🛡️ Pass the actual project object directly via router state
@@ -276,7 +277,7 @@ export default function HomeDashboard() {
               <div className="p-8 text-center text-gray-500 text-sm">No recent projects found.</div>
             ) : (
               <div className="divide-y divide-gray-100">
-                {recentProjects.map((p) => (
+                {recentProjects?.map((p) => (
                   <div
                     key={p.id}
                     onClick={() => navigate(`/projects/${p.id}`)}

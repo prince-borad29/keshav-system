@@ -8,14 +8,10 @@ export const useAuth = () => useContext(AuthContext);
 const PROFILE_CACHE_KEY = 'keshav_profile_cache';
 const PROFILE_CACHE_TTL = 1000 * 60 * 30;
 
-// 🔐 SECURITY FIX: Use sessionStorage (cleared on browser close) instead of localStorage
-// Only cache non-sensitive fields: id, email. NEVER cache: role, assigned_mandal_id, assigned_kshetra_id
 const saveProfileCache = (profile) => {
   try {
-    // Only store non-sensitive fields
     const sanitized = {
-      id: profile.id,
-      email: profile.email,
+      ...profile,
       cachedAt: Date.now(),
     };
     sessionStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(sanitized));
@@ -26,7 +22,8 @@ const loadProfileCache = (userId) => {
   try {
     const raw = sessionStorage.getItem(PROFILE_CACHE_KEY);
     if (!raw) return null;
-    const { id, email, cachedAt } = JSON.parse(raw);
+    const cached = JSON.parse(raw);
+    const { id, cachedAt } = cached;
     if (Date.now() - cachedAt > PROFILE_CACHE_TTL) {
       sessionStorage.removeItem(PROFILE_CACHE_KEY);
       return null;
@@ -35,8 +32,7 @@ const loadProfileCache = (userId) => {
       sessionStorage.removeItem(PROFILE_CACHE_KEY);
       return null;
     }
-    // Return only non-sensitive cached data (signals to fetch full profile)
-    return { id, email };
+    return cached;
   } catch (_) {
     return null;
   }
@@ -47,6 +43,17 @@ const clearProfileCache = () => {
     sessionStorage.removeItem(PROFILE_CACHE_KEY);
     localStorage.removeItem(PROFILE_CACHE_KEY); // Also clear old localStorage if exists
   } catch (_) {}
+};
+
+const fetchFullProfile = async (userId) => {
+  const { data } = await Promise.race([
+    supabase.from('user_profiles').select('id,email,full_name,gender,role,assigned_kshetra_id,assigned_mandal_id').eq('id', userId).single(),
+    new Promise((resolve) =>
+      setTimeout(() => resolve({ data: null }), 3500)
+    ),
+  ]);
+
+  return data || null;
 };
 
 export default function AuthProvider({ children }) {
@@ -69,37 +76,26 @@ export default function AuthProvider({ children }) {
           setUser(session.user);
           currentUserId = session.user.id;
 
-          // Load cached profile instantly — unblocks UI with no network call
           const cached = loadProfileCache(session.user.id);
           if (cached) {
             setProfile(cached);
-            setLoading(false); // ← UI unblocks here instantly
+            setLoading(false);
 
-            // Revalidate in background — don't await, don't block
-            supabase
-              .from('user_profiles')
-              .select('*')
-              .eq('id', session.user.id)
-              .single()
-              .then(({ data }) => {
-                if (mounted && data) {
-                  saveProfileCache(data);
-                  setProfile(data);
-                }
-              });
+            fetchFullProfile(session.user.id).then((data) => {
+              if (mounted && data) {
+                saveProfileCache(data);
+                setProfile(data);
+              }
+            });
           } else {
-            // No cache — must fetch, but with a hard timeout
-            const { data } = await Promise.race([
-              supabase.from('user_profiles').select('*').eq('id', session.user.id).single(),
-              new Promise((resolve) =>
-                setTimeout(() => resolve({ data: null }), 8000)
-              ),
-            ]);
+            const data = await fetchFullProfile(session.user.id);
 
             if (mounted) {
               if (data) {
                 saveProfileCache(data);
                 setProfile(data);
+              } else {
+                setProfile(null);
               }
               setLoading(false);
             }
@@ -137,29 +133,22 @@ export default function AuthProvider({ children }) {
           const cached = loadProfileCache(session.user.id);
           if (cached) {
             setProfile(cached);
-            // Background revalidate
-            supabase
-              .from('user_profiles')
-              .select('*')
-              .eq('id', session.user.id)
-              .single()
-              .then(({ data }) => {
-                if (mounted && data) {
-                  saveProfileCache(data);
-                  setProfile(data);
-                }
-              });
+            setLoading(false);
+
+            fetchFullProfile(session.user.id).then((data) => {
+              if (mounted && data) {
+                saveProfileCache(data);
+                setProfile(data);
+              }
+            });
           } else {
-            const { data } = await Promise.race([
-              supabase.from('user_profiles').select('*').eq('id', session.user.id).single(),
-              new Promise((resolve) =>
-                setTimeout(() => resolve({ data: null }), 8000)
-              ),
-            ]);
+            const data = await fetchFullProfile(session.user.id);
             if (mounted) {
               if (data) {
                 saveProfileCache(data);
                 setProfile(data);
+              } else {
+                setProfile(null);
               }
               setLoading(false);
             }

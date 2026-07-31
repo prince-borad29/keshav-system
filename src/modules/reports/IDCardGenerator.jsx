@@ -79,36 +79,126 @@ export default function IDCardGenerator() {
     };
   }, [searchTerm]);
 
-  const createCardBlob = async (m) => {
+  // const createCardBlob = async (m) => {
+  //   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [85, 54] });
+  //   const qrDataUrl = await QRCode.toDataURL(m.internal_code || 'MISSING_ID', { width: 100, margin: 1 });
+  //   const isYuvati = m.gender === 'Yuvati';
+  //   doc.setFillColor(isYuvati ? 236 : 63, isYuvati ? 72 : 81, isYuvati ? 153 : 181);
+  //   doc.rect(0, 0, 85, 12, 'F');
+  //   doc.setTextColor(255, 255, 255);
+  //   doc.setFontSize(10);
+  //   doc.setFont('helvetica', 'bold');
+  //   doc.text("KESHAV APP", 5, 8);
+  //   doc.setFontSize(7);
+  //   doc.setFont('helvetica', 'normal');
+  //   doc.text(m.designation || 'Member', 80, 8, { align: 'right' });
+  //   doc.addImage(qrDataUrl, 'PNG', 4, 15, 24, 24);
+  //   doc.setTextColor(40, 40, 40);
+  //   doc.setFontSize(11);
+  //   doc.setFont('helvetica', 'bold');
+  //   doc.text(`${m.name} ${m.surname}`, 32, 22);
+  //   doc.setFontSize(8);
+  //   doc.setFont('helvetica', 'normal');
+  //   doc.setTextColor(100, 100, 100);
+  //   doc.text(m.mandals?.name || 'Unassigned', 32, 27);
+  //   doc.setFontSize(9);
+  //   doc.setTextColor(0, 0, 0);
+  //   doc.setFont('courier', 'bold');
+  //   doc.text(m.internal_code || 'NO ID', 32, 36);
+  //   doc.setFontSize(5);
+  //   doc.setTextColor(150, 150, 150);
+  //   doc.setFont('helvetica', 'normal');
+  //   doc.text("Official Member Card", 42.5, 51, { align: 'center' });
+  //   return doc.output('blob');
+  // };
+
+const createCardBlob = async (m) => {
+    // 85mm x 54mm Standard ID Card Dimensions
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [85, 54] });
-    const qrDataUrl = await QRCode.toDataURL(m.internal_code || 'MISSING_ID', { width: 100, margin: 1 });
+    
+    // Generate QR Code
+    const qrDataUrl = await QRCode.toDataURL(m.internal_code || 'MISSING_ID', { width: 120, margin: 0 });
     const isYuvati = m.gender === 'Yuvati';
-    doc.setFillColor(isYuvati ? 236 : 63, isYuvati ? 72 : 81, isYuvati ? 153 : 181);
-    doc.rect(0, 0, 85, 12, 'F');
+
+    // --- 1. CARD BACKGROUND & STRUCTURE ---
+    // Clean, crisp white base card background
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, 85, 54, 'F');
+
+    // --- 2. HEADER BAR (BRANDING & DESIGNATION) ---
+    // Deep, professional accent banner
+    doc.setFillColor(isYuvati ? 180 : 41, isYuvati ? 40 : 50, isYuvati ? 95 : 65);
+    doc.rect(0, 0, 85, 11, 'F');
+
+    // Thin accent divider line below header
+    doc.setFillColor(isYuvati ? 220 : 190, isYuvati ? 140 : 150, isYuvati ? 160 : 160);
+    doc.rect(0, 11, 85, 0.8, 'F');
+
+    // Header Text - Left: Brand/App Name
     doc.setTextColor(255, 255, 255);
-    doc.setFontSize(10);
+    doc.setFontSize(8.5);
     doc.setFont('helvetica', 'bold');
-    doc.text("KESHAV APP", 5, 8);
-    doc.setFontSize(7);
+    doc.text("KESHAV APP", 5, 7.2);
+
+    // Header Text - Right: Designation Badge
+    doc.setFontSize(7.5);
     doc.setFont('helvetica', 'normal');
-    doc.text(m.designation || 'Member', 80, 8, { align: 'right' });
-    doc.addImage(qrDataUrl, 'PNG', 4, 15, 24, 24);
-    doc.setTextColor(40, 40, 40);
+    const designationText = (m.designation || 'MEMBER').toUpperCase();
+    doc.text(designationText, 80, 7.2, { align: 'right' });
+
+    // --- 3. QR CODE CONTAINER ---
+    // Subtle border container for QR code
+    doc.setDrawColor(225, 228, 232);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(5, 16, 25, 25, 1.5, 1.5, 'S');
+
+    // Insert QR Code
+    doc.addImage(qrDataUrl, 'PNG', 6, 17, 23, 23);
+
+    // --- 4. MEMBER DETAILS SECTION ---
+    const textLeftMargin = 34;
+
+    // Full Name (Primary Visual Hierarchy)
+    doc.setTextColor(25, 30, 36); // Rich Dark Charcoal
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.text(`${m.name} ${m.surname}`, 32, 22);
+    const fullName = `${m.name || ''} ${m.surname || ''}`.trim() || 'Unknown Member';
+    doc.text(fullName, textLeftMargin, 21);
+
+    // Mandal / Location (Secondary Information)
+    doc.setTextColor(100, 110, 120); // Muted Slate Gray
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
-    doc.setTextColor(100, 100, 100);
-    doc.text(m.mandals?.name || 'Unassigned', 32, 27);
-    doc.setFontSize(9);
-    doc.setTextColor(0, 0, 0);
+    doc.text(m.mandals?.name || 'Unassigned', textLeftMargin, 26);
+
+    // Subtle Divider Line Under Mandal
+    doc.setDrawColor(235, 238, 240);
+    doc.setLineWidth(0.3);
+    doc.line(textLeftMargin, 29.5, 80, 29.5);
+
+    // ID Code Label
+    doc.setTextColor(140, 148, 158);
+    doc.setFontSize(6.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text("INTERNAL ID", textLeftMargin, 34);
+
+    // Internal Code Value (Monospaced for high legibility)
+    doc.setTextColor(30, 41, 59);
+    doc.setFontSize(9.5);
     doc.setFont('courier', 'bold');
-    doc.text(m.internal_code || 'NO ID', 32, 36);
-    doc.setFontSize(5);
-    doc.setTextColor(150, 150, 150);
+    doc.text(m.internal_code || 'NO ID', textLeftMargin, 39);
+
+    // --- 5. FOOTER SECTION ---
+    // Bottom border rule
+    doc.setFillColor(243, 244, 246);
+    doc.rect(0, 46, 85, 8, 'F');
+
+    // Official Verification Text
+    doc.setTextColor(120, 128, 140);
+    doc.setFontSize(6);
     doc.setFont('helvetica', 'normal');
-    doc.text("Official Member Card", 42.5, 51, { align: 'center' });
+    doc.text("OFFICIAL VERIFIED MEMBER IDENTITY", 42.5, 50.8, { align: 'center' });
+
     return doc.output('blob');
   };
 
@@ -201,7 +291,7 @@ export default function IDCardGenerator() {
                       <span>{m.designation}</span> <span className="font-inter lowercase tracking-normal text-gray-300">•</span> <span>{m.mandals?.name}</span>
                     </div>
                  </div>
-                 <Button size="sm" variant="secondary" icon={Download} onClick={async () => saveAs(await createCardBlob(m), `${m.name}_ID.pdf`)}>
+                 <Button size="sm" variant="secondary" icon={Download} onClick={async () => saveAs(await createCardBlob(m), `${m.name}_${m.surname}_ID.pdf`)}>
                     Download
                  </Button>
               </div>

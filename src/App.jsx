@@ -1,41 +1,40 @@
-import React, { lazy, Suspense, Component, useEffect } from "react";
+import React, { lazy, Suspense, Component } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Loader2, WifiOff } from "lucide-react";
 import { Toaster } from "react-hot-toast";
 import { useAuth } from "./contexts/AuthContext";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 
-// --- EAGER IMPORTS ---
-import Layout from "./components/Layout";
-import Login from "./modules/auth/Login";
-import ProtectedRoute from "./components/ProtectedRoute";
-import HomeDashboard from "./modules/home/HomeDashboard";
-import ProjectView from "./modules/projects/ProjectView";
-import IDCardGenerator from "./modules/reports/IDCardGenerator";
-import PublicDispatch from "./modules/public/PublicDispatch";
-import PublicSelfServe from "./modules/public/PublicSelfServe";
-import PublicLinksManager from "./modules/admin/PublicLinksManager";
-import DirectPassDownload from "./modules/public/DirectPassDownload";
+// everything is lazy now, so each route only downloads its own code
+const AuthShell = lazy(() => import("./components/AuthShell"));
+const Layout = lazy(() => import("./components/Layout"));
+const Login = lazy(() => import("./modules/auth/Login"));
+const ProtectedRoute = lazy(() => import("./components/ProtectedRoute"));
+const HomeDashboard = lazy(() => import("./modules/home/HomeDashboard"));
+const ProjectView = lazy(() => import("./modules/projects/ProjectView"));
+const IDCardGenerator = lazy(() => import("./modules/reports/IDCardGenerator"));
+const PublicLinksManager = lazy(() => import("./modules/admin/PublicLinksManager"));
 
-// --- STANDARD LAZY IMPORTS ---
+// public pages: separate tiny chunks, no auth
+const PublicDispatch = lazy(() => import("./modules/public/PublicDispatch"));
+const PublicSelfServe = lazy(() => import("./modules/public/PublicSelfServe"));
+const DirectPassDownload = lazy(() => import("./modules/public/DirectPassDownload"));
+
 const MemberDirectory = lazy(() => import("./modules/members/MemberDirectory"));
 const MemberProfile = lazy(() => import("./modules/members/MemberProfile"));
-const ProjectDashboard = lazy(
-  () => import("./modules/projects/ProjectDashboard"),
-);
-const SettingsDashboard = lazy(
-  () => import("./modules/settings/SettingsDashboard"),
-);
+const ProjectDashboard = lazy(() => import("./modules/projects/ProjectDashboard"));
+const SettingsDashboard = lazy(() => import("./modules/settings/SettingsDashboard"));
 const Organization = lazy(() => import("./modules/organization/Organization"));
 const TagManager = lazy(() => import("./modules/settings/TagManager"));
-const ReportsDashboard = lazy(
-  () => import("./modules/reports/ReportsDashboard"),
-);
-const RegistrationDashboard = lazy(
-  () => import("./modules/registration/RegistrationDashboard"),
-);
+const ReportsDashboard = lazy(() => import("./modules/reports/ReportsDashboard"));
+const RegistrationDashboard = lazy(() => import("./modules/registration/RegistrationDashboard"));
 const Attendance = lazy(() => import("./modules/attendance/Attendance"));
+
+const ReactQueryDevtools = import.meta.env.DEV
+  ? lazy(() =>
+      import("@tanstack/react-query-devtools").then((m) => ({ default: m.ReactQueryDevtools }))
+    )
+  : () => null;
 
 // --- CLEAN ERROR BOUNDARY ---
 class GlobalErrorBoundary extends Component {
@@ -155,95 +154,65 @@ export default function App() {
       <QueryClientProvider client={queryClient}>
         <Suspense fallback={<PageLoader />}>
           <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route
-              path="/pass/:token/:memberId"
-              element={<DirectPassDownload />}
-            />{" "}
-            <Route
-              path="/public/dispatch/:token"
-              element={<PublicDispatch />}
-            />
-            <Route
-              path="/public/qr-pass/:token"
-              element={<PublicSelfServe />}
-            />
-            <Route element={<Layout />}>
-              <Route element={<ProtectedRoute />}>
-                <Route path="/" element={<ProtectedHome />} />
-              </Route>
+            {/* PUBLIC: no AuthProvider, no Layout */}
+            <Route path="/pass/:token/:memberId" element={<DirectPassDownload />} />
+            <Route path="/public/dispatch/:token" element={<PublicDispatch />} />
+            <Route path="/public/qr-pass/:token" element={<PublicSelfServe />} />
 
-              <Route
-                element={
-                  <ProtectedRoute
-                    allowedRoles={[
-                      "admin",
-                      "nirdeshak",
-                      "nirikshak",
-                      "sanchalak",
-                      "project_admin",
-                    ]}
-                  />
-                }
-              >
-                <Route path="/id" element={<IDCardGenerator />} />
-                <Route path="/directory" element={<MemberDirectory />} />
-                <Route path="/directory/:id" element={<MemberProfile />} />
-                <Route path="/projects" element={<ProjectDashboard />} />
-                <Route path="/projects/:projectId" element={<ProjectView />} />
+            {/* PRIVATE: auth only loads here */}
+            <Route element={<AuthShell />}>
+              <Route path="/login" element={<Login />} />
+
+              <Route element={<Layout />}>
+                <Route element={<ProtectedRoute />}>
+                  <Route path="/" element={<ProtectedHome />} />
+                </Route>
+
                 <Route
-                  path="/registration"
-                  element={<RegistrationDashboard />}
-                />
-              </Route>
+                  element={
+                    <ProtectedRoute
+                      allowedRoles={["admin", "nirdeshak", "nirikshak", "sanchalak", "project_admin"]}
+                    />
+                  }
+                >
+                  <Route path="/id" element={<IDCardGenerator />} />
+                  <Route path="/directory" element={<MemberDirectory />} />
+                  <Route path="/directory/:id" element={<MemberProfile />} />
+                  <Route path="/projects" element={<ProjectDashboard />} />
+                  <Route path="/projects/:projectId" element={<ProjectView />} />
+                  <Route path="/registration" element={<RegistrationDashboard />} />
+                </Route>
 
-              <Route
-                element={
-                  <ProtectedRoute
-                    allowedRoles={[
-                      "admin",
-                      "taker",
-                      "sanchalak",
-                      "project_admin",
-                    ]}
-                  />
-                }
-              >
                 <Route
-                  path="/attendance/:projectId/:eventId"
-                  element={<Attendance />}
-                />
-              </Route>
+                  element={
+                    <ProtectedRoute allowedRoles={["admin", "taker", "sanchalak", "project_admin"]} />
+                  }
+                >
+                  <Route path="/attendance/:projectId/:eventId" element={<Attendance />} />
+                </Route>
 
-              <Route element={<ProtectedRoute allowedRoles={["admin"]} />}>
-                <Route path="/settings" element={<SettingsDashboard />} />
-                <Route path="/tags" element={<TagManager />} />
-                <Route path="/reports" element={<ReportsDashboard />} />
-                <Route path="/organization" element={<Organization />} />
-                <Route path="/public-links" element={<PublicLinksManager />} />
+                <Route element={<ProtectedRoute allowedRoles={["admin"]} />}>
+                  <Route path="/settings" element={<SettingsDashboard />} />
+                  <Route path="/tags" element={<TagManager />} />
+                  <Route path="/reports" element={<ReportsDashboard />} />
+                  <Route path="/organization" element={<Organization />} />
+                  <Route path="/public-links" element={<PublicLinksManager />} />
+                </Route>
               </Route>
             </Route>
           </Routes>
         </Suspense>
-        <ReactQueryDevtools initialIsOpen={false} />
+
+        <Suspense fallback={null}>
+          <ReactQueryDevtools initialIsOpen={false} />
+        </Suspense>
+
         <Toaster
           position="top-center"
-          reverseOrder={false}
           gutter={8}
           toastOptions={{
             duration: 1500,
-            style: {
-              background: "#fff",
-              color: "#000",
-              borderRadius: "0.5rem",
-              boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
-            },
-            success: {
-              duration: 1500,
-            },
-            error: {
-              duration: 1500,
-            },
+            style: { background: "#fff", color: "#000", borderRadius: "0.5rem", boxShadow: "0 4px 12px rgba(0,0,0,0.15)" },
           }}
         />
       </QueryClientProvider>

@@ -29,24 +29,6 @@ const triggerDownload = (url, filename) => {
 };
 
 export default function PublicSelfServe() {
-  // top of the file
-  const t0 = performance.now();
-  const mark = (label) =>
-    console.log(`[perf] ${label}: ${Math.round(performance.now() - t0)}ms`);
-
-  // in the component body
-  useEffect(() => {
-    mark("page mounted");
-  }, []);
-
-  // inside your generate / download flow
-  mark("rpc start");
-  // ...await supabase.rpc(...)
-  mark("rpc done");
-  // ...await import("../../utils/EventQRPassGenerator")
-  mark("generator loaded");
-  // ...await generateProjectQRPassBlob(...)
-  mark("pdf built");
 
   const { token } = useParams();
   const [mobile, setMobile] = useState("");

@@ -7,23 +7,6 @@ import { CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
 
 export default function DirectPassDownload() {
 
-  // top of the file
-const t0 = performance.now();
-const mark = (label) => console.log(`[perf] ${label}: ${Math.round(performance.now() - t0)}ms`);
-
-// in the component body
-useEffect(() => { mark("page mounted"); }, []);
-
-// inside your generate / download flow
-mark("rpc start");
-// ...await supabase.rpc(...)
-mark("rpc done");
-// ...await import("../../utils/EventQRPassGenerator")
-mark("generator loaded");
-// ...await generateProjectQRPassBlob(...)
-mark("pdf built");
-
-
   const { token, memberId } = useParams();
   const [status, setStatus] = useState("downloading"); // 'downloading', 'success', 'error'
 

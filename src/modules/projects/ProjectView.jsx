@@ -75,14 +75,16 @@ export default function ProjectView() {
   const isPast = (date) => new Date(date) < new Date().setHours(0,0,0,0);
 
   // 🛡️ CAPABILITIES FIX: Normalize the string to catch different casing/naming from the DB
-  const normalizedProjectRole = (projectRole || '').toLowerCase().trim();
+  const normalizedProjectRole = (projectRole || '').toLowerCase().trim();  
   
   const isCoordinator = normalizedProjectRole === 'coordinator' || normalizedProjectRole === 'project_admin';
-  const isEditor = normalizedProjectRole === 'editor' || normalizedProjectRole === 'volunteer';
-  const isNirdeshak = normalizedProjectRole === 'nirdeshak';
+  const isEditor = normalizedProjectRole === '  editor' || normalizedProjectRole === 'volunteer';
+  const isNirdeshak = profile?.role === 'nirdeshak';
+  const isNirikshak = profile?.role === 'nirikshak';
+  const isSanchalak = profile?.role === 'sanchalak';
   
   const canManageEvents = isAdmin || isCoordinator;
-  const canMarkAttendance = isAdmin || isCoordinator || isEditor || isNirdeshak;
+  const canMarkAttendance = isAdmin || isCoordinator || isEditor || isNirdeshak || isNirikshak || isSanchalak;
   const canManageStaff = isAdmin;
 
   if (loadingProject) return <div className="p-12 text-center text-gray-400"><Loader2 className="animate-spin inline mr-2" size={24} /> Loading project...</div>;

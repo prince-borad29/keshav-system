@@ -62,7 +62,6 @@ useEffect(() => {
       password: formData.password,
     });
 
-    console.log('[LOGIN] result:', data, error);
     if (error) throw error;
     
     // 🔐 SECURITY: Reset rate limit on successful login

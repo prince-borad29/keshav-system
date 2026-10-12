@@ -535,12 +535,28 @@ export default function Attendance({
   const project = metaQ.data?.project;
   const attendanceData = attendanceQ.data ?? EMPTY;
 
-  const canMark = useMemo(() => {
+const canMark = useMemo(() => {
     if (propReadOnly) return false;
+
+    // 1. Check if the event is loaded
+    if (event) {
+      // Check if it's a past event (ignoring the exact time of day)
+      const isPastEvent = new Date(event.date).setHours(0, 0, 0, 0) < new Date().setHours(0, 0, 0, 0);
+      
+      // Check if it's non-primary (adjust 'is_primary' if your DB column is named differently, like 'type')
+      const isNonPrimary = event.is_primary === false;
+
+      // 2. If it's a past OR non-primary event, only Admins can edit
+      if ((isPastEvent || isNonPrimary) && !isAdmin) {
+        return false;
+      }
+    }
+
+    // 3. Normal role-based checks for current, primary events
     if (["admin", "taker", "sanchalak", "nirikshak", "nirdeshak"].includes(sysRole)) return true;
     if (["coordinator", "editor", "project_admin"].includes(projectAssignment)) return true;
     return false;
-  }, [sysRole, propReadOnly, projectAssignment]);
+  }, [sysRole, propReadOnly, projectAssignment, event, isAdmin]);
 
   // ── derived lookups (rebuilt only when their source changes) ──
   const presentMap = useMemo(() => {

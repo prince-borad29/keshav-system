@@ -1,11 +1,12 @@
 import QRCode from "qrcode";
 import { jsPDF } from "jspdf";
+import logoUrl from "../assets/baps-logo.png";
 
 // ───────────────────────── config ─────────────────────────
 const W = 430;
-const CUT = 68;              // height removed with the logo
-const H = 832.61 - CUT;      // 764.61
-const SCALE = 4; // 1720px wide ≈ 386dpi at print size
+const CUT = 68;
+const H = 818 - CUT;
+const SCALE = 4;
 const JPEG_QUALITY = 0.95;
 const MAX_CONCURRENCY = Math.min(
   4,
@@ -18,7 +19,7 @@ const SANS = "Arial,Helvetica,sans-serif";
 const SERIF = "Georgia,'Times New Roman',serif";
 
 const QR_X = 105,
-  QR_Y = 439.61 - CUT,       // vector QR in the PDF moves up too
+  QR_Y = 439.61 - CUT,
   QR_SIZE = 220;
 
 // ───────────────────────── helpers ─────────────────────────
@@ -30,6 +31,30 @@ const esc = (s = "") =>
         c
       ],
   );
+
+// DB function returns name + surname already joined; accept either key
+export const getName = (m) =>
+  String(m?.name ?? m?.member_name ?? "").trim();
+
+let logoPromise;
+let logoDataUrl = "";
+const ensureLogo = () =>
+  (logoPromise ||= fetch(logoUrl)
+    .then((r) => r.blob())
+    .then(
+      (b) =>
+        new Promise((res, rej) => {
+          const fr = new FileReader();
+          fr.onload = () => res(fr.result);
+          fr.onerror = rej;
+          fr.readAsDataURL(b);
+        }),
+    )
+    .then((u) => (logoDataUrl = u))
+    .catch((e) => {
+      logoPromise = null; // allow a retry
+      throw e;
+    }));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -85,12 +110,13 @@ const createLimiter = (max) => {
 };
 const limit = createLimiter(MAX_CONCURRENCY);
 
-// lazy text measuring (reuses one canvas)
+// lazy text measuring (reuses one canvas), safe for empty/undefined text
 let measureCtx;
 const measure = (text, font, spacing = 0) => {
+  const t = String(text ?? "");
   measureCtx ||= document.createElement("canvas").getContext("2d");
   measureCtx.font = font;
-  return measureCtx.measureText(text).width + [...text].length * spacing;
+  return measureCtx.measureText(t).width + [...t].length * spacing;
 };
 
 const cssGradient = (id, angle, x, y, w, h, stops) => {
@@ -131,23 +157,11 @@ let staticParts;
 const getStatic = () => {
   if (staticParts) return staticParts;
 
-  const subText = "BAPS NAVARATRI";
+  const subText = "12-14 OCT";
   const subW = measure(subText, `700 14px ${SANS}`, 5);
   const subStart = W / 2 - (80 + 24 + subW) / 2;
 
-  const glyphs = ["❋", "✿", "❋", "✿", "❋", "✿", "❋"];
-  const gw = glyphs.map((g) => measure(g, `30px ${SANS}`, 2));
-  const gap = (372 - gw.reduce((a, b) => a + b, 0)) / 7;
-  let gx = 29 + gap / 2;
-  const flowers = glyphs
-    .map((g, i) => {
-      const out = `<text x="${gx.toFixed(2)}" y="803" font-size="30" letter-spacing="2" fill="#6492c7" font-family="${SANS}">${g}</text>`;
-      gx += gw[i] + gap;
-      return out;
-    })
-    .join("");
-
-  const head = `<svg xmlns="http://www.w3.org/2000/svg" width="${W * SCALE}" height="${H * SCALE}" viewBox="0 0 ${W} ${H}" text-rendering="geometricPrecision">
+  const head = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W * SCALE}" height="${H * SCALE}" viewBox="0 0 ${W} ${H}" text-rendering="geometricPrecision">
 <defs>
   ${cssGradient("bg", 145, 1, 1, 428, H - 2, [
     [0, "#ffffff"],
@@ -184,9 +198,10 @@ const getStatic = () => {
   <rect x="91" y="433.61" width="248" height="248" rx="26" fill="#315b8c" fill-opacity=".04"/>
   <rect x="91" y="429.61" width="248" height="248" rx="26" fill="#315b8c" fill-opacity=".05"/>
   <rect x="91" y="425.61" width="248" height="248" rx="26" fill="#fff"/>
-  <line x1="30" y1="761.61" x2="400" y2="761.61" stroke="#8db2df" stroke-width="2"
-        stroke-linecap="round" stroke-dasharray="0 ${(370 / 92).toFixed(4)}"/>
-  ${flowers}
+
+  <!-- footer -->
+  <text x="215" y="790" text-anchor="middle" font-family="${SANS}" font-weight="700"
+        font-size="16" letter-spacing="0.6" fill="#4b76ac">BAPS RAJKOT YUVA PRAVRUTI</text>
 `;
 
   const tail = `</g></g>
@@ -199,13 +214,10 @@ const getStatic = () => {
 
 // ─────────── per-member SVG (only the dynamic bits) ───────────
 const buildSvg = (member) => {
-  console.log(member);
-  
   const { head, tail } = getStatic();
-  const name = String(member.member_name || "");
+  const name = getName(member);
   const mandal = member.mandal_name || "";
   const kshetra = member.kshetra_name || "";
-  const code = String(member.internal_code || "");
 
   let fs = 43,
     ls = -1.4;
@@ -217,30 +229,13 @@ const buildSvg = (member) => {
   }
   const nameBase = 321.29 - (43 - fs) * 0.3;
 
-  const pillW = Math.max(142, measure(code, `700 25px ${SANS}`, 1) + 52);
-  const rx0 = W / 2 - (138 + pillW) / 2;
-  const rowCY = 714.11;
-  const pillX = rx0 + 69;
-  const diamond = (cx) =>
-    `<rect x="${cx - 4}" y="${rowCY - 4}" width="8" height="8" fill="none" stroke="#527fb8" stroke-width="2" transform="rotate(45 ${cx} ${rowCY})"/>`;
-
   const dynamic = `
   <text x="215" y="${nameBase.toFixed(2)}" text-anchor="middle" font-family="${SANS}" font-weight="700"
         font-size="${fs.toFixed(2)}" letter-spacing="${ls.toFixed(3)}" fill="#102b4d">${esc(name)}</text>
   <text x="215" y="364.11" text-anchor="middle" font-family="${SANS}" font-weight="700" font-size="21" fill="#4b76ac">${esc(mandal)}</text>
   <text x="215" y="392.42" text-anchor="middle" font-family="${SANS}" font-size="19" fill="#4b76ac">${esc(kshetra)}</text>
 
-  <defs>${cssGradient("pill", 110, pillX, 691.61, pillW, 45, [
-    [0, "#e3edfb"],
-    [1, "#d5e4f8"],
-  ])}</defs>
-  <rect x="${rx0}" y="${rowCY - 0.75}" width="35" height="1.5" fill="#6e9bd0"/>
-  ${diamond(rx0 + 52)}
-  <rect x="${pillX}" y="691.61" width="${pillW}" height="45" rx="22.5" fill="url(#pill)"/>
-  <text x="${pillX + pillW / 2 + 0.5}" y="722.77" text-anchor="middle" font-family="${SANS}" font-weight="700"
-        font-size="25" letter-spacing="1" fill="#173b66">${esc(code)}</text>
-  ${diamond(pillX + pillW + 17)}
-  <rect x="${pillX + pillW + 34}" y="${rowCY - 0.75}" width="35" height="1.5" fill="#6e9bd0"/>
+  <image href="${logoDataUrl}" xlink:href="${logoDataUrl}" x="180" y="682.6" width="70" height="70" preserveAspectRatio="xMidYMid meet"/>
 `;
   return head + dynamic + tail;
 };
@@ -269,7 +264,7 @@ const canvasToJpeg = async (canvas) => {
 
 const rasterize = async (member, signal) => {
   if (signal?.aborted) throw abortError();
-
+  await ensureLogo();
   const code = String(member.internal_code || "") || "N/A";
   const qr = QRCode.create(code, { errorCorrectionLevel: "H" });
   const svg = buildSvg(member);
@@ -309,7 +304,7 @@ const rasterize = async (member, signal) => {
 const inflight = new Map();
 const renderCard = (member, signal) => {
   const key = [
-    member.member_name,
+    getName(member),
     member.mandal_name,
     member.kshetra_name,
     member.internal_code,
@@ -366,7 +361,7 @@ export const generateProjectQRPass = async (member, { signal } = {}) => {
   const card = await renderCard(member, signal);
   const pdf = newPdf();
   drawCard(pdf, card);
-  pdf.save(`${safeName(member.member_name)}_ID_Pass.pdf`);
+  pdf.save(`${safeName(getName(member))}_ID_Pass.pdf`);
 };
 
 /** Many passes -> ONE multi-page PDF. Failed members are reported, not fatal. */
@@ -407,6 +402,11 @@ export const generateProjectQRPassBlob = async (member, { signal } = {}) => {
   drawCard(pdf, card);
   return {
     blob: pdf.output("blob"),
-    filename: `${safeName(member.member_name)}_ID_Pass.pdf`,
+    filename: `${safeName(getName(member))}_ID_Pass.pdf`,
   };
+};
+
+export const warmUp = () => {
+  getStatic();
+  return Promise.all([ensureLogo(), document.fonts?.ready]);
 };

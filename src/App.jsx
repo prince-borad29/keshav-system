@@ -185,7 +185,7 @@ export default function App() {
 
                 <Route
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "taker", "sanchalak","nidreshak","nirikshak", "project_admin"]} />
+                    <ProtectedRoute allowedRoles={["admin", "taker", "sanchalak","nirdeshak","nirikshak", "project_admin"]} />
                   }
                 >
                   <Route path="/attendance/:projectId/:eventId" element={<Attendance />} />

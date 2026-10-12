@@ -79,9 +79,10 @@ export default function ProjectView() {
   
   const isCoordinator = normalizedProjectRole === 'coordinator' || normalizedProjectRole === 'project_admin';
   const isEditor = normalizedProjectRole === 'editor' || normalizedProjectRole === 'volunteer';
+  const isNirdeshak = normalizedProjectRole === 'nirdeshak';
   
   const canManageEvents = isAdmin || isCoordinator;
-  const canMarkAttendance = isAdmin || isCoordinator || isEditor;
+  const canMarkAttendance = isAdmin || isCoordinator || isEditor || isNirdeshak;
   const canManageStaff = isAdmin;
 
   if (loadingProject) return <div className="p-12 text-center text-gray-400"><Loader2 className="animate-spin inline mr-2" size={24} /> Loading project...</div>;

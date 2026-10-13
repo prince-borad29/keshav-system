@@ -116,54 +116,58 @@ export default function AuthProvider({ children }) {
     initialize();
 
     // Listener handles changes AFTER init — login, logout, token refresh
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+    const { data: { subscription } } =
+  supabase.auth.onAuthStateChange((event, session) => {
+    if (!mounted) return;
+
+    if (event === "SIGNED_OUT" || !session?.user) {
+      currentUserId = null;
+      clearProfileCache();
+      setUser(null);
+      setProfile(null);
+      setLoading(false);
+      return;
+    }
+
+    if (event === "TOKEN_REFRESHED") {
+      setUser(session.user);
+      return;
+    }
+
+    if (
+      event === "SIGNED_IN" &&
+      session.user.id !== currentUserId
+    ) {
+      currentUserId = session.user.id;
+      setUser(session.user);
+
+      // Do not await Supabase queries inside this callback.
+      setTimeout(async () => {
         if (!mounted) return;
 
-        if (event === 'SIGNED_OUT' || !session?.user) {
-          currentUserId = null;
-          clearProfileCache();
-          setUser(null);
-          setProfile(null);
+        const cached = loadProfileCache(session.user.id);
+
+        if (cached) {
+          setProfile(cached);
           setLoading(false);
           return;
         }
 
-        if (event === 'SIGNED_IN' && session.user.id !== currentUserId) {
-          currentUserId = session.user.id;
-          setUser(session.user);
+        const data = await fetchFullProfile(session.user.id);
 
-          const cached = loadProfileCache(session.user.id);
-          if (cached) {
-            setProfile(cached);
-            setLoading(false);
+        if (!mounted || currentUserId !== session.user.id) return;
 
-            fetchFullProfile(session.user.id).then((data) => {
-              if (mounted && data) {
-                saveProfileCache(data);
-                setProfile(data);
-              }
-            });
-          } else {
-            const data = await fetchFullProfile(session.user.id);
-            if (mounted) {
-              if (data) {
-                saveProfileCache(data);
-                setProfile(data);
-              } else {
-                setProfile(null);
-              }
-              setLoading(false);
-            }
-          }
+        if (data) {
+          saveProfileCache(data);
+          setProfile(data);
+        } else {
+          setProfile(null);
         }
 
-        // TOKEN_REFRESHED — silently update user, don't re-fetch profile
-        if (event === 'TOKEN_REFRESHED' && session?.user) {
-          setUser(session.user);
-        }
-      }
-    );
+        setLoading(false);
+      }, 0);
+    }
+  });
 
     return () => {
       mounted = false;

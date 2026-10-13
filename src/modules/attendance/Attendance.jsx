@@ -910,7 +910,26 @@ export default function Attendance({
         return true;
       } catch (err) {
         console.error("[Marking Error]:", err);
-        // roll the optimistic change back
+        // A timeout can happen after Supabase has committed the write. Confirm the
+        // server state before rolling back, otherwise a successful scan is shown as
+        // failed and can be scanned again.
+        try {
+          const { data, error } = await supabase
+            .from("attendance")
+            .select("id")
+            .eq("event_id", eventId)
+            .eq("member_id", memberId)
+            .maybeSingle()
+            .abortSignal(timeoutSignal(REQUEST_TIMEOUT_MS));
+          if (error) throw error;
+
+          const isPresent = !!data;
+          if (isPresent === !wasPresent) return true;
+        } catch (verifyErr) {
+          console.error("[Attendance Verification Error]:", verifyErr);
+        }
+
+        // The write was not confirmed; roll the optimistic change back.
         patchAttendance(
           memberId,
           wasPresent

@@ -249,9 +249,6 @@ export default function PublicSelfServe() {
         </form>
       </div>
 
-      <p className="mt-8 text-xs text-gray-400">
-        Secure Pass System • Do not share your downloaded QR code
-      </p>
     </div>
   );
 }

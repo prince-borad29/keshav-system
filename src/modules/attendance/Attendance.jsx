@@ -39,16 +39,22 @@ const QrScanner = lazy(() => import("./QrScanner"));
 const AttendanceSummary = lazy(() => import("./AttendanceSummary"));
 
 // ───────────────────────── tuning knobs ─────────────────────────
-const PAGE = 1000;                 // Supabase max rows per request
-const FETCH_CONCURRENCY = 4;       // parallel page downloads
-const REQUEST_TIMEOUT_MS = 5000;   // per write attempt
-const MARK_ATTEMPTS = 2;           // tries per mark (writes are idempotent)
-const USE_REALTIME = true;         // set false to use polling only
-const FLUSH_MS = 250;              // batch realtime events into one render
-const POLL_MS = 15000;             // refetch interval while realtime is down
-const RECONCILE_MS = 120000;       // safety refetch while realtime is up
+const PAGE = 1000; // Supabase max rows per request
+const FETCH_CONCURRENCY = 4; // parallel page downloads
+const REQUEST_TIMEOUT_MS = 5000; // per write attempt
+const MARK_ATTEMPTS = 2; // tries per mark (writes are idempotent)
 const ROSTER_STALE_MS = 5 * 60 * 1000;
-const RENDER_STEP = 80;            // rows rendered per chunk
+const RENDER_STEP = 80; // rows rendered per chunk
+
+// Realtime is controlled from Supabase (add/drop `attendance` in the supabase_realtime
+// publication). The page adapts by itself, so there is nothing to change here.
+const USE_REALTIME = true;
+const FLUSH_MS = 1000; // batch realtime events into one render
+const RESUBSCRIBE_MS = 60000; // while not connected, retry the realtime subscription
+const CHECK_MS_LIVE = 60000; // cheap count check while realtime is connected
+const CHECK_MS_FALLBACK = 20000; // cheap count check while realtime is off
+const FULL_MS_LIVE = 300000; // safety full refresh (realtime connected)
+const FULL_MS_FALLBACK = 120000; // safety full refresh (realtime off)
 
 // members columns needed by this page.
 // If your members table has no father_name column, remove it here.
@@ -57,10 +63,25 @@ const MEMBER_COLUMNS =
 
 const EMPTY = [];
 const DEFAULT_SCOPE = { mandalIds: [], kshetraId: null, isGlobal: false };
-const DEFAULT_ADV_FILTERS = { kshetra_id: "", mandal_id: "", designation: "", gender: "" };
+const DEFAULT_ADV_FILTERS = {
+  kshetra_id: "",
+  mandal_id: "",
+  designation: "",
+  gender: "",
+};
 const DEFAULT_SORT = [{ column: "name", ascending: true }];
-const ROW_STYLE = { contentVisibility: "auto", containIntrinsicSize: "auto 64px" };
-const DESIGNATIONS = ["Nirdeshak", "Nirikshak", "Sanchalak", "Member", "Sah Sanchalak", "Sampark Karyakar"];
+const ROW_STYLE = {
+  contentVisibility: "auto",
+  containIntrinsicSize: "auto 64px",
+};
+const DESIGNATIONS = [
+  "Nirdeshak",
+  "Nirikshak",
+  "Sanchalak",
+  "Member",
+  "Sah Sanchalak",
+  "Sampark Karyakar",
+];
 const SORTABLE_COLUMNS = [
   { value: "name", label: "First Name" },
   { value: "surname", label: "Last Name" },
@@ -70,21 +91,35 @@ const SORTABLE_COLUMNS = [
   { value: "time", label: "Check-in Time" },
 ];
 
-const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+const collator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
 
 // ───────────────────────── helpers ─────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const timeoutSignal = (ms) => {
-  if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) return AbortSignal.timeout(ms);
+  if (typeof AbortSignal !== "undefined" && AbortSignal.timeout)
+    return AbortSignal.timeout(ms);
   const c = new AbortController();
   setTimeout(() => c.abort(), ms);
   return c.signal;
 };
 
 // network blips, timeouts, 5xx, overloaded DB => worth retrying
-const TRANSIENT_CODES = new Set(["57014", "53300", "08006", "08001", "PGRST000", "PGRST001", "PGRST002", "PGRST003"]);
-const isTransient = (e) => !e?.code || TRANSIENT_CODES.has(e.code) || e?.status >= 500;
+const TRANSIENT_CODES = new Set([
+  "57014",
+  "53300",
+  "08006",
+  "08001",
+  "PGRST000",
+  "PGRST001",
+  "PGRST002",
+  "PGRST003",
+]);
+const isTransient = (e) =>
+  !e?.code || TRANSIENT_CODES.has(e.code) || e?.status >= 500;
 
 const withRetry = async (fn, attempts = MARK_ATTEMPTS) => {
   for (let i = 0; ; i++) {
@@ -100,27 +135,37 @@ const withRetry = async (fn, attempts = MARK_ATTEMPTS) => {
 const mapLimit = async (items, limit, fn) => {
   const results = new Array(items.length);
   let next = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
-      const idx = next++;
-      results[idx] = await fn(items[idx], idx);
-    }
-  });
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (next < items.length) {
+        const idx = next++;
+        results[idx] = await fn(items[idx], idx);
+      }
+    },
+  );
   await Promise.all(workers);
   return results;
 };
 
 // stable data (roster): first page returns the count, the rest download in parallel
 const fetchAllParallel = async (build, signal) => {
-  const first = await build({ count: "exact" }).range(0, PAGE - 1).abortSignal(signal);
+  const first = await build({ count: "exact" })
+    .range(0, PAGE - 1)
+    .abortSignal(signal);
   if (first.error) throw first.error;
   const rows = first.data || [];
   const total = first.count ?? rows.length;
   if (rows.length < PAGE || total <= PAGE) return rows;
 
-  const pageIdx = Array.from({ length: Math.ceil(total / PAGE) - 1 }, (_, k) => k + 1);
+  const pageIdx = Array.from(
+    { length: Math.ceil(total / PAGE) - 1 },
+    (_, k) => k + 1,
+  );
   const pages = await mapLimit(pageIdx, FETCH_CONCURRENCY, async (p) => {
-    const { data, error } = await build().range(p * PAGE, (p + 1) * PAGE - 1).abortSignal(signal);
+    const { data, error } = await build()
+      .range(p * PAGE, (p + 1) * PAGE - 1)
+      .abortSignal(signal);
     if (error) throw error;
     return data || [];
   });
@@ -145,7 +190,9 @@ const fetchAllKeyset = async (build, signal) => {
 
 // "Patel  Jay" -> ["patel","jay"]; "+91 98765 43210" -> ["9876543210"]
 const getTokens = (raw) => {
-  const s = String(raw || "").trim().toLowerCase();
+  const s = String(raw || "")
+    .trim()
+    .toLowerCase();
   if (!s) return [];
   if (/^[\d\s+\-()]+$/.test(s)) {
     let d = s.replace(/\D/g, "");
@@ -158,17 +205,29 @@ const getTokens = (raw) => {
 // ───────────────────────── data loaders ─────────────────────────
 async function loadMeta({ projectId, eventId, signal }) {
   const [evt, proj] = await Promise.all([
-    supabase.from("events").select("*").eq("id", eventId).abortSignal(signal).maybeSingle(),
-    supabase.from("projects").select("*").eq("id", projectId).abortSignal(signal).maybeSingle(),
+    supabase
+      .from("events")
+      .select("*")
+      .eq("id", eventId)
+      .abortSignal(signal)
+      .maybeSingle(),
+    supabase
+      .from("projects")
+      .select("*")
+      .eq("id", projectId)
+      .abortSignal(signal)
+      .maybeSingle(),
   ]);
   if (evt.error) throw evt.error;
   if (proj.error) throw proj.error;
-  if (!evt.data || !proj.data) throw Object.assign(new Error("NOT_FOUND"), { notFound: true });
+  if (!evt.data || !proj.data)
+    throw Object.assign(new Error("NOT_FOUND"), { notFound: true });
   return { event: evt.data, project: proj.data };
 }
 
 async function loadRoster({ projectId, profile, signal }) {
   const role = (profile.role || "").toLowerCase().trim();
+  
   const homeMandal = profile.assigned_mandal_id || profile.mandal_id;
   const homeKshetra = profile.assigned_kshetra_id || profile.kshetra_id;
 
@@ -185,13 +244,16 @@ async function loadRoster({ projectId, profile, signal }) {
     .maybeSingle();
   if (aErr) throw aErr;
 
-  const projectRole = assignment ? (assignment.role || "").toLowerCase().trim() : null;
+  const projectRole = assignment
+    ? (assignment.role || "").toLowerCase().trim()
+    : null;
   if (assignment) {
     const dScope = (assignment.data_scope || "").toLowerCase().trim();
     if (dScope === "global") isGlobal = true;
     if (dScope === "kshetra") kshetraId = homeKshetra;
     if (dScope === "mandal") {
-      if (assignment.scope_mandal_ids?.length > 0) mandalIds.push(...assignment.scope_mandal_ids);
+      if (assignment.scope_mandal_ids?.length > 0)
+        mandalIds.push(...assignment.scope_mandal_ids);
       else mandalIds.push(homeMandal);
     }
   }
@@ -233,9 +295,12 @@ async function loadRoster({ projectId, profile, signal }) {
       .eq("kshetra_id", kshetraId)
       .abortSignal(signal);
     if (error) throw error;
-    queryMandalIds = [...new Set([...mandalIds, ...(data || []).map((m) => m.id)])];
+    queryMandalIds = [
+      ...new Set([...mandalIds, ...(data || []).map((m) => m.id)]),
+    ];
   }
-  if (!isGlobal && queryMandalIds.length === 0) return { members: [], projectRole, scope };
+  if (!isGlobal && queryMandalIds.length === 0)
+    return { members: [], projectRole, scope };
 
   const rows = await fetchAllParallel((opts) => {
     let q = supabase
@@ -262,7 +327,15 @@ async function loadRoster({ projectId, profile, signal }) {
       mandal: m.mandals?.name || "Unknown",
       external_qr: r.external_qr,
       // one pre-lowercased string per member => search is a plain includes()
-      _hay: [m.name, m.surname, m.father_name, m.internal_code, m.mobile, mobileDigits, m.mandals?.name]
+      _hay: [
+        m.name,
+        m.surname,
+        m.father_name,
+        m.internal_code,
+        m.mobile,
+        mobileDigits,
+        m.mandals?.name,
+      ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase(),
@@ -285,6 +358,17 @@ async function loadAttendance({ eventId, signal }) {
   const byMember = new Map();
   for (const a of rows) byMember.set(a.member_id, a);
   return Array.from(byMember.values());
+}
+
+// header-only request: returns just a number, no rows
+async function countAttendance({ eventId }) {
+  const { count, error } = await supabase
+    .from("attendance")
+    .select("id", { count: "exact", head: true })
+    .eq("event_id", eventId)
+    .or("status.is.null,status.neq.absent");
+  if (error) throw error;
+  return count;
 }
 
 async function loadAbsences({ eventId, signal }) {
@@ -342,12 +426,16 @@ const MemberRow = React.memo(function MemberRow({
           )}
         </div>
         <div className="min-w-0">
-          <div className={`font-semibold text-sm truncate ${isPresent || isSyncing ? "text-emerald-900" : "text-gray-900"}`}>
+          <div
+            className={`font-semibold text-sm truncate ${isPresent || isSyncing ? "text-emerald-900" : "text-gray-900"}`}
+          >
             {member.name} {member.surname}
           </div>
           <div className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold truncate flex items-center gap-1.5 mt-0.5">
             <span>{member.mandal}</span>
-            <span className="font-inter lowercase tracking-normal text-gray-300">•</span>
+            <span className="font-inter lowercase tracking-normal text-gray-300">
+              •
+            </span>
             <span>{member.designation}</span>
           </div>
         </div>
@@ -461,7 +549,20 @@ export default function Attendance({
   const [isAbsenceSaving, setIsAbsenceSaving] = useState(false);
 
   const [rtConnected, setRtConnected] = useState(false);
+  const liveRef = useRef(false); // same value as rtConnected, readable inside timers
   const [visibleCount, setVisibleCount] = useState(RENDER_STEP);
+
+  // ── refs ──
+  const syncingRef = useRef(new Set());
+  const [syncing, setSyncing] = useState(() => new Set());
+  const beginSync = useCallback((id) => {
+    syncingRef.current.add(id);
+    setSyncing(new Set(syncingRef.current));
+  }, []);
+  const endSync = useCallback((id) => {
+    syncingRef.current.delete(id);
+    setSyncing(new Set(syncingRef.current));
+  }, []);
 
   // ── queries ──
   const metaQ = useQuery({
@@ -490,17 +591,6 @@ export default function Attendance({
     structuralSharing: false, // large arrays: skip the deep-compare on refetch
   });
 
-  const syncingRef = useRef(new Set());
-  const [syncing, setSyncing] = useState(() => new Set());
-  const beginSync = useCallback((id) => {
-    syncingRef.current.add(id);
-    setSyncing(new Set(syncingRef.current));
-  }, []);
-  const endSync = useCallback((id) => {
-    syncingRef.current.delete(id);
-    setSyncing(new Set(syncingRef.current));
-  }, []);
-
   const attendanceQ = useQuery({
     queryKey: QUERY_KEY,
     queryFn: async ({ signal }) => {
@@ -509,15 +599,17 @@ export default function Attendance({
       if (syncingRef.current.size) {
         const current = queryClient.getQueryData(QUERY_KEY) || EMPTY;
         const kept = current.filter((a) => syncingRef.current.has(a.member_id));
-        return rows.filter((a) => !syncingRef.current.has(a.member_id)).concat(kept);
+        return rows
+          .filter((a) => !syncingRef.current.has(a.member_id))
+          .concat(kept);
       }
       return rows;
     },
     enabled: !!eventId && profileReady,
     staleTime: 60000,
     structuralSharing: false,
-    refetchOnWindowFocus: !rtConnected,
-    refetchInterval: rtConnected ? RECONCILE_MS : POLL_MS,
+    refetchOnWindowFocus: false,
+    refetchInterval: rtConnected ? FULL_MS_LIVE : FULL_MS_FALLBACK,
   });
 
   const absenceQ = useQuery({
@@ -535,26 +627,26 @@ export default function Attendance({
   const project = metaQ.data?.project;
   const attendanceData = attendanceQ.data ?? EMPTY;
 
-const canMark = useMemo(() => {
+  const canMark = useMemo(() => {
     if (propReadOnly) return false;
 
-    // 1. Check if the event is loaded
+    // past or non-primary events: only admins can edit
     if (event) {
-      // Check if it's a past event (ignoring the exact time of day)
-      const isPastEvent = new Date(event.date).setHours(0, 0, 0, 0) < new Date().setHours(0, 0, 0, 0);
-      
-      // Check if it's non-primary (adjust 'is_primary' if your DB column is named differently, like 'type')
+      const isPastEvent =
+        new Date(event.date).setHours(0, 0, 0, 0) <
+        new Date().setHours(0, 0, 0, 0);
       const isNonPrimary = event.is_primary === false;
-
-      // 2. If it's a past OR non-primary event, only Admins can edit
-      if ((isPastEvent || isNonPrimary) && !isAdmin) {
-        return false;
-      }
+      if ((isPastEvent || isNonPrimary) && !isAdmin) return false;
     }
 
-    // 3. Normal role-based checks for current, primary events
-    if (["admin", "taker", "sanchalak", "nirikshak", "nirdeshak"].includes(sysRole)) return true;
-    if (["coordinator", "editor", "project_admin"].includes(projectAssignment)) return true;
+    if (
+      ["admin", "taker", "sanchalak", "nirikshak", "nirdeshak"].includes(
+        sysRole,
+      )
+    )
+      return true;
+    if (["coordinator", "editor", "project_admin"].includes(projectAssignment))
+      return true;
     return false;
   }, [sysRole, propReadOnly, projectAssignment, event, isAdmin]);
 
@@ -589,18 +681,27 @@ const canMark = useMemo(() => {
   lookupRef.current = lookup;
   absenceRef.current = absenceMap;
 
-  // ── realtime: events are buffered and applied as ONE cache update ──
+  // ── realtime (optional): works when `attendance` is in Supabase's realtime publication.
+  // If Realtime is OFF in Supabase the subscription simply fails; nothing is shown to the user,
+  // the page falls back to the count check below, and the subscription is retried every minute.
+  // Turn Realtime on in Supabase and open pages reconnect by themselves.
   useEffect(() => {
-    if (!USE_REALTIME || !eventId) return;
-    setRtConnected(false);
+    if (!USE_REALTIME || !eventId || !profileReady) return;
 
-    let ops = new Map();     // member_id -> record | null (null = removed); last write wins
-    let delIds = new Set();  // DELETE events that only carry the row id
-    let timer = null;
-    let everSubscribed = false;
+    let stopped = false;
+    let channel = null;
+    let flushTimer = null;
+    let ops = new Map(); // member_id -> record | null (null = removed); last write wins
+    let delIds = new Set(); // DELETE events that only carry the row id
+    let needsResync = false; // set after a failure, so a reconnect catches up once
+
+    const setLive = (v) => {
+      liveRef.current = v;
+      setRtConnected(v);
+    };
 
     const flush = () => {
-      timer = null;
+      flushTimer = null;
       if (!ops.size && !delIds.size) return;
       const o = ops;
       const d = delIds;
@@ -609,50 +710,137 @@ const canMark = useMemo(() => {
       queryClient.setQueryData(QUERY_KEY, (old = EMPTY) => {
         const map = new Map();
         for (const a of old) if (!d.has(a.id)) map.set(a.member_id, a);
-        o.forEach((rec, memberId) => (rec ? map.set(memberId, rec) : map.delete(memberId)));
+        o.forEach((rec, memberId) => {
+          if (syncingRef.current.has(memberId)) return; // a local save is in flight
+          if (rec) map.set(memberId, rec);
+          else map.delete(memberId);
+        });
         return Array.from(map.values());
       });
     };
     const schedule = () => {
-      if (!timer) timer = setTimeout(flush, FLUSH_MS);
+      if (!flushTimer) flushTimer = setTimeout(flush, FLUSH_MS);
     };
 
-    const channel = supabase
-      .channel(`attendance-sync-${eventId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "attendance", filter: `event_id=eq.${eventId}` },
-        (payload) => {
-          const { eventType, new: n, old: o } = payload;
-          if (eventType === "DELETE") {
-            if (o?.member_id) ops.set(o.member_id, null);
-            else if (o?.id != null) {
-              delIds.add(o.id);
-              for (const [k, v] of ops) if (v?.id === o.id) ops.delete(k);
-            }
-          } else if (n) {
-            if (n.status === "absent") ops.set(n.member_id, null);
-            else ops.set(n.member_id, { id: n.id, member_id: n.member_id, scanned_at: n.scanned_at, status: n.status });
-          }
-          schedule();
-        },
-      )
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          setRtConnected(true);
-          // after a drop, events may have been missed => resync once
-          if (everSubscribed) queryClient.invalidateQueries({ queryKey: QUERY_KEY });
-          everSubscribed = true;
-        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-          setRtConnected(false);
+    const connect = () => {
+      if (stopped) return;
+      try {
+        if (channel) {
+          supabase.removeChannel(channel);
+          channel = null;
         }
-      });
+        channel = supabase
+          .channel(`attendance-sync-${eventId}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "attendance",
+              filter: `event_id=eq.${eventId}`,
+            },
+            (payload) => {
+              const { eventType, new: n, old: o } = payload;
+              if (eventType === "DELETE") {
+                if (o?.member_id) ops.set(o.member_id, null);
+                else if (o?.id != null) {
+                  delIds.add(o.id);
+                  for (const [k, v] of ops) if (v?.id === o.id) ops.delete(k);
+                }
+              } else if (n) {
+                if (n.status === "absent") ops.set(n.member_id, null);
+                else
+                  ops.set(n.member_id, {
+                    id: n.id,
+                    member_id: n.member_id,
+                    scanned_at: n.scanned_at,
+                    status: n.status,
+                  });
+              }
+              schedule();
+            },
+          )
+          .subscribe((status) => {
+            if (stopped) return;
+            if (status === "SUBSCRIBED") {
+              setLive(true);
+              if (needsResync) {
+                needsResync = false;
+                queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+              }
+            } else if (
+              status === "CHANNEL_ERROR" ||
+              status === "TIMED_OUT" ||
+              status === "CLOSED"
+            ) {
+              setLive(false);
+              needsResync = true;
+            }
+          });
+      } catch (_) {
+        setLive(false);
+        needsResync = true;
+      }
+    };
+
+    connect();
+    // while not connected, try again every minute (covers "Realtime switched on later")
+    const retryTimer = setInterval(() => {
+      if (!liveRef.current) connect();
+    }, RESUBSCRIBE_MS);
 
     return () => {
-      if (timer) clearTimeout(timer);
-      supabase.removeChannel(channel);
+      stopped = true;
+      clearInterval(retryTimer);
+      if (flushTimer) clearTimeout(flushTimer);
+      if (channel) supabase.removeChannel(channel);
+      setLive(false);
     };
-  }, [eventId, queryClient, QUERY_KEY]);
+  }, [eventId, profileReady, queryClient, QUERY_KEY]);
+
+  // ── cheap change detector: one header-only count request, no rows ──
+  // Catches un-marks and anything realtime missed. Does a full reload only if the count changed.
+  useEffect(() => {
+    if (!eventId || !profileReady) return;
+    let stopped = false;
+    let timer;
+    let lastReload = 0;
+
+    const tick = async () => {
+      if (stopped) return;
+      const loaded = queryClient.getQueryData(QUERY_KEY);
+      if (
+        loaded &&
+        document.visibilityState === "visible" &&
+        syncingRef.current.size === 0 &&
+        Date.now() - lastReload > 15000
+      ) {
+        try {
+          const count = await countAttendance({ eventId });
+          const local = (queryClient.getQueryData(QUERY_KEY) || EMPTY).length;
+          if (
+            !stopped &&
+            count != null &&
+            count !== local &&
+            syncingRef.current.size === 0
+          ) {
+            lastReload = Date.now();
+            queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+          }
+        } catch (_) {
+          // network hiccup: try again next round, no message
+        }
+      }
+      const base = liveRef.current ? CHECK_MS_LIVE : CHECK_MS_FALLBACK;
+      timer = setTimeout(tick, base + Math.random() * 3000);
+    };
+
+    timer = setTimeout(tick, CHECK_MS_FALLBACK);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [eventId, profileReady, queryClient, QUERY_KEY]);
 
   // warm the scanner chunk shortly after load so the first tap on Scan is instant
   useEffect(() => {
@@ -674,7 +862,8 @@ const canMark = useMemo(() => {
 
   const markAttendance = useCallback(
     async (memberId) => {
-      if (!canMark || !eventId || syncingRef.current.has(memberId)) return false;
+      if (!canMark || !eventId || syncingRef.current.has(memberId))
+        return false;
 
       const prevScannedAt = presentRef.current.get(memberId);
       const wasPresent = prevScannedAt !== undefined;
@@ -683,18 +872,36 @@ const canMark = useMemo(() => {
       beginSync(memberId);
       patchAttendance(
         memberId,
-        wasPresent ? null : { id: `local-${memberId}`, member_id: memberId, scanned_at: now, status: "present" },
+        wasPresent
+          ? null
+          : {
+              id: `local-${memberId}`,
+              member_id: memberId,
+              scanned_at: now,
+              status: "present",
+            },
       );
 
       try {
         await withRetry(async () => {
           const signal = timeoutSignal(REQUEST_TIMEOUT_MS);
           const { error } = wasPresent
-            ? await supabase.from("attendance").delete().eq("event_id", eventId).eq("member_id", memberId).abortSignal(signal)
+            ? await supabase
+                .from("attendance")
+                .delete()
+                .eq("event_id", eventId)
+                .eq("member_id", memberId)
+                .abortSignal(signal)
             : await supabase
                 .from("attendance")
                 .upsert(
-                  { event_id: eventId, member_id: memberId, scanned_at: now, marked_by: profileId, status: "present" },
+                  {
+                    event_id: eventId,
+                    member_id: memberId,
+                    scanned_at: now,
+                    marked_by: profileId,
+                    status: "present",
+                  },
                   { onConflict: "event_id,member_id", ignoreDuplicates: true },
                 )
                 .abortSignal(signal);
@@ -707,7 +914,12 @@ const canMark = useMemo(() => {
         patchAttendance(
           memberId,
           wasPresent
-            ? { id: `local-${memberId}`, member_id: memberId, scanned_at: prevScannedAt, status: "present" }
+            ? {
+                id: `local-${memberId}`,
+                member_id: memberId,
+                scanned_at: prevScannedAt,
+                status: "present",
+              }
             : null,
         );
         toast.error("Could not save. Please try again.");
@@ -768,7 +980,11 @@ const canMark = useMemo(() => {
         patchAttendance(memberId, null);
         queryClient.setQueryData(ABSENCE_KEY, (old = EMPTY) => [
           ...old.filter((a) => a.member_id !== memberId),
-          { member_id: memberId, category_id: categoryId, notes: notes || null },
+          {
+            member_id: memberId,
+            category_id: categoryId,
+            notes: notes || null,
+          },
         ]);
         toast.success(`${target.name} marked absent with reason`);
         setAbsenceModalOpen(false);
@@ -781,7 +997,16 @@ const canMark = useMemo(() => {
         endSync(memberId);
       }
     },
-    [memberMarkingAbsent, eventId, profileId, queryClient, ABSENCE_KEY, patchAttendance, beginSync, endSync],
+    [
+      memberMarkingAbsent,
+      eventId,
+      profileId,
+      queryClient,
+      ABSENCE_KEY,
+      patchAttendance,
+      beginSync,
+      endSync,
+    ],
   );
 
   const handleScan = useCallback(
@@ -791,8 +1016,12 @@ const canMark = useMemo(() => {
       const member = lookupRef.current.get(String(code || "").trim());
       if (!member) return { success: false, message: "❌ Not in Roster" };
       if (presentRef.current.has(member.id))
-        return { success: false, message: `⚠️ ${member.name} Already Marked Present` };
-      if (syncingRef.current.has(member.id)) return { success: false, message: "⏳ Saving..." };
+        return {
+          success: false,
+          message: `⚠️ ${member.name} Already Marked Present`,
+        };
+      if (syncingRef.current.has(member.id))
+        return { success: false, message: "⏳ Saving..." };
 
       const ok = await markAttendance(member.id);
       return ok
@@ -812,9 +1041,12 @@ const canMark = useMemo(() => {
     const out = [];
     for (const m of members) {
       if (mandalFilter && m.mandal_id !== mandalFilter) continue;
-      if (advFilters.kshetra_id && m.kshetra_id !== advFilters.kshetra_id) continue;
-      if (advFilters.mandal_id && m.mandal_id !== advFilters.mandal_id) continue;
-      if (advFilters.designation && m.designation !== advFilters.designation) continue;
+      if (advFilters.kshetra_id && m.kshetra_id !== advFilters.kshetra_id)
+        continue;
+      if (advFilters.mandal_id && m.mandal_id !== advFilters.mandal_id)
+        continue;
+      if (advFilters.designation && m.designation !== advFilters.designation)
+        continue;
       if (advFilters.gender && m.gender !== advFilters.gender) continue;
       if (tokens.length && !tokens.every((t) => m._hay.includes(t))) continue;
       out.push(m);
@@ -827,7 +1059,10 @@ const canMark = useMemo(() => {
           const tb = timeDep?.get(b.id) ?? "0";
           r = ta < tb ? -1 : ta > tb ? 1 : 0;
         } else {
-          r = collator.compare(String(a[s.column] ?? ""), String(b[s.column] ?? ""));
+          r = collator.compare(
+            String(a[s.column] ?? ""),
+            String(b[s.column] ?? ""),
+          );
         }
         if (r) return s.ascending ? r : -r;
       }
@@ -848,7 +1083,10 @@ const canMark = useMemo(() => {
     setVisibleCount(RENDER_STEP);
   }, [deferredSearch, filter, mandalFilter, advFilters, sortConfig]);
 
-  const visibleList = useMemo(() => filteredList.slice(0, visibleCount), [filteredList, visibleCount]);
+  const visibleList = useMemo(
+    () => filteredList.slice(0, visibleCount),
+    [filteredList, visibleCount],
+  );
 
   const scrollRef = useRef(null);
   const sentinelRef = useRef(null);
@@ -923,12 +1161,17 @@ const canMark = useMemo(() => {
     absenceQ.refetch();
   };
   const updateDraftSort = (index, patch) =>
-    setDraftSortConfig((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
+    setDraftSortConfig((prev) =>
+      prev.map((s, i) => (i === index ? { ...s, ...patch } : s)),
+    );
 
-  const activeFilterCount = Object.values(advFilters).filter((v) => v !== "").length;
+  const activeFilterCount = Object.values(advFilters).filter(
+    (v) => v !== "",
+  ).length;
   const isRefreshing = rosterQ.isFetching || attendanceQ.isFetching;
   const rosterLoading = rosterQ.isLoading;
   const rosterError = rosterQ.isError && !rosterQ.data;
+  const attendanceError = attendanceQ.isError && !attendanceQ.data;
 
   // ── early returns (all hooks are above) ──
   if (metaQ.isError && metaQ.error?.notFound)
@@ -940,9 +1183,20 @@ const canMark = useMemo(() => {
   if (metaQ.isError)
     return (
       <div className="p-8 text-center bg-red-50 border border-red-200 rounded-md">
-        <AlertTriangle className="mx-auto text-red-500 mb-2" size={24} strokeWidth={1.5} />
-        <p className="text-red-700 font-semibold text-sm">Failed to load event details.</p>
-        <Button variant="danger" size="sm" onClick={() => metaQ.refetch()} className="mt-4">
+        <AlertTriangle
+          className="mx-auto text-red-500 mb-2"
+          size={24}
+          strokeWidth={1.5}
+        />
+        <p className="text-red-700 font-semibold text-sm">
+          Failed to load event details.
+        </p>
+        <Button
+          variant="danger"
+          size="sm"
+          onClick={() => metaQ.refetch()}
+          className="mt-4"
+        >
           <RefreshCw size={14} /> Retry
         </Button>
       </div>
@@ -950,14 +1204,20 @@ const canMark = useMemo(() => {
   if (!event || !project)
     return (
       <div className="h-full flex items-center justify-center p-12">
-        <Loader2 className="animate-spin text-gray-400" size={32} strokeWidth={1.5} />
+        <Loader2
+          className="animate-spin text-gray-400"
+          size={32}
+          strokeWidth={1.5}
+        />
       </div>
     );
 
   return (
     <div
       className={`flex flex-col bg-white ${
-        embedded ? "h-full rounded-md border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)] overflow-hidden" : "h-[100dvh]"
+        embedded
+          ? "h-full rounded-md border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)] overflow-hidden"
+          : "h-[100dvh]"
       }`}
     >
       {/* header */}
@@ -972,34 +1232,59 @@ const canMark = useMemo(() => {
             </button>
           )}
           <div className="flex-1 min-w-0">
-            <h1 className="font-semibold text-gray-900 text-base truncate">{event.name}</h1>
+            <h1 className="font-semibold text-gray-900 text-base truncate">
+              {event.name}
+            </h1>
             <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
               <span
-                title={rtConnected ? "Live" : "Reconnecting… auto-refreshing"}
+                title={rtConnected ? "Live updates" : "Auto-refreshing"}
                 className={`w-2 h-2 rounded-full ${
                   syncing.size > 0
                     ? "bg-amber-400 animate-pulse"
                     : attendanceQ.isLoading
                       ? "bg-blue-400 animate-pulse"
-                      : rtConnected || !USE_REALTIME
-                        ? "bg-emerald-500"
-                        : "bg-gray-400"
+                      : attendanceQ.isError
+                        ? "bg-red-500"
+                        : rtConnected
+                          ? "bg-emerald-500"
+                          : "bg-gray-400"
                 }`}
               />
-              <span className="font-inter font-semibold text-gray-700">{presentCount}</span> / {members.length} Present
+              { profile?.role !== "taker" &&
+                <>
+                  <span className="font-inter font-semibold text-gray-700">
+                    {presentCount}
+                  </span>{" "}
+                  / {members.length} Present
+                </>
+              }
               {!canMark && (
                 <Badge className="ml-1">
-                  <Lock size={10} className="inline mr-1" strokeWidth={2} /> View Only
+                  <Lock size={10} className="inline mr-1" strokeWidth={2} />{" "}
+                  View Only
                 </Badge>
               )}
             </div>
           </div>
           <div className="flex gap-2 shrink-0 items-center">
-            <Button variant="secondary" onClick={refreshAll} className="!px-3" title="Refresh">
-              <RefreshCw size={16} strokeWidth={2} className={isRefreshing ? "animate-spin" : ""} />
+            <Button
+              variant="secondary"
+              onClick={refreshAll}
+              className="!px-3"
+              title="Refresh"
+            >
+              <RefreshCw
+                size={16}
+                strokeWidth={2}
+                className={isRefreshing ? "animate-spin" : ""}
+              />
             </Button>
             {!hideSummary && (
-              <Button variant="secondary" onClick={openSummary} className="!px-3">
+              <Button
+                variant="secondary"
+                onClick={openSummary}
+                className="!px-3"
+              >
                 <BarChart2 size={16} strokeWidth={2} />
               </Button>
             )}
@@ -1014,7 +1299,11 @@ const canMark = useMemo(() => {
         <div className="flex flex-col md:flex-row gap-2">
           <div className="flex gap-2 flex-1">
             <div className="relative flex-1 min-w-0">
-              <Search className="absolute left-3 top-2.5 text-gray-400" size={16} strokeWidth={1.5} />
+              <Search
+                className="absolute left-3 top-2.5 text-gray-400"
+                size={16}
+                strokeWidth={1.5}
+              />
               <input
                 className="w-full pl-9 pr-9 py-2 bg-white border border-gray-200 focus:border-[#5C3030] rounded-md outline-none text-sm transition-colors shadow-[0_1px_3px_rgba(0,0,0,0.02)]"
                 placeholder="Search name, surname, mobile or ID..."
@@ -1031,7 +1320,11 @@ const canMark = useMemo(() => {
               )}
             </div>
             {isAdmin && (
-              <Button variant="secondary" onClick={openFilter} className="relative shrink-0 !bg-white px-3 sm:px-4">
+              <Button
+                variant="secondary"
+                onClick={openFilter}
+                className="relative shrink-0 !bg-white px-3 sm:px-4"
+              >
                 <Filter size={16} strokeWidth={1.5} className="sm:mr-2" />
                 <span className="hidden sm:inline font-semibold">View</span>
                 {activeFilterCount > 0 && (
@@ -1048,7 +1341,9 @@ const canMark = useMemo(() => {
                 key={f}
                 onClick={() => setFilter(f)}
                 className={`flex-1 md:flex-none px-3 py-1.5 text-xs font-semibold capitalize rounded-md transition-all whitespace-nowrap ${
-                  filter === f ? "bg-white text-gray-900 shadow-[0_1px_3px_rgba(0,0,0,0.02)]" : "text-gray-500 hover:text-gray-700"
+                  filter === f
+                    ? "bg-white text-gray-900 shadow-[0_1px_3px_rgba(0,0,0,0.02)]"
+                    : "text-gray-500 hover:text-gray-700"
                 }`}
               >
                 {f}
@@ -1059,14 +1354,46 @@ const canMark = useMemo(() => {
       </div>
 
       {/* list */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-2 bg-gray-50 relative pb-24">
-        {rosterLoading && Array.from({ length: 8 }, (_, i) => <RowSkeleton key={i} />)}
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto p-4 space-y-2 bg-gray-50 relative pb-24"
+      >
+        {attendanceError && (
+          <div className="p-3 text-sm bg-red-50 text-red-700 border border-red-200 rounded-md flex items-center justify-between gap-3">
+            <span>
+              Couldn't load attendance
+              {attendanceQ.error?.message
+                ? `: ${attendanceQ.error.message}`
+                : "."}
+            </span>
+            <button
+              onClick={() => attendanceQ.refetch()}
+              className="font-semibold underline shrink-0"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {rosterLoading &&
+          Array.from({ length: 8 }, (_, i) => <RowSkeleton key={i} />)}
 
         {rosterError && (
           <div className="p-6 text-center bg-red-50 rounded-md border border-red-200 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-            <AlertTriangle className="mx-auto text-red-500 mb-2" size={24} strokeWidth={1.5} />
-            <p className="text-red-700 font-semibold text-sm">Failed to load data. Please retry.</p>
-            <Button variant="danger" size="sm" onClick={() => rosterQ.refetch()} className="mt-4">
+            <AlertTriangle
+              className="mx-auto text-red-500 mb-2"
+              size={24}
+              strokeWidth={1.5}
+            />
+            <p className="text-red-700 font-semibold text-sm">
+              Failed to load data. Please retry.
+            </p>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => rosterQ.refetch()}
+              className="mt-4"
+            >
               <RefreshCw size={14} /> Retry
             </Button>
           </div>
@@ -1091,7 +1418,10 @@ const canMark = useMemo(() => {
         ))}
 
         {visibleCount < filteredList.length && (
-          <div ref={sentinelRef} className="py-4 text-center text-[10px] uppercase font-semibold tracking-widest text-gray-400">
+          <div
+            ref={sentinelRef}
+            className="py-4 text-center text-[10px] uppercase font-semibold tracking-widest text-gray-400"
+          >
             <Loader2 className="animate-spin inline" size={14} />
           </div>
         )}
@@ -1106,7 +1436,9 @@ const canMark = useMemo(() => {
           />
           <div className="fixed top-0 right-0 h-full w-full sm:w-[400px] bg-white z-50 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
             <div className="p-4 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="font-bold text-lg text-gray-900">Configure View</h2>
+              <h2 className="font-bold text-lg text-gray-900">
+                Configure View
+              </h2>
               <button
                 onClick={() => setIsFilterOpen(false)}
                 className="text-gray-400 hover:text-gray-900 bg-gray-50 p-1.5 rounded-md transition-colors"
@@ -1119,7 +1451,9 @@ const canMark = useMemo(() => {
                 <button
                   onClick={() => setDrawerTab("filter")}
                   className={`flex-1 py-1.5 rounded-md text-sm font-bold transition-all ${
-                    drawerTab === "filter" ? "bg-white shadow-[0_1px_3px_rgba(0,0,0,0.05)] text-gray-900" : "text-gray-500 hover:text-gray-700"
+                    drawerTab === "filter"
+                      ? "bg-white shadow-[0_1px_3px_rgba(0,0,0,0.05)] text-gray-900"
+                      : "text-gray-500 hover:text-gray-700"
                   }`}
                 >
                   Filter
@@ -1127,7 +1461,9 @@ const canMark = useMemo(() => {
                 <button
                   onClick={() => setDrawerTab("sort")}
                   className={`flex-1 py-1.5 rounded-md text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${
-                    drawerTab === "sort" ? "bg-white shadow-[0_1px_3px_rgba(0,0,0,0.05)] text-gray-900" : "text-gray-500 hover:text-gray-700"
+                    drawerTab === "sort"
+                      ? "bg-white shadow-[0_1px_3px_rgba(0,0,0,0.05)] text-gray-900"
+                      : "text-gray-500 hover:text-gray-700"
                   }`}
                 >
                   <SortAsc size={14} /> Sort
@@ -1139,29 +1475,46 @@ const canMark = useMemo(() => {
                   <FilterRow
                     label="Kshetra"
                     value={draftAdvFilters.kshetra_id}
-                    onChange={(v) => setDraftAdvFilters((p) => ({ ...p, kshetra_id: v }))}
-                    options={dropdowns?.kshetras.map((k) => ({ value: k.id, label: k.name })) || []}
+                    onChange={(v) =>
+                      setDraftAdvFilters((p) => ({ ...p, kshetra_id: v }))
+                    }
+                    options={
+                      dropdowns?.kshetras.map((k) => ({
+                        value: k.id,
+                        label: k.name,
+                      })) || []
+                    }
                   />
                   <FilterRow
                     label="Mandal"
                     value={draftAdvFilters.mandal_id}
-                    onChange={(v) => setDraftAdvFilters((p) => ({ ...p, mandal_id: v }))}
+                    onChange={(v) =>
+                      setDraftAdvFilters((p) => ({ ...p, mandal_id: v }))
+                    }
                     options={
                       dropdowns?.mandals
-                        .filter((m) => !draftAdvFilters.kshetra_id || m.kshetra_id === draftAdvFilters.kshetra_id)
+                        .filter(
+                          (m) =>
+                            !draftAdvFilters.kshetra_id ||
+                            m.kshetra_id === draftAdvFilters.kshetra_id,
+                        )
                         .map((m) => ({ value: m.id, label: m.name })) || []
                     }
                   />
                   <FilterRow
                     label="Designation"
                     value={draftAdvFilters.designation}
-                    onChange={(v) => setDraftAdvFilters((p) => ({ ...p, designation: v }))}
+                    onChange={(v) =>
+                      setDraftAdvFilters((p) => ({ ...p, designation: v }))
+                    }
                     options={DESIGNATIONS.map((d) => ({ value: d, label: d }))}
                   />
                   <FilterRow
                     label="Gender"
                     value={draftAdvFilters.gender}
-                    onChange={(v) => setDraftAdvFilters((p) => ({ ...p, gender: v }))}
+                    onChange={(v) =>
+                      setDraftAdvFilters((p) => ({ ...p, gender: v }))
+                    }
                     options={[
                       { value: "Yuvak", label: "Yuvak" },
                       { value: "Yuvati", label: "Yuvati" },
@@ -1170,7 +1523,9 @@ const canMark = useMemo(() => {
                 </div>
               ) : (
                 <div className="space-y-3 animate-in fade-in duration-200">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-4">Multi-Level Sorting</p>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-4">
+                    Multi-Level Sorting
+                  </p>
                   {draftSortConfig.map((sort, index) => (
                     <div
                       key={index}
@@ -1182,7 +1537,9 @@ const canMark = useMemo(() => {
                       <select
                         className="flex-1 border border-gray-200 rounded-md p-1.5 bg-white text-sm outline-none cursor-pointer focus:border-[#5C3030]"
                         value={sort.column}
-                        onChange={(e) => updateDraftSort(index, { column: e.target.value })}
+                        onChange={(e) =>
+                          updateDraftSort(index, { column: e.target.value })
+                        }
                       >
                         {SORTABLE_COLUMNS.map((col) => (
                           <option key={col.value} value={col.value}>
@@ -1193,14 +1550,22 @@ const canMark = useMemo(() => {
                       <select
                         className="w-24 border border-gray-200 rounded-md p-1.5 bg-white text-sm outline-none cursor-pointer focus:border-[#5C3030]"
                         value={sort.ascending.toString()}
-                        onChange={(e) => updateDraftSort(index, { ascending: e.target.value === "true" })}
+                        onChange={(e) =>
+                          updateDraftSort(index, {
+                            ascending: e.target.value === "true",
+                          })
+                        }
                       >
                         <option value="true">A-Z / Asc</option>
                         <option value="false">Z-A / Desc</option>
                       </select>
                       {draftSortConfig.length > 1 && (
                         <button
-                          onClick={() => setDraftSortConfig((prev) => prev.filter((_, i) => i !== index))}
+                          onClick={() =>
+                            setDraftSortConfig((prev) =>
+                              prev.filter((_, i) => i !== index),
+                            )
+                          }
                           className="p-1.5 text-gray-400 hover:text-red-600 transition-colors bg-white rounded border border-gray-200"
                         >
                           <Trash2 size={14} />
@@ -1213,7 +1578,12 @@ const canMark = useMemo(() => {
                       variant="secondary"
                       size="sm"
                       className="w-full border-dashed border-gray-300 text-gray-500 bg-transparent hover:bg-gray-50 mt-2"
-                      onClick={() => setDraftSortConfig((prev) => [...prev, { column: "designation", ascending: true }])}
+                      onClick={() =>
+                        setDraftSortConfig((prev) => [
+                          ...prev,
+                          { column: "designation", ascending: true },
+                        ])
+                      }
                     >
                       <Plus size={14} className="mr-1.5" /> Add Sort Level
                     </Button>

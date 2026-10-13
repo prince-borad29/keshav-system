@@ -1,7 +1,7 @@
-import React, { useRef, useCallback, useEffect, useState } from 'react';
-import { Scanner } from '@yudiel/react-qr-scanner';
-import { X, Activity, Zap, ZapOff } from 'lucide-react';
-import toast from 'react-hot-toast';
+import React, { useRef, useCallback, useEffect, useState } from "react";
+import { Scanner } from "@yudiel/react-qr-scanner";
+import { X, Activity, Zap, ZapOff } from "lucide-react";
+import toast from "react-hot-toast";
 
 export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
   const [flashlightOn, setFlashlightOn] = useState(false);
@@ -9,11 +9,25 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
   const isProcessing = useRef(false);
   const videoTrackRef = useRef(null);
 
+  let audioCtx;
+  const beep = () => {
+    try {
+      audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.frequency.value = 880;
+      g.gain.value = 0.08;
+      o.connect(g).connect(audioCtx.destination);
+      o.start();
+      o.stop(audioCtx.currentTime + 0.12);
+    } catch (_) {}
+  };
+
   // Grab the video track once camera starts for instant flashlight
   useEffect(() => {
     if (!isOpen) return;
     const findTrack = () => {
-      const video = document.querySelector('video');
+      const video = document.querySelector("video");
       if (video?.srcObject) {
         const track = video.srcObject.getVideoTracks()[0];
         if (track) {
@@ -23,79 +37,104 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
       }
       return false;
     };
-    const interval = setInterval(() => { if (findTrack()) clearInterval(interval); }, 200);
-    return () => { clearInterval(interval); videoTrackRef.current = null; };
+    const interval = setInterval(() => {
+      if (findTrack()) clearInterval(interval);
+    }, 200);
+    return () => {
+      clearInterval(interval);
+      videoTrackRef.current = null;
+    };
   }, [isOpen]);
 
   const toggleFlashlight = useCallback(async () => {
     const track = videoTrackRef.current;
-    if (!track) return toast.error("Camera not ready yet", { position: 'top-center', duration: 2000 });
+    if (!track)
+      return toast.error("Camera not ready yet", {
+        position: "top-center",
+        duration: 2000,
+      });
     const capabilities = track.getCapabilities?.() || {};
-    if (!capabilities.torch) return toast.error("Flashlight not supported", { position: 'top-center', duration: 2000 });
+    if (!capabilities.torch)
+      return toast.error("Flashlight not supported", {
+        position: "top-center",
+        duration: 2000,
+      });
 
     try {
       const next = !flashlightOn;
       await track.applyConstraints({ advanced: [{ torch: next }] });
       setFlashlightOn(next);
     } catch (err) {
-      toast.error("Could not toggle flashlight", { position: 'top-center', duration: 2000 });
+      toast.error("Could not toggle flashlight", {
+        position: "top-center",
+        duration: 2000,
+      });
     }
   }, [flashlightOn]);
 
-  const handleScan = useCallback(async (result) => {
-    if (!result) return;
-    const rawCode = Array.isArray(result) ? result[0]?.rawValue : (result?.text || result?.rawValue || result);
+  const handleScan = useCallback(
+    async (result) => {
+      if (!result) return;
+      const first = Array.isArray(result) ? result[0] : result;
+      const rawCode = String(first?.rawValue ?? first?.text ?? "").trim();
 
-    if (!rawCode || isProcessing.current || rawCode === lastScannedCode.current) return;
+      // ignore empty/tiny reads; real codes here are longer than 3 characters
+      if (rawCode.length < 4) return;
+      if (isProcessing.current || rawCode === lastScannedCode.current) return;
 
-    isProcessing.current = true;
-    lastScannedCode.current = rawCode;
+      isProcessing.current = true;
+      lastScannedCode.current = rawCode;
 
-    try {
-      const resultData = await onScan(rawCode);
-      console.log('[QrScanner] Scan result:', resultData);
+      try {
+        const resultData = await onScan(rawCode);
 
-      // Handle success case - attendance marked
-      if (resultData?.success === true) {
-        toast.success(resultData.message || 'Successfully marked present ✓', {
-          position: 'top-center',
-          duration: 1500,
-          style: { zIndex: 10000 }
-        });
-        if (eventName?.includes("Map Badge")) {
-          setTimeout(() => onClose(), 500);
+        // Handle success case - attendance marked
+        if (resultData?.success === true) {
+          beep();
+          toast.success(resultData.message || "Successfully marked present ✓", {
+            position: "top-center",
+            duration: 1500,
+            style: { zIndex: 10000 },
+          });
+          if (eventName?.includes("Map Badge")) {
+            setTimeout(() => onClose(), 500);
+          }
         }
-      }
-      // Handle error cases - already marked, not in roster, etc
-      else if (resultData?.success === false) {
-        const errorMessage = resultData.message || 'Already marked or not found';
-        toast.error(errorMessage, {
-          position: 'top-center',
+        // Handle error cases - already marked, not in roster, etc
+        else if (resultData?.success === false) {
+          const errorMessage =
+            resultData.message || "Already marked or not found";
+          toast.error(errorMessage, {
+            position: "top-center",
+            duration: 1500,
+            style: { zIndex: 10000 },
+          });
+        }
+        // Fallback - shouldn't normally happen
+        else {
+          toast.error("Unable to process scan. Please try again.", {
+            position: "top-center",
+            duration: 1500,
+            style: { zIndex: 10000 },
+          });
+        }
+      } catch (err) {
+        console.error("[QrScanner] Error:", err);
+        toast.error("Network error - check your connection", {
+          position: "top-center",
           duration: 1500,
-          style: { zIndex: 10000 }
+          style: { zIndex: 10000 },
         });
       }
-      // Fallback - shouldn't normally happen
-      else {
-        toast.error('Unable to process scan. Please try again.', {
-          position: 'top-center',
-          duration: 1500,
-          style: { zIndex: 10000 }
-        });
-      }
-    } catch (err) {
-      console.error('[QrScanner] Error:', err);
-      toast.error('Network error - check your connection', {
-        position: 'top-center',
-        duration: 1500,
-        style: { zIndex: 10000 }
-      });
-    }
 
-    // Unlock scanner instantly for rapid fire scanning
-    isProcessing.current = false;
-    setTimeout(() => { lastScannedCode.current = null; }, 800);
-  }, [onScan, eventName, onClose]);
+      // Unlock scanner instantly for rapid fire scanning
+      isProcessing.current = false;
+      setTimeout(() => {
+        lastScannedCode.current = null;
+      }, 2000);
+    },
+    [onScan, eventName, onClose],
+  );
 
   if (!isOpen) return null;
 
@@ -106,14 +145,15 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
         className="absolute top-0 inset-x-0 z-20 flex items-center justify-between gap-3
                    px-3 sm:px-5 md:px-8 pb-3 sm:pb-4
                    bg-gradient-to-b from-black/80 to-transparent"
-        style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}
+        style={{ paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}
       >
         <div className="min-w-0 flex-1">
           <h2 className="font-bold text-sm sm:text-base md:text-lg text-white truncate">
             {eventName || "Rapid Scanner"}
           </h2>
           <div className="flex items-center gap-1.5 text-[10px] md:text-xs text-emerald-400 font-semibold tracking-widest uppercase mt-0.5">
-            <Activity size={12} strokeWidth={2} className="animate-pulse" /> Scanning
+            <Activity size={12} strokeWidth={2} className="animate-pulse" />{" "}
+            Scanning
           </div>
         </div>
 
@@ -123,13 +163,15 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
             aria-label="Toggle flashlight"
             className={`h-11 w-11 sm:h-10 sm:w-10 md:h-12 md:w-12 flex items-center justify-center border backdrop-blur-md rounded-md text-white transition-colors ${
               flashlightOn
-                ? 'bg-yellow-400/30 border-yellow-400/50 text-yellow-300'
-                : 'bg-white/10 hover:bg-white/20 border-white/10'
+                ? "bg-yellow-400/30 border-yellow-400/50 text-yellow-300"
+                : "bg-white/10 hover:bg-white/20 border-white/10"
             }`}
           >
-            {flashlightOn
-              ? <Zap size={20} strokeWidth={2} fill="currentColor" />
-              : <ZapOff size={20} strokeWidth={2} />}
+            {flashlightOn ? (
+              <Zap size={20} strokeWidth={2} fill="currentColor" />
+            ) : (
+              <ZapOff size={20} strokeWidth={2} />
+            )}
           </button>
           <button
             onClick={onClose}
@@ -144,13 +186,17 @@ export default function QrScanner({ isOpen, onClose, onScan, eventName }) {
       {/* Camera area */}
       <div className="flex-1 relative min-h-0">
         <Scanner
-          onScan={handleScan}    // For v2.x of the library
-          onResult={handleScan}  // For v1.x of the library
-          scanDelay={100}
+          onScan={handleScan}
+          onError={() => {}}
+          formats={["qr_code"]}
+          scanDelay={250}
           allowMultiple={true}
-          components={{ audio: true, finder: false }}
-          styles={{ container: { height: '100%' }, video: { objectFit: 'cover' } }}
-          constraints={{ facingMode: 'environment' }}
+          components={{ audio: false, finder: false }}
+          styles={{
+            container: { height: "100%" },
+            video: { objectFit: "cover" },
+          }}
+          constraints={{ facingMode: "environment" }}
         />
 
         {/* Finder frame: scales with screen, fits portrait, landscape and tablets */}

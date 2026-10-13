@@ -46,14 +46,17 @@ const clearProfileCache = () => {
 };
 
 const fetchFullProfile = async (userId) => {
-  const { data } = await Promise.race([
-    supabase.from('user_profiles').select('id,email,full_name,gender,role,assigned_kshetra_id,assigned_mandal_id').eq('id', userId).single(),
-    new Promise((resolve) =>
-      setTimeout(() => resolve({ data: null }), 3500)
-    ),
-  ]);
-
-  return data || null;
+  for (let i = 0; i < 3; i++) {
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('id,email,full_name,gender,role,assigned_kshetra_id,assigned_mandal_id')
+      .eq('id', userId)
+      .abortSignal(AbortSignal.timeout(8000))
+      .maybeSingle();            // no row => data null, not an error
+    if (!error) return data;
+    await new Promise((r) => setTimeout(r, 400 * 2 ** i + Math.random() * 300));
+  }
+  return null;
 };
 
 export default function AuthProvider({ children }) {
